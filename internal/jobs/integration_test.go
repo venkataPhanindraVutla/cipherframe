@@ -964,3 +964,34 @@ func TestStopWithoutWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCheckReady(t *testing.T) {
+	ctx := context.Background()
+	// An unmigrated database is not ready.
+	admin, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	name := fmt.Sprintf("j%d", dbCount.Add(1))
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := pgxpool.ParseConfig(adminURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.Database = name
+	empty, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer empty.Close()
+	if err := jobs.CheckReady(ctx, empty); err == nil {
+		t.Fatal("an unmigrated database must not be ready")
+	}
+	// A migrated one is.
+	if err := jobs.CheckReady(ctx, newMigrated(t)); err != nil {
+		t.Fatalf("migrated database: %v", err)
+	}
+}

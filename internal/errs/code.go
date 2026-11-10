@@ -14,6 +14,7 @@ const (
 	Unauthenticated       Code = "unauthenticated"
 	Forbidden             Code = "forbidden"
 	NotFound              Code = "not_found"
+	MethodNotAllowed      Code = "method_not_allowed"
 	Conflict              Code = "conflict"
 	PayloadTooLarge       Code = "payload_too_large"
 	RateLimited           Code = "rate_limited"
@@ -34,6 +35,7 @@ var registry = map[Code]Info{
 	Unauthenticated:       {Status: 401, Title: "Authentication required"},
 	Forbidden:             {Status: 403, Title: "Forbidden"},
 	NotFound:              {Status: 404, Title: "Not found"},
+	MethodNotAllowed:      {Status: 405, Title: "Method not allowed"},
 	Conflict:              {Status: 409, Title: "Conflict"},
 	PayloadTooLarge:       {Status: 413, Title: "Payload too large"},
 	RateLimited:           {Status: 429, Title: "Too many requests", Retryable: true},

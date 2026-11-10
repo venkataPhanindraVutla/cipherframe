@@ -1,5 +1,7 @@
 # Build output
 /bin/
+/cipherframe-server
+/cipherframe
 /dist/
 *.test
 *.out

@@ -13,7 +13,7 @@ import (
 
 // declared lists every Code constant. When adding a constant, add it here and to registry.
 var declared = []Code{
-	InvalidRequest, Unauthenticated, Forbidden, NotFound, Conflict,
+	InvalidRequest, Unauthenticated, Forbidden, NotFound, MethodNotAllowed, Conflict,
 	PayloadTooLarge, RateLimited, InternalError, DependencyUnavailable, Timeout,
 }
 
@@ -49,7 +49,7 @@ func TestRegistryValues(t *testing.T) {
 		retry  bool
 	}{
 		InvalidRequest: {400, false}, Unauthenticated: {401, false}, Forbidden: {403, false},
-		NotFound: {404, false}, Conflict: {409, false}, PayloadTooLarge: {413, false},
+		NotFound: {404, false}, MethodNotAllowed: {405, false}, Conflict: {409, false}, PayloadTooLarge: {413, false},
 		RateLimited: {429, true}, InternalError: {500, false},
 		DependencyUnavailable: {503, true}, Timeout: {504, true},
 	}

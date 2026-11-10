@@ -1,0 +1,10 @@
+# oapi-codegen configuration for the edge listener. See gen.go for the command.
+package: gen
+output: edge.gen.go
+generate:
+  std-http-server: true
+  strict-server: true
+  models: true
+output-options:
+  # Operations tagged "edge" in spec/openapi.yaml.
+  include-tags: [edge]

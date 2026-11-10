@@ -72,6 +72,19 @@ jobs:
       - run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}
       - name: sqlc generated code is up to date
         run: sqlc diff
+      - name: API generated code is up to date
+        run: |
+          go generate ./internal/api/gen ./internal/edge/gen
+          if ! git diff --exit-code -- internal/api/gen internal/edge/gen; then
+            echo "Generated API code is stale. Run: go generate ./internal/api/gen ./internal/edge/gen"
+            exit 1
+          fi
+          untracked="$(git ls-files --others --exclude-standard -- internal/api/gen internal/edge/gen)"
+          if [ -n "$untracked" ]; then
+            echo "Untracked generated files:"
+            echo "$untracked"
+            exit 1
+          fi
 
   integration:
     name: integration (${{ matrix.pg_image }})

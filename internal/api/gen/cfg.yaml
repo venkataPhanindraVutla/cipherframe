@@ -1,0 +1,10 @@
+# oapi-codegen configuration for the api listener. See gen.go for the command.
+package: gen
+output: api.gen.go
+generate:
+  std-http-server: true
+  strict-server: true
+  models: true
+output-options:
+  # Operations tagged "api" in spec/openapi.yaml.
+  include-tags: [api]

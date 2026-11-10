@@ -1,0 +1,165 @@
+openapi: 3.1.0
+info:
+  title: Cipherframe API
+  version: 0.1.0
+  summary: Encrypted video delivery control plane and data plane.
+  description: |
+    Source of truth for the Cipherframe HTTP API (ADR 0015). Server interfaces and models are
+    generated from this file; a contract test fails CI when the running server and this file
+    disagree. Paths under /v1/ are added by later tasks.
+
+    Each operation carries a tag naming the listener that serves it: `api` (control plane) or
+    `edge` (browser-facing data plane). An operation served by both lists both tags.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: http://localhost:8080
+    description: Local development, api listener (CIPHERFRAME_API_LISTEN)
+  - url: http://localhost:8081
+    description: Local development, edge listener (CIPHERFRAME_EDGE_LISTEN)
+tags:
+  - name: api
+    description: Served by the api listener (control plane).
+  - name: edge
+    description: Served by the edge listener (data plane).
+  - name: ops
+    description: Health and readiness, served on every listener.
+security: []
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness
+      description: |
+        Reports that the process is alive. It checks no dependency and is unauthenticated.
+      tags: [ops, api, edge]
+      responses:
+        "200":
+          description: The process is alive.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /readyz:
+    get:
+      operationId: getReadyz
+      summary: Readiness
+      description: |
+        Runs the dependency checks (database, object storage, job queue) and returns 200 when all
+        pass or 503 when any fails. The body lists check names and results only: no hostnames,
+        credentials or error text. It is unauthenticated.
+      tags: [ops, api, edge]
+      responses:
+        "200":
+          description: Every check passed.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: At least one check failed.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  headers:
+    XRequestId:
+      description: |
+        The request ID (UUIDv7). A valid UUID sent by the caller in X-Request-Id is echoed;
+        otherwise the server generates one.
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+  responses:
+    Problem:
+      description: An error, as an RFC 9457 problem details object.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    ReadyResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReadyCheck"
+    ReadyCheck:
+      type: object
+      additionalProperties: false
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          description: Fixed check name, for example `database`.
+        status:
+          type: string
+          enum: [ok, unavailable]
+    Problem:
+      description: RFC 9457 problem details with Cipherframe extensions (ADR 0012).
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail, code, retryable, request_id]
+      properties:
+        type:
+          type: string
+          description: "`urn:cipherframe:error:<code>`."
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          description: Stable identifier to switch on. The closed registry in `internal/errs`.
+          enum:
+            - conflict
+            - dependency_unavailable
+            - forbidden
+            - internal_error
+            - invalid_request
+            - method_not_allowed
+            - not_found
+            - payload_too_large
+            - rate_limited
+            - timeout
+            - unauthenticated
+        retryable:
+          type: boolean
+        request_id:
+          type: string
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"

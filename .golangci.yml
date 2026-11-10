@@ -7,11 +7,40 @@ linters:
   default: standard # errcheck, govet, ineffassign, staticcheck, unused
   enable:
     - bodyclose # HTTP response bodies are closed
+    - depguard # role packages never import one another (ADR 0008)
     - errorlint # wrapped errors compared with errors.Is / errors.As
     - gosec # security-sensitive patterns (exec, crypto, file permissions)
     - misspell
     - noctx # outbound HTTP requests carry a context
     - unconvert
+
+  settings:
+    depguard:
+      # ADR 0008: internal/api, internal/edge and internal/worker may import shared packages
+      # under internal/, but never each other. Prefix matching also covers their sub-packages
+      # (for example internal/api/gen).
+      rules:
+        api:
+          files: ["**/internal/api/**"]
+          deny:
+            - pkg: github.com/venkataPhanindraVutla/cipherframe/internal/edge
+              desc: internal/api must not import internal/edge (ADR 0008)
+            - pkg: github.com/venkataPhanindraVutla/cipherframe/internal/worker
+              desc: internal/api must not import internal/worker (ADR 0008)
+        edge:
+          files: ["**/internal/edge/**"]
+          deny:
+            - pkg: github.com/venkataPhanindraVutla/cipherframe/internal/api
+              desc: internal/edge must not import internal/api (ADR 0008)
+            - pkg: github.com/venkataPhanindraVutla/cipherframe/internal/worker
+              desc: internal/edge must not import internal/worker (ADR 0008)
+        worker:
+          files: ["**/internal/worker/**"]
+          deny:
+            - pkg: github.com/venkataPhanindraVutla/cipherframe/internal/api
+              desc: internal/worker must not import internal/api (ADR 0008)
+            - pkg: github.com/venkataPhanindraVutla/cipherframe/internal/edge
+              desc: internal/worker must not import internal/edge (ADR 0008)
 
 formatters:
   enable:
