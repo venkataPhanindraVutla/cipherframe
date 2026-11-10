@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -55,32 +56,57 @@ func migrateGoose(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-// migrateRiver applies River's schema in one transaction on one connection: the transaction takes
-// an advisory lock that Postgres releases at commit or rollback, and River's migrator runs on that
-// same transaction. Nothing else is borrowed from the pool while the lock is held, so concurrent
-// callers cannot exhaust a small pool and deadlock (a lock holder waiting for a connection that
-// the lock waiters hold).
+// riverLockPoll is how often a caller waiting for the River migration lock tries again.
+const riverLockPoll = 250 * time.Millisecond
+
+// migrateRiver applies River's schema with River's own Migrate (which may split migrations across
+// transactions) while holding a session advisory lock. Waiting callers poll the lock with
+// pg_try_advisory_lock and hand their connection back between attempts, so they never sit on
+// pool connections that the lock holder's migrator needs. Holding a lock connection plus
+// migrating needs a pool of at least two connections.
 func migrateRiver(ctx context.Context, pool *pgxpool.Pool) error {
-	tx, err := pool.Begin(ctx)
+	conn, err := acquireRiverLock(ctx, pool)
 	if err != nil {
-		return fmt.Errorf("db: river migrations: %w", mapError(err))
+		return err
 	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", riverLockKey); err != nil {
-		return fmt.Errorf("db: river migrations lock: %w", mapError(err))
-	}
-	// A driver without a pool is enough for MigrateTx.
-	migrator, err := rivermigrate.New(riverpgxv5.New(nil), nil)
+	defer func() {
+		// The caller's context may be cancelled; the lock must still be released.
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", riverLockKey)
+		conn.Release()
+	}()
+
+	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
 	if err != nil {
 		return fmt.Errorf("db: river migrator: %w", mapError(err))
 	}
-	if _, err := migrator.MigrateTx(ctx, tx, rivermigrate.DirectionUp, nil); err != nil {
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
 		return fmt.Errorf("db: apply river migrations: %w", mapError(err))
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("db: commit river migrations: %w", mapError(err))
-	}
 	return nil
+}
+
+// acquireRiverLock returns a connection that holds the River migration lock.
+func acquireRiverLock(ctx context.Context, pool *pgxpool.Pool) (*pgxpool.Conn, error) {
+	for {
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("db: river migrations: %w", mapError(err))
+		}
+		var locked bool
+		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", riverLockKey).Scan(&locked); err != nil {
+			conn.Release()
+			return nil, fmt.Errorf("db: river migrations lock: %w", mapError(err))
+		}
+		if locked {
+			return conn, nil
+		}
+		conn.Release()
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("db: river migrations lock: %w", mapError(ctx.Err()))
+		case <-time.After(riverLockPoll):
+		}
+	}
 }
 
 // MapError classifies a driver error as an *errs.Error (ADR 0012) exactly as the repositories do.
