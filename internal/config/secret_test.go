@@ -21,7 +21,7 @@ func TestSecretRedaction(t *testing.T) {
 	var outs []string
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%T"} {
 		outs = append(outs, fmt.Sprintf(verb, s), fmt.Sprintf(verb, &s), fmt.Sprintf(verb, []Secret{s}),
-			fmt.Sprintf(verb, struct{ S Secret }{s}),			fmt.Sprintf(verb, map[string]Secret{"k": s}))
+			fmt.Sprintf(verb, struct{ S Secret }{s}), fmt.Sprintf(verb, map[string]Secret{"k": s}))
 	}
 	outs = append(outs, s.String(), s.GoString(), fmt.Sprint(s), fmt.Sprintln(s))
 	j, err := json.Marshal(map[string]any{"s": s, "p": &s})
