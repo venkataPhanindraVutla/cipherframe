@@ -95,8 +95,8 @@ func TestRunServicesStopsOnContextCancel(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runServices(ctx, []service{a, b}) }()
 	select {
-	case <-done:
-		t.Fatal("returned before cancel")
+	case err := <-done:
+		t.Fatalf("returned before cancel: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
 	cancel()
@@ -146,7 +146,7 @@ func TestHTTPServiceGracefulShutdown(t *testing.T) {
 			body <- "error: " + err.Error()
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		b, _ := io.ReadAll(resp.Body)
 		body <- string(b)
 	}()
@@ -160,7 +160,7 @@ func TestHTTPServiceGracefulShutdown(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("shutdown error: %v", err)
 	}
-	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+	if c, err := (&net.Dialer{Timeout: time.Second}).DialContext(context.Background(), "tcp", addr); err == nil {
 		_ = c.Close()
 		t.Fatal("still listening after shutdown")
 	}

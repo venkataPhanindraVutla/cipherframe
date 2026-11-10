@@ -44,7 +44,7 @@ func TestRequestIDValidIncomingKept(t *testing.T) {
 	var buf bytes.Buffer
 	h, _ := newOKHandler(&buf)
 	const in = "0195c8a2-7b1e-7c3d-9a4f-2e6d8b1c0f35"
-	req := httptest.NewRequest(http.MethodGet, "/ok/1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok/1", nil)
 	req.Header.Set(RequestIDHeader, strings.ToUpper(in))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -60,7 +60,7 @@ func TestRequestIDInvalidIncomingReplaced(t *testing.T) {
 	var buf bytes.Buffer
 	h, _ := newOKHandler(&buf)
 	for _, bad := range []string{"", "not-a-uuid", "x\ninjected", strings.Repeat("a", 500), "{0195c8a2-7b1e-7c3d-9a4f-2e6d8b1c0f35}"} {
-		req := httptest.NewRequest(http.MethodGet, "/ok/1", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok/1", nil)
 		if bad != "" {
 			req.Header["X-Request-Id"] = []string{bad}
 		}
@@ -82,7 +82,7 @@ func TestRecoverReturnsProblem(t *testing.T) {
 	rt.HandleFunc("GET /boom", func(http.ResponseWriter, *http.Request) { panic("secret-token-value") })
 	h := Chain(rt, Standard(testLogger(&buf))...)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d", rec.Code)
@@ -108,7 +108,7 @@ func TestRecoverAfterResponseStarted(t *testing.T) {
 	})
 	h := Chain(rt, Standard(testLogger(&buf))...)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/half", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/half", nil))
 	if rec.Code != http.StatusAccepted || rec.Body.Len() != 0 {
 		t.Fatalf("response was changed after it started: %d %q", rec.Code, rec.Body.String())
 	}
@@ -124,13 +124,13 @@ func TestRecoverRepanicsAbortHandler(t *testing.T) {
 			t.Fatal("http.ErrAbortHandler was swallowed")
 		}
 	}()
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/abort", nil))
 }
 
 func TestAccessLogNeverContainsQueryOrAuthorization(t *testing.T) {
 	var buf bytes.Buffer
 	h, _ := newOKHandler(&buf)
-	req := httptest.NewRequest(http.MethodGet, "/ok/ses_topsecretvalue?token=querysecret&X-Amz-Signature=sig", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok/ses_topsecretvalue?token=querysecret&X-Amz-Signature=sig", nil)
 	req.Header.Set("Authorization", "Bearer headersecret")
 	req.Header.Set("Cookie", "sid=cookiesecret")
 	h.ServeHTTP(httptest.NewRecorder(), req)
@@ -154,7 +154,7 @@ func TestAccessLogUnmatchedRouteAndOddMethod(t *testing.T) {
 	var buf bytes.Buffer
 	h, _ := newOKHandler(&buf)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("BREW", "/nope/secret-path?x=1", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), "BREW", "/nope/secret-path?x=1", nil))
 	line := buf.String()
 	if !strings.Contains(line, `"route":"unmatched"`) || !strings.Contains(line, `"method":"OTHER"`) || strings.Contains(line, "secret-path") {
 		t.Fatalf("unexpected log line: %s", line)
@@ -169,13 +169,13 @@ func TestRouterProblems(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/missing", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil))
 	if rec.Code != 404 || problemOf(t, rec).Code != errs.NotFound {
 		t.Fatalf("404 case: %d %s", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ok/1", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ok/1", nil))
 	if rec.Code != 405 || problemOf(t, rec).Code != errs.MethodNotAllowed {
 		t.Fatalf("405 case: %d %s", rec.Code, rec.Body.String())
 	}
@@ -192,7 +192,7 @@ func TestStrictErrorHandlers(t *testing.T) {
 	mk := func(fn func(http.ResponseWriter, *http.Request, error), err error) *httptest.ResponseRecorder {
 		h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fn(w, r, err) }), Standard(testLogger(&buf))...)
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 		return rec
 	}
 
@@ -248,7 +248,7 @@ func TestServeGracefulShutdown(t *testing.T) {
 			got <- result{err: err}
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		b, err := io.ReadAll(resp.Body)
 		got <- result{string(b), err}
 	}()
@@ -272,7 +272,7 @@ func TestServeGracefulShutdown(t *testing.T) {
 		t.Fatal("handler did not finish")
 	}
 	// The listener is closed: new connections are refused.
-	if c, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second); err == nil {
+	if c, err := (&net.Dialer{Timeout: time.Second}).DialContext(context.Background(), "tcp", ln.Addr().String()); err == nil {
 		_ = c.Close()
 		t.Fatal("listener still accepting after shutdown")
 	}

@@ -55,9 +55,11 @@ func Serve(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Du
 	defer cancel()
 	if err := srv.Shutdown(sctx); err != nil {
 		_ = srv.Close()
-		<-errc
+		<-errc //nolint:errcheck // Serve's result is http.ErrServerClosed after Close
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
-	<-errc // http.ErrServerClosed
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve: %w", err)
+	}
 	return nil
 }

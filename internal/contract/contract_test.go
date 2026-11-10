@@ -149,7 +149,7 @@ func do(t *testing.T, base, method, path string, hdr map[string]string) exchange
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
