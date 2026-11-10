@@ -32,8 +32,8 @@ func TestClassify(t *testing.T) {
 		{"unregistered code retries", errs.New(errs.Code("made_up"), "x"), false, "internal_error"},
 		{"unknown error retries", errors.New(secret), false, "internal_error"},
 		{"context deadline retries", context.DeadlineExceeded, false, "timeout"},
-		// A registered code that is not marked retryable is final, even internal_error.
-		{"explicit internal error is final", errs.New(errs.InternalError, "x"), true, "internal_error"},
+		// internal_error retries in jobs: it is usually an unclassified, possibly transient failure.
+		{"explicit internal error retries", errs.New(errs.InternalError, "x"), false, "internal_error"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

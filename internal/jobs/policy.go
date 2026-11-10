@@ -43,12 +43,19 @@ func Cancel(err error) error { return cancelWith(codeOf(err)) }
 // cancelWith cancels the job and records code as its last error.
 func cancelWith(code string) error { return river.JobCancel(failure{code: code}) }
 
-// Retryable reports whether err should be retried: a registered code with Retryable set, an
-// unregistered code, or any error that is not an *errs.Error. Only a registered, non-retryable
-// code is final.
+// Retryable reports whether err should be retried: a registered code with Retryable set,
+// internal_error, an unregistered code, or any error that is not an *errs.Error. Only a registered
+// code that says the work can never succeed (for example invalid_request or not_found) is final.
+//
+// internal_error is not retryable for HTTP clients (ADR 0012), but in a job it usually means an
+// unclassified, possibly transient failure (the database layer maps unknown driver errors to it).
+// Jobs are idempotent, so it retries with backoff up to the kind's limit and is then dead-lettered.
 func Retryable(err error) bool {
 	var e *errs.Error
 	if !errors.As(err, &e) {
+		return true
+	}
+	if e.Code == errs.InternalError {
 		return true
 	}
 	info, ok := errs.Lookup(e.Code)

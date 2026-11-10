@@ -88,9 +88,10 @@ goose migrations and then River's schema (through River's migrator, pinned by th
   what lets a state change and the job that must follow it succeed or fail together.
 - **Retry policy.** Each kind has its own attempt limit (default 5, counting the first run) and
   backoff (default: 15 seconds doubling to a 30 minute cap). A handler that returns an `*errs.Error`
-  whose registered code is not retryable (ADR 0012) has its job **cancelled at once**. A retryable
-  code, an unregistered code and any other error retry with backoff until the limit, then the job is
-  **discarded**. A panic is retried as an internal error. `jobs.Snooze` waits without using an
+  whose registered code means the work can never succeed (for example `invalid_request`, `not_found`,
+  `forbidden`, `conflict`) has its job **cancelled at once**. A retryable code, `internal_error`
+  (usually an unclassified, possibly transient failure), an unregistered code and any other error
+  retry with backoff until the limit, then the job is **discarded**. A panic is retried as an internal error. `jobs.Snooze` waits without using an
   attempt.
 - **Dead-letter list.** Cancelled and discarded jobs are the dead letters. `Queue.ListDead` pages
   through them newest first and shows the kind, state, attempts, timestamps and the **last error
