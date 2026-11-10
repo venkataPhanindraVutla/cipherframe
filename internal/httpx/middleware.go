@@ -87,14 +87,17 @@ func AccessLog() Middleware {
 				route = "unmatched"
 			}
 			level := slog.LevelInfo
-			if rec.Status() >= 500 {
+			switch st := rec.Status(); {
+			case st == http.StatusServiceUnavailable: // an unready dependency, not a server bug
+				level = slog.LevelWarn
+			case st >= 500:
 				level = slog.LevelError
 			}
 			Logger(r.Context()).LogAttrs(r.Context(), level, "request",
 				slog.String("method", knownMethod(r.Method)),
 				slog.String("route", route),
 				slog.Int("status", rec.Status()),
-				slog.Duration("duration", time.Since(start)),
+				slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
 			)
 		})
 	}

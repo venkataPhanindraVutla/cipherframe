@@ -145,7 +145,7 @@ func TestAccessLogNeverContainsQueryOrAuthorization(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatalf("log is not one JSON line: %v: %s", err, line)
 	}
-	if rec["method"] != "GET" || rec["route"] != "GET /ok/{id}" || rec["status"] != float64(204) || rec["request_id"] == nil || rec["duration"] == nil {
+	if rec["method"] != "GET" || rec["route"] != "GET /ok/{id}" || rec["status"] != float64(204) || rec["request_id"] == nil || rec["duration_ms"] == nil {
 		t.Fatalf("unexpected access log fields: %v", rec)
 	}
 }
