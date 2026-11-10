@@ -1,0 +1,18 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # HTTP response bodies are closed
+    - errorlint # wrapped errors compared with errors.Is / errors.As
+    - gosec # security-sensitive patterns (exec, crypto, file permissions)
+    - misspell
+    - noctx # outbound HTTP requests carry a context
+    - unconvert
+
+formatters:
+  enable:
+    - gofumpt
