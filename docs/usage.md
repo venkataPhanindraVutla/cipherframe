@@ -1,6 +1,7 @@
 # Usage
 
-> Status: skeleton (M0-4). Nothing is runnable yet.
+> Status: skeleton (M1-6). `cipherframe-server` starts and serves health and readiness; the rest of
+> the flow below is planned.
 
 ## Planned flow
 
@@ -15,6 +16,53 @@
 9. Verify the record with the public-key-only verifier.
 
 The `cipherframe` CLI (M8-1) covers each step.
+
+## Running the server
+
+`cipherframe-server` is one binary with three roles (ADR 0008). Choose the roles with `--role`, a
+comma-separated list of `api`, `edge` and `worker`:
+
+```sh
+export CIPHERFRAME_DATABASE_URL=... CIPHERFRAME_S3_SOURCE_BUCKET=... # see Configuration below
+cipherframe-server migrate                    # apply database migrations and exit
+cipherframe-server --role=api                 # control plane on CIPHERFRAME_API_LISTEN
+cipherframe-server --role=edge                # data plane on CIPHERFRAME_EDGE_LISTEN
+cipherframe-server --role=worker              # background jobs (idle until the queue lands)
+cipherframe-server --role=api,edge,worker --migrate   # everything in one process (development)
+```
+
+| Flag or command | Meaning |
+| --- | --- |
+| `--role` | Required. `api`, `edge`, `worker` or a comma-separated list. An unknown or repeated role is an error. |
+| `--migrate` | Apply pending database migrations before serving. **Default off.** |
+| `migrate` | Subcommand: apply pending migrations and exit. Takes no other arguments. |
+
+On start the server loads the configuration (stopping with the variable names, never values, if it
+is invalid), connects to the database, refuses PostgreSQL older than version 16, and then, only with
+`--migrate`, applies migrations. Migrations are serialised with a Postgres advisory lock, so several
+instances started with `--migrate` at once are safe. For a deployment with many replicas, prefer
+running `migrate` once as a separate step.
+
+Each HTTP listener has a 10 second header-read timeout, a 30 second read timeout, a 60 second
+write timeout, a 120 second idle timeout and a 32 KiB header limit. Logs are JSON on stderr at
+`CIPHERFRAME_LOG_LEVEL`.
+
+**Shutdown.** `SIGINT` or `SIGTERM` stops accepting connections, lets in-flight requests finish for
+up to 25 seconds, then closes the rest and exits. A second signal terminates immediately. The
+`worker` role currently logs that no job kinds are registered and waits for the signal.
+
+**Health.** `GET /healthz` (liveness) and `GET /readyz` (readiness: database, source bucket,
+delivery bucket) are served on both the api and edge listeners. See [api.md](api.md).
+
+### What running the server does not protect against
+
+- `/healthz` and `/readyz` are public by design. They reveal that the service is up and the names
+  and pass/fail of its dependency checks, nothing more (no host names, error text or credentials).
+  Keep the api listener off the public internet.
+- There is no authentication yet (API keys arrive with M1-7), and the server speaks plain HTTP: put
+  a TLS-terminating proxy in front of both listeners.
+- Running every role in one process (`--role=api,edge,worker`) removes failure isolation between
+  them. It is meant for development; deploy roles separately in production (ADR 0008).
 
 ## Configuration
 
