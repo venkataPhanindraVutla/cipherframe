@@ -755,3 +755,34 @@ func TestCancelledContextMapsToTimeout(t *testing.T) {
 	_, err := r.GetTenant(ctx, id.New[id.TenantKind]())
 	wantCode(t, err, errs.Timeout)
 }
+
+// TestMigrateConcurrentlySmallPool reproduces CI runners with two CPUs, where pgxpool defaults to
+// four connections: four concurrent Migrate calls must not deadlock on pool exhaustion.
+func TestMigrateConcurrentlySmallPool(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	base, _ := newDatabase(t)
+	cfg := base.Config().Copy()
+	cfg.MaxConns = 4
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	var wg sync.WaitGroup
+	errc := make(chan error, 6)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errc <- db.Migrate(ctx, pool)
+		}()
+	}
+	wg.Wait()
+	close(errc)
+	for err := range errc {
+		if err != nil {
+			t.Fatalf("concurrent migrate on a 4-connection pool: %v", err)
+		}
+	}
+}

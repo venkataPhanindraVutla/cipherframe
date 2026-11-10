@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -55,20 +56,23 @@ func migrateGoose(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-// migrateRiver applies River's schema. The advisory lock is session-scoped, so it is taken and
-// released on one dedicated connection.
+// riverLockPoll is how often a caller waiting for the River migration lock tries again.
+const riverLockPoll = 250 * time.Millisecond
+
+// migrateRiver applies River's schema with River's own Migrate (which may split migrations across
+// transactions) while holding a session advisory lock. Waiting callers poll the lock with
+// pg_try_advisory_lock and hand their connection back between attempts, so they never sit on
+// pool connections that the lock holder's migrator needs. Holding a lock connection plus
+// migrating needs a pool of at least two connections.
 func migrateRiver(ctx context.Context, pool *pgxpool.Pool) error {
-	conn, err := pool.Acquire(ctx)
+	conn, err := acquireRiverLock(ctx, pool)
 	if err != nil {
-		return fmt.Errorf("db: river migrations: %w", mapError(err))
-	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", riverLockKey); err != nil {
-		return fmt.Errorf("db: river migrations lock: %w", mapError(err))
+		return err
 	}
 	defer func() {
 		// The caller's context may be cancelled; the lock must still be released.
 		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", riverLockKey)
+		conn.Release()
 	}()
 
 	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
@@ -79,6 +83,30 @@ func migrateRiver(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("db: apply river migrations: %w", mapError(err))
 	}
 	return nil
+}
+
+// acquireRiverLock returns a connection that holds the River migration lock.
+func acquireRiverLock(ctx context.Context, pool *pgxpool.Pool) (*pgxpool.Conn, error) {
+	for {
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("db: river migrations: %w", mapError(err))
+		}
+		var locked bool
+		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", riverLockKey).Scan(&locked); err != nil {
+			conn.Release()
+			return nil, fmt.Errorf("db: river migrations lock: %w", mapError(err))
+		}
+		if locked {
+			return conn, nil
+		}
+		conn.Release()
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("db: river migrations lock: %w", mapError(ctx.Err()))
+		case <-time.After(riverLockPoll):
+		}
+	}
 }
 
 // MapError classifies a driver error as an *errs.Error (ADR 0012) exactly as the repositories do.
