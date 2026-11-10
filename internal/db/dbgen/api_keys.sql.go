@@ -197,6 +197,57 @@ func (q *Queries) GetActiveAPIKeyByPrefix(ctx context.Context, prefix string) (G
 	return i, err
 }
 
+const listAPIKeysPage = `-- name: ListAPIKeysPage :many
+SELECT k.id, k.client_id, k.name, k.prefix, k.secret_hash, k.pepper_version, k.scopes, k.previous_secret_hash, k.previous_pepper_version, k.previous_valid_until, k.created_at, k.rotated_at, k.revoked_at, k.last_used_at FROM api_keys k
+JOIN clients c ON c.id = k.client_id
+WHERE c.tenant_id = $1::uuid
+  AND ($2::uuid IS NULL OR k.id > $2::uuid)
+ORDER BY k.id
+LIMIT $3::integer
+`
+
+type ListAPIKeysPageParams struct {
+	TenantID pgtype.UUID
+	AfterID  pgtype.UUID
+	MaxRows  int32
+}
+
+// The tenant's keys, revoked ones included, keyset-paginated on the UUIDv7 id (creation order).
+func (q *Queries) ListAPIKeysPage(ctx context.Context, arg ListAPIKeysPageParams) ([]ApiKey, error) {
+	rows, err := q.db.Query(ctx, listAPIKeysPage, arg.TenantID, arg.AfterID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApiKey
+	for rows.Next() {
+		var i ApiKey
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClientID,
+			&i.Name,
+			&i.Prefix,
+			&i.SecretHash,
+			&i.PepperVersion,
+			&i.Scopes,
+			&i.PreviousSecretHash,
+			&i.PreviousPepperVersion,
+			&i.PreviousValidUntil,
+			&i.CreatedAt,
+			&i.RotatedAt,
+			&i.RevokedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeAPIKey = `-- name: RevokeAPIKey :one
 UPDATE api_keys AS k
 SET revoked_at = COALESCE(k.revoked_at, $1::timestamptz)

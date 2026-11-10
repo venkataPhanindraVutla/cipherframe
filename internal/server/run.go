@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge"
@@ -71,6 +72,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		}
 	}
 
+	// Refuse to serve when an active key was hashed with a pepper that is no longer configured
+	// (ADR 0016); the error names version numbers only.
+	repos := db.New(pool)
+	if err := auth.CheckPeppers(ctx, repos, cfg.Peppers, time.Now()); err != nil {
+		return fmt.Errorf("peppers: %w", err)
+	}
+
 	buckets, err := storage.New(ctx, cfg.S3)
 	if err != nil {
 		return fmt.Errorf("storage: %w", err)
@@ -90,7 +98,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		}
 	}
 	if Has(opts.Roles, RoleAPI) {
-		s, err := newHTTPService("api", cfg.APIListen, api.New(api.Deps{Log: log, Ready: ready}).Handler(), log)
+		handler := api.New(api.Deps{
+			Log:      log,
+			Ready:    ready,
+			Verifier: auth.NewVerifier(repos, cfg.Peppers, log, nil),
+			Manager:  auth.NewManager(pool, cfg.Peppers, nil),
+		}).Handler()
+		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
 			cleanup()
 			return err

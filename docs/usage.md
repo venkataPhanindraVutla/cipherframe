@@ -36,12 +36,39 @@ cipherframe-server --role=api,edge,worker --migrate   # everything in one proces
 | `--role` | Required. `api`, `edge`, `worker` or a comma-separated list. An unknown or repeated role is an error. |
 | `--migrate` | Apply pending database migrations before serving. **Default off.** |
 | `migrate` | Subcommand: apply pending migrations and exit. Takes no other arguments. |
+| `admin bootstrap` | Subcommand: create the first tenant, client and admin key (see below). |
+| `admin pepper-usage` | Subcommand: print active API-key counts per pepper version. |
 
 On start the server loads the configuration (stopping with the variable names, never values, if it
 is invalid), connects to the database, refuses PostgreSQL older than version 16, and then, only with
 `--migrate`, applies migrations. Migrations are serialised with a Postgres advisory lock, so several
 instances started with `--migrate` at once are safe. For a deployment with many replicas, prefer
 running `migrate` once as a separate step.
+
+On start the server also refuses to serve if an active API key was hashed with a pepper version
+that is not in `CIPHERFRAME_API_KEY_PEPPERS` (ADR 0016); the error names version numbers only.
+
+### First tenant and admin key
+
+After migrating, create the first tenant, client and admin key (all five scopes) in one transaction:
+
+```sh
+ADMIN_KEY="$(cipherframe-server admin bootstrap --tenant-name "Acme" --client-name "Main app")"
+```
+
+The key is the **only** thing written to stdout; the tenant, client and key IDs go to the JSON log on
+stderr. The full key is shown once and is not stored: keep it in a secret store. Use it to create
+further clients and keys through the API (see [api.md](api.md)); then prefer narrower keys for
+day-to-day work. The command needs the same database and pepper configuration as the server, and
+every run creates a new tenant.
+
+To see which pepper versions active keys still use (for example before removing an old pepper):
+
+```sh
+cipherframe-server admin pepper-usage
+# version 1: 2 active keys
+# version 2: 5 active keys (current)
+```
 
 Each HTTP listener has a 10 second header-read timeout, a 30 second read timeout, a 60 second
 write timeout, a 120 second idle timeout and a 32 KiB header limit. Logs are JSON on stderr at

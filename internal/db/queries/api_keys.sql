@@ -72,3 +72,12 @@ FROM (
 ) AS refs
 GROUP BY version
 ORDER BY version;
+
+-- name: ListAPIKeysPage :many
+-- The tenant's keys, revoked ones included, keyset-paginated on the UUIDv7 id (creation order).
+SELECT k.* FROM api_keys k
+JOIN clients c ON c.id = k.client_id
+WHERE c.tenant_id = sqlc.arg(tenant_id)::uuid
+  AND (sqlc.narg(after_id)::uuid IS NULL OR k.id > sqlc.narg(after_id)::uuid)
+ORDER BY k.id
+LIMIT sqlc.arg(max_rows)::integer;
