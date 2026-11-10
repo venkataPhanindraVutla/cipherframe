@@ -2,6 +2,8 @@
 /cipherframe-server
 /cipherframe
 /bin/
+/cipherframe-server
+/cipherframe
 /dist/
 *.test
 *.out
