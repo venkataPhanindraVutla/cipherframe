@@ -47,9 +47,15 @@ func run(args []string) int {
 	info := version.Get()
 	log.InfoContext(ctx, "starting", slog.String("version", info.Version), slog.String("commit", info.Commit))
 
-	if cmd.MigrateOnly {
+	switch {
+	case cmd.MigrateOnly:
 		err = server.Migrate(ctx, cfg, log)
-	} else {
+	case cmd.Admin != nil && cmd.Admin.Action == server.AdminBootstrap:
+		// The key goes to stdout and nothing else does; the log is on stderr.
+		err = server.Bootstrap(ctx, cfg, log, os.Stdout, cmd.Admin.TenantName, cmd.Admin.ClientName)
+	case cmd.Admin != nil:
+		err = server.PepperUsage(ctx, cfg, log, os.Stdout)
+	default:
 		err = server.Run(ctx, cfg, log, cmd.Options)
 	}
 	if err != nil {
