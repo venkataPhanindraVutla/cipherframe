@@ -112,8 +112,8 @@ CI runs the repository tests on 16 and 18.
   `conflict`, connection loss and timeouts are `dependency_unavailable` and `timeout`, and anything
   unrecognised is `internal_error`. An unknown failure is never reported as `not_found`.
 - **Migrations** are plain SQL files in `internal/db/migrations/`, embedded in the binary and applied
-  by goose through `db.Migrate`. The call is idempotent, and a Postgres advisory lock serialises
-  instances that start together. `sqlc` reads the same files to generate the typed queries in
+  by goose through `db.Migrate`, which then applies River's schema too (see [Jobs](#jobs)). The call
+  is idempotent, and a Postgres advisory lock serialises instances that start together. `sqlc` reads the same files to generate the typed queries in
   `internal/db/dbgen`; CI runs `sqlc diff` to catch stale generated code.
 
 **What the datastore does not protect against.** Anyone with access to the database, such as an
@@ -122,6 +122,61 @@ without the pepper does not reveal usable API keys (ADR 0009), but a leaked data
 the pepper lets an attacker test candidate keys. Backups hold key hashes and, later, wrapped content
 key material for as long as they exist; how backups are covered by deletion is described in the
 deletion documentation, not here.
+
+## Jobs
+
+Background work runs on **River** (ADR 0007) behind Cipherframe's own interface in `internal/jobs`:
+handlers register typed job kinds and never import River types. `db.Migrate` applies Cipherframe's
+goose migrations and then River's schema (through River's migrator, pinned by the version in
+`go.mod`, under its own advisory lock), so one call brings a database up to date.
+
+- **Transactional enqueue.** `Queue.Enqueue(ctx, tx, args, opts)` inserts the job in the caller's
+  transaction. If the transaction rolls back, no job exists; if it commits, the job runs. This is
+  what lets a state change and the job that must follow it succeed or fail together.
+- **Retry policy.** Each kind has its own attempt limit (default 5, counting the first run) and
+  backoff (default: 15 seconds doubling to a 30 minute cap). A handler that returns an `*errs.Error`
+  whose registered code means the work can never succeed (for example `invalid_request`, `not_found`,
+  `forbidden`, `conflict`) has its job **cancelled at once**. A retryable code, `internal_error`
+  (usually an unclassified, possibly transient failure), an unregistered code and any other error
+  retry with backoff until the limit, then the job is **discarded**. A panic is retried as an internal error. `jobs.Snooze` waits without using an
+  attempt.
+- **Dead-letter list.** Cancelled and discarded jobs are the dead letters. `Queue.ListDead` pages
+  through them newest first and shows the kind, state, attempts, timestamps and the **last error
+  code only**; `Queue.RetryDead` puts one back in the queue. No arguments and no error text are
+  returned, and River is only ever given a fixed text holding the error code, so a handler's error
+  (which could quote a signed URL or an object key) is never stored in the job's error history.
+- **Hand-off to external workers** (ADR 0010). River cannot be worked from Python, so work for a
+  non-Go worker goes through the `external_tasks` table. `Queue.CreateTask` writes a row holding a
+  versioned JSON envelope and a River "await" job in the same transaction. An external worker claims
+  rows with `FOR UPDATE SKIP LOCKED`, keeps a lease alive by heartbeat and writes a result; the
+  protocol, with the exact SQL, is in [`spec/jobs/README.md`](../spec/jobs/README.md) and the
+  envelope and result are JSON Schemas (`spec/jobs/*.schema.json`) with test vectors that both the Go
+  side and any worker must pass. The await job snoozes while the task is pending or leased; when the
+  task succeeded it hands the parsed result, including the derived artifacts the Go side must
+  register (invariant I6), to a callback; a retryable failure puts the task back to pending with the
+  attempt number plus one until `max_attempts`; a non-retryable failure, or an exhausted one, cancels
+  the await job into the dead-letter list. A lease that expires is reclaimable by another worker,
+  and each reclaim counts as an attempt, so a task that keeps crashing its workers ends as a
+  `lease_expired` failure instead of looping. Only the lease holder can heartbeat, complete or fail a
+  task. A stored result that does not follow the contract is never acted on: the await job is
+  cancelled with the code `invalid_result`.
+
+**What the job system does not protect against.**
+
+- Delivery is **at-least-once**. A job can run again after a crash, a timeout or a lost database
+  connection, and the result callback of an external task can run more than once. Handlers and
+  callbacks must be idempotent.
+- An external worker with database access to its table **can read every task envelope** of the kinds
+  it claims and can write any task's result. The dedicated database role in `spec/jobs/README.md`
+  keeps it away from every other table, but it is a boundary around the worker, not between tenants.
+  Envelopes carry identifiers and parameters only: never secrets, tokens, signed URLs or source object
+  keys.
+- Whoever can read the database can read job arguments (River stores them as JSON), so arguments must
+  not hold secrets either.
+- Retrying a dead external task from the dead-letter list is not supported when its task failed
+  non-retryably or has run out of attempts; the await job would cancel it again at once. Create a new task instead.
+- The await job polls on River's scheduling interval (a few seconds), so a result is acted on with
+  that much delay.
 
 ## Keys
 

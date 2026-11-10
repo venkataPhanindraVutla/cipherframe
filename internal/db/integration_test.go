@@ -154,7 +154,7 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 			t.Fatalf("migrate run %d: %v", i+1, err)
 		}
 	}
-	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events"} {
+	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "external_tasks", "river_job", "river_migration"} {
 		var n int
 		err := pool.QueryRow(ctx,
 			"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
@@ -167,13 +167,20 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id > 0").Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 1 {
-		t.Fatalf("applied migrations = %d, want 1", applied)
+	if applied != 2 {
+		t.Fatalf("applied migrations = %d, want 2", applied)
 	}
-	// River tables belong to the next task.
-	var river int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_name LIKE 'river%'").Scan(&river); err != nil || river != 0 {
-		t.Fatalf("unexpected river tables: %d %v", river, err)
+	// River's schema is applied by the same call and is not re-applied by a further run.
+	var riverVersions int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM river_migration").Scan(&riverVersions); err != nil || riverVersions == 0 {
+		t.Fatalf("river migrations recorded = %d, err = %v", riverVersions, err)
+	}
+	if err := db.Migrate(ctx, pool); err != nil {
+		t.Fatalf("third migrate: %v", err)
+	}
+	var after int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM river_migration").Scan(&after); err != nil || after != riverVersions {
+		t.Fatalf("river migrations after a further run = %d, want %d (err %v)", after, riverVersions, err)
 	}
 }
 

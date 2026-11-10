@@ -1,0 +1,10 @@
+{
+  "envelope_version": 1,
+  "task_id": "0190a1b2-c3d4-7e5f-8a6b-0123456789ab",
+  "kind": "ml.embed",
+  "tenant_id": "ten_06gwdaegq9t2h274zqfhnv16ec",
+  "attempt": 1,
+  "created_at": "yesterday",
+  "trace": {},
+  "payload": {}
+}

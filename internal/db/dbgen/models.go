@@ -55,6 +55,22 @@ type Client struct {
 	DisabledAt *time.Time
 }
 
+type ExternalTask struct {
+	ID          pgtype.UUID
+	Kind        string
+	Envelope    []byte
+	State       string
+	Attempts    int32
+	MaxAttempts int32
+	LeaseOwner  *string
+	LeaseUntil  *time.Time
+	Result      []byte
+	RiverJobID  *int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	CompletedAt *time.Time
+}
+
 type Tenant struct {
 	ID         pgtype.UUID
 	Name       string
