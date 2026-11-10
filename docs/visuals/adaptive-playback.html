@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adaptive playback simulator</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.51.0/dist/tabler-icons.min.css">
+<style>
+:root {
+  --surface-0: #f5f4ef;
+  --surface-1: #f0eee6;
+  --surface-2: #ffffff;
+  --text-primary: #1f1e1d;
+  --text-secondary: #5f5e5a;
+  --text-muted: #888780;
+  --border: rgba(31, 30, 29, 0.15);
+  --border-strong: rgba(31, 30, 29, 0.3);
+  --bg-accent: #e6f1fb;
+  --text-accent: #185fa5;
+  --border-accent: #378add;
+  --bg-success: #eaf3de;
+  --text-success: #3b6d11;
+  --border-success: #97c459;
+  --bg-danger: #fcebeb;
+  --text-danger: #a32d2d;
+  --border-danger: #f09595;
+  --radius: 8px;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-0: #1a1a19;
+    --surface-1: #262624;
+    --surface-2: #30302e;
+    --text-primary: #ecebe6;
+    --text-secondary: #b4b2a9;
+    --text-muted: #888780;
+    --border: rgba(236, 235, 230, 0.15);
+    --border-strong: rgba(236, 235, 230, 0.3);
+    --bg-accent: #0c447c;
+    --text-accent: #b5d4f4;
+    --border-accent: #378add;
+    --bg-success: #27500a;
+    --text-success: #c0dd97;
+    --border-success: #639922;
+    --bg-danger: #791f1f;
+    --text-danger: #f7c1c1;
+    --border-danger: #e24b4a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; }
+.lede { color: var(--text-secondary); margin: 0 0 24px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+button {
+  font: inherit; font-size: 13px; color: var(--text-primary);
+  background: transparent; border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius); padding: 6px 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+button:hover { background: var(--surface-1); }
+button:active { transform: scale(0.98); }
+input[type="range"] { accent-color: var(--border-accent); }
+.footnote { font-size: 13px; color: var(--text-muted); margin-top: 24px; }
+</style>
+<style>
+.cr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.cr button.on{border-color:var(--border-accent);color:var(--text-accent);background:var(--bg-accent)}
+.mg{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;margin:10px 0}
+.m{background:var(--surface-1);border-radius:var(--radius);padding:8px 10px}
+.m span{display:block;font-size:12px;color:var(--text-secondary)}
+.m b{font-size:18px;font-weight:500}
+.cap{font-size:12px;color:var(--text-secondary);margin:10px 0 4px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.sw{display:inline-block;width:12px;height:3px;vertical-align:middle;margin-right:5px}
+canvas{width:100%;display:block;border-radius:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>Adaptive playback</h1>
+<p class="lede">A simplified model of how the player picks a quality for every segment. Pick a network story, press play, and drag the network slider any time. The rules: start low, keep a buffer, use a cautious speed estimate, climb slowly, drop fast, and abandon downloads that would stall.</p>
+<h2 class="sr-only">Adaptive bitrate playback simulator: choose a network scenario or drag the network speed, and watch the player measure throughput, keep a buffer, and switch between 240p and 720p segments while playing.</h2>
+<div class="cr" id="sc"></div>
+<div class="cr"><button id="pp"><i class="ti ti-player-play" aria-hidden="true"></i> Play</button><button id="rs"><i class="ti ti-refresh" aria-hidden="true"></i> Restart</button><span style="font-size:13px;color:var(--text-secondary)">Network</span><input type="range" id="bw" min="200" max="7000" step="100" value="3000" style="flex:1;min-width:120px" aria-label="Network speed"><span id="bwl" style="font-size:13px;min-width:72px;text-align:right">3.0 Mbps</span></div>
+<canvas id="scr" width="1280" height="720" style="aspect-ratio:16/9;background:#1f2a33"></canvas>
+<div class="cap">Buffer: the next 30 seconds, coloured by quality
+<span><span class="sw" style="background:#9FE1CB;height:10px"></span>240p</span><span><span class="sw" style="background:#5DCAA5;height:10px"></span>360p</span><span><span class="sw" style="background:#1D9E75;height:10px"></span>480p</span><span><span class="sw" style="background:#0F6E56;height:10px"></span>720p</span><span><span class="sw" style="border:1px solid #D85A30;height:10px"></span>downloading</span></div>
+<canvas id="buf" width="1280" height="70"></canvas>
+<div class="mg">
+<div class="m"><span>Playing</span><b id="mP">-</b></div>
+<div class="m"><span>Buffer ahead</span><b id="mB">0 s</b></div>
+<div class="m"><span>Speed estimate</span><b id="mE">-</b></div>
+<div class="m"><span>Quality switches</span><b id="mS">0</b></div>
+<div class="m"><span>Stalls</span><b id="mT">0</b></div>
+<div class="m"><span>Rescued downloads</span><b id="mA">0</b></div>
+</div>
+<div class="cap"><span><span class="sw" style="background:#888780"></span>actual network speed</span><span><span class="sw" style="background:#D85A30"></span>quality being downloaded</span><span>last 90 seconds of playback</span></div>
+<canvas id="ch" width="1280" height="300"></canvas>
+<p class="footnote">Illustrative model, not the production player. Ladder, segment length and thresholds are examples; encoding defaults are gate P8 and the reference player is gate P13. The crisp viewer text over the picture is the client-side overlay watermark (invariant I3).</p>
+</main>
+<script>
+const L=[{n:'240p',k:400,w:48},{n:'360p',k:800,w:72},{n:'480p',k:1400,w:104},{n:'720p',k:2600,w:176}];
+const BC=['#9FE1CB','#5DCAA5','#1D9E75','#0F6E56'],SEG=4,TOT=180,MAXB=24;
+const SC={'Steady Wi-Fi':t=>5200+500*nz(t),'Commute':t=>Math.max(300,2500+1700*Math.sin(t/13)+500*nz(t)),'Train tunnel':t=>{const m=t%120;return m>40&&m<62?250:4200+300*nz(t)},'Manual':()=>man};
+let man=3000,scn='Commute',run=false,S;
+function nz(t){return Math.sin(t*1.7)*Math.sin(t*.37+1)}
+function reset(){S={t:0,pos:0,segs:[],dl:null,fast:700,slow:700,est:700,started:false,stalled:false,stalls:0,sw:0,ab:0,last:-1,key:.4,hist:[],ht:0,done:false,bw:0}}
+const ahead=()=>S.segs.length*SEG-S.pos;
+function choose(){if(!S.segs.length)return 0;const a=ahead(),f=a<6?.6:.8;let c=0;L.forEach((l,i)=>{if(l.k<=S.est*f)c=i});if(c>S.last)c=a<8?S.last:S.last+1;return c}
+function step(dt){
+ const bw=Math.max(150,SC[scn](S.t));S.bw=bw;
+ if(S.key>0)S.key-=dt;else{
+  if(!S.dl&&S.segs.length<TOT&&ahead()<MAXB){const lv=choose();S.dl={lv,left:L[lv].k*SEG,tot:L[lv].k*SEG,el:0};if(S.last>=0&&lv!==S.last)S.sw++;S.last=lv}
+  if(S.dl){const d=S.dl;d.left-=bw*dt;d.el+=dt;
+   if(d.left<=0){const r=d.tot/d.el;S.fast=.5*r+.5*S.fast;S.slow=.15*r+.85*S.slow;S.est=Math.min(S.fast,S.slow);S.segs.push(d.lv);S.dl=null}
+   else if(d.lv>0&&d.el>.8){const r=(d.tot-d.left)/d.el,eta=d.left/Math.max(r,1);if(eta>2&&eta>ahead()-.5){S.ab++;S.fast=S.slow=S.est=r;S.dl=null;S.last=Math.max(0,d.lv-1)}}}
+ }
+ const a=ahead();
+ if(!S.started){if(a>=SEG)S.started=true}
+ else if(S.stalled){if(a>=SEG||S.segs.length===TOT)S.stalled=false}
+ else{S.pos=Math.min(S.pos+dt,S.segs.length*SEG);if(S.pos>=TOT*SEG){S.done=true;run=false;btn()}else if(ahead()<=.001){S.stalled=true;S.stalls++}}
+ S.t+=dt;S.ht+=dt;if(S.ht>=.5){S.ht=0;S.hist.push({t:S.t,bw,q:S.dl?L[S.dl.lv].k:(S.last>=0?L[S.last].k:null)});if(S.hist.length>200)S.hist.shift()}
+}
+const playLv=()=>S.segs.length?S.segs[Math.min(Math.floor(S.pos/SEG),S.segs.length-1)]:0;
+const off=document.createElement('canvas'),ox=off.getContext('2d');
+function scene(w,h,t){off.width=w;off.height=h;const c=ox;c.fillStyle='#C9D6DF';c.fillRect(0,0,w,h);c.fillStyle='#E8EEF2';c.fillRect(w*.62,h*.12,w*.28,h*.42);c.strokeStyle='#9AAAB6';c.lineWidth=Math.max(1,w/90);c.strokeRect(w*.62,h*.12,w*.28,h*.42);c.beginPath();c.moveTo(w*.76,h*.12);c.lineTo(w*.76,h*.54);c.stroke();c.fillStyle='#8C6A4F';c.fillRect(w*.08,h*.62,w*.1,h*.38);c.fillStyle='#5E8C61';c.beginPath();c.arc(w*.13,h*.55,w*.08,0,7);c.fill();c.fillStyle='#3B4A6B';c.beginPath();c.ellipse(w*.45,h*1.02,w*.24,h*.32,0,0,7);c.fill();c.fillStyle='#E0B08C';c.beginPath();c.arc(w*.45,h*.48,h*.17,0,7);c.fill();c.fillStyle='#3A2A20';c.beginPath();c.arc(w*.45,h*.42,h*.17,Math.PI,0);c.fill();c.fillStyle='#7A3E2E';const mo=Math.abs(Math.sin(t*5))*h*.025+h*.006;c.fillRect(w*.45-h*.04,h*.55,h*.08,mo);c.fillStyle='#2C2C2A';c.fillRect(w*.45-h*.07,h*.46,h*.025,h*.025);c.fillRect(w*.45+h*.045,h*.46,h*.025,h*.025)}
+const scr=document.getElementById('scr'),sx=scr.getContext('2d');
+function drawScreen(){const W=scr.width,H=scr.height,lv=playLv(),w=L[lv].w;scene(w,Math.round(w*9/16),S.pos);sx.imageSmoothingEnabled=false;sx.drawImage(off,0,0,W,H);
+ sx.font='500 30px sans-serif';sx.fillStyle='rgba(0,0,0,.55)';sx.fillRect(24,24,120,50);sx.fillStyle='#fff';sx.fillText(S.started?L[lv].n:'-',44,60);
+ const slot=Math.floor(S.pos/20)%4,pos=[[60,640],[760,640],[60,140],[760,140]][slot];sx.font='24px sans-serif';sx.fillStyle='rgba(255,255,255,.55)';sx.fillText('viewer: a.rao@example.com · session s_7f3a',pos[0],pos[1]);
+ if(!S.started||S.stalled){sx.fillStyle='rgba(0,0,0,.45)';sx.fillRect(0,0,W,H);sx.strokeStyle='#fff';sx.lineWidth=8;sx.beginPath();const a=performance.now()/200;sx.arc(W/2,H/2-20,40,a,a+4.2);sx.stroke();sx.font='500 34px sans-serif';sx.textAlign='center';sx.fillStyle='#fff';sx.fillText(!run&&!S.started?'Press play':(S.key>0?'Fetching key…':'Buffering…'),W/2,H/2+70);sx.textAlign='left'}
+ if(S.done){sx.fillStyle='rgba(0,0,0,.45)';sx.fillRect(0,0,W,H);sx.font='500 34px sans-serif';sx.textAlign='center';sx.fillStyle='#fff';sx.fillText('Finished',W/2,H/2);sx.textAlign='left'}}
+const bf=document.getElementById('buf'),bx=bf.getContext('2d');
+function drawBuf(){const W=bf.width,H=bf.height,win=30;bx.clearRect(0,0,W,H);bx.fillStyle='rgba(136,135,128,.15)';bx.fillRect(0,0,W,H);const i0=Math.floor(S.pos/SEG);
+ for(let i=i0;i<S.segs.length;i++){const x=(i*SEG-S.pos)/win*W,w=SEG/win*W-4;if(x>W)break;bx.fillStyle=BC[S.segs[i]];bx.fillRect(Math.max(0,x),8,w+Math.min(0,x),H-16);if(w>60&&x>=0){bx.fillStyle=S.segs[i]<2?'#04342C':'#E1F5EE';bx.font='22px sans-serif';bx.fillText(L[S.segs[i]].n,x+10,H/2+8)}}
+ if(S.dl){const x=(S.segs.length*SEG-S.pos)/win*W,w=SEG/win*W-4,p=1-S.dl.left/S.dl.tot;if(x<W){bx.fillStyle='rgba(216,90,48,.35)';bx.fillRect(x,8,w*p,H-16);bx.strokeStyle='#D85A30';bx.lineWidth=3;bx.strokeRect(x,8,w,H-16)}}
+ bx.fillStyle='#D85A30';bx.fillRect(0,0,5,H)}
+const ch=document.getElementById('ch'),cx=ch.getContext('2d');
+function drawChart(){const W=ch.width,H=ch.height,p=60,max=7000;cx.clearRect(0,0,W,H);const tc=getComputedStyle(document.body).getPropertyValue('--text-secondary')||'#888';cx.font='20px sans-serif';cx.fillStyle=tc;cx.strokeStyle='rgba(136,135,128,.25)';cx.lineWidth=1;
+ [0,2000,4000,6000].forEach(v=>{const y=H-20-(v/max)*(H-40);cx.beginPath();cx.moveTo(p,y);cx.lineTo(W,y);cx.stroke();cx.fillText(v/1000+'M',4,y+6)});
+ const h=S.hist;if(h.length<2)return;const t1=h[h.length-1].t,t0=t1-90,X=t=>p+(t-t0)/90*(W-p),Y=v=>H-20-(v/max)*(H-40);
+ cx.strokeStyle='#888780';cx.lineWidth=3;cx.beginPath();h.forEach((e,i)=>{if(e.t<t0)return;i&&h[i-1].t>=t0?cx.lineTo(X(e.t),Y(e.bw)):cx.moveTo(X(e.t),Y(e.bw))});cx.stroke();
+ cx.strokeStyle='#D85A30';cx.lineWidth=4;cx.beginPath();let m=false;h.forEach((e,i)=>{if(e.t<t0||e.q==null)return;if(!m){cx.moveTo(X(e.t),Y(e.q));m=true}else{cx.lineTo(X(e.t),Y(h[i-1].q??e.q));cx.lineTo(X(e.t),Y(e.q))}});cx.stroke()}
+const fm=k=>(k/1000).toFixed(1)+' Mbps';
+function stats(){document.getElementById('mP').textContent=S.started?L[playLv()].n:'-';document.getElementById('mB').textContent=Math.max(0,ahead()).toFixed(0)+' s';document.getElementById('mE').textContent=S.segs.length?fm(S.est):'-';document.getElementById('mS').textContent=S.sw;document.getElementById('mT').textContent=S.stalls;document.getElementById('mA').textContent=S.ab;
+ const sl=document.getElementById('bw');if(scn!=='Manual'&&S.bw)sl.value=Math.round(S.bw/100)*100;document.getElementById('bwl').textContent=fm(scn==='Manual'?man:(S.bw||man))}
+function render(){drawScreen();drawBuf();drawChart();stats()}
+const sc=document.getElementById('sc');
+function scBtns(){[...sc.children].forEach(b=>b.classList.toggle('on',b.dataset.k===scn))}
+Object.keys(SC).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.dataset.k=k;b.onclick=()=>{scn=k;scBtns()};sc.appendChild(b)});
+document.getElementById('bw').oninput=e=>{man=+e.target.value;scn='Manual';scBtns()};
+const pp=document.getElementById('pp');
+function btn(){pp.innerHTML=run?'<i class="ti ti-player-pause" aria-hidden="true"></i> Pause':'<i class="ti ti-player-play" aria-hidden="true"></i> Play'}
+pp.onclick=()=>{if(S.done)reset();run=!run;btn()};
+document.getElementById('rs').onclick=()=>{reset();run=true;btn()};
+reset();scBtns();btn();render();
+setInterval(()=>{if(run)for(let k=0;k<3;k++)step(.1);render()},60);
+</script>
+</body>
+</html>

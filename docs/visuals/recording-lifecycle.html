@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording lifecycle</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.51.0/dist/tabler-icons.min.css">
+<style>
+:root {
+  --surface-0: #f5f4ef;
+  --surface-1: #f0eee6;
+  --surface-2: #ffffff;
+  --text-primary: #1f1e1d;
+  --text-secondary: #5f5e5a;
+  --text-muted: #888780;
+  --border: rgba(31, 30, 29, 0.15);
+  --border-strong: rgba(31, 30, 29, 0.3);
+  --bg-accent: #e6f1fb;
+  --text-accent: #185fa5;
+  --border-accent: #378add;
+  --bg-success: #eaf3de;
+  --text-success: #3b6d11;
+  --border-success: #97c459;
+  --bg-danger: #fcebeb;
+  --text-danger: #a32d2d;
+  --border-danger: #f09595;
+  --radius: 8px;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-0: #1a1a19;
+    --surface-1: #262624;
+    --surface-2: #30302e;
+    --text-primary: #ecebe6;
+    --text-secondary: #b4b2a9;
+    --text-muted: #888780;
+    --border: rgba(236, 235, 230, 0.15);
+    --border-strong: rgba(236, 235, 230, 0.3);
+    --bg-accent: #0c447c;
+    --text-accent: #b5d4f4;
+    --border-accent: #378add;
+    --bg-success: #27500a;
+    --text-success: #c0dd97;
+    --border-success: #639922;
+    --bg-danger: #791f1f;
+    --text-danger: #f7c1c1;
+    --border-danger: #e24b4a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; }
+.lede { color: var(--text-secondary); margin: 0 0 24px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+button {
+  font: inherit; font-size: 13px; color: var(--text-primary);
+  background: transparent; border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius); padding: 6px 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+button:hover { background: var(--surface-1); }
+button:active { transform: scale(0.98); }
+input[type="range"] { accent-color: var(--border-accent); }
+.footnote { font-size: 13px; color: var(--text-muted); margin-top: 24px; }
+</style>
+<style>
+.stg{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.stg span{font-size:12px;padding:4px 10px;border-radius:var(--radius);border:0.5px solid var(--border);color:var(--text-secondary);cursor:pointer}
+.stg span.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.vis{min-height:230px;border:0.5px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--surface-2)}
+.row{display:flex;gap:4px;align-items:center;margin:5px 0}
+.b{height:26px;flex:1;min-width:0;border-radius:4px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:3px;background:var(--surface-1);border:0.5px solid var(--border-strong);color:var(--text-secondary);transition:background .3s}
+.b.ok{background:var(--bg-success);color:var(--text-success);border-color:var(--border-success)}
+.b.bad{background:var(--bg-danger);color:var(--text-danger);border-color:var(--border-danger)}
+.b.enc{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.b.off{opacity:.35;text-decoration:line-through}
+.lb{font-size:12px;color:var(--text-secondary);width:56px;flex:none}
+.st{font-size:13px;color:var(--text-secondary);margin-top:10px}
+pre{font-family:var(--font-mono);font-size:11px;line-height:1.5;background:var(--surface-1);border-radius:var(--radius);padding:8px 10px;margin:6px 0;white-space:pre-wrap;color:var(--text-primary)}
+.note{font-size:15px;line-height:1.7;margin:12px 0 0}
+.ctl{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+<h1>Life of a recording</h1>
+<p class="lede">From capture to ready-to-watch, one stage at a time. Segment length, ladder and bitrates are examples; the real encoding defaults are decided at gate P8.</p>
+<h2 class="sr-only">Step-by-step simulation of one recording: captured by the embedding app, uploaded in resumable parts, checked, encoded into a quality ladder, cut into aligned segments, encrypted, described by playlists, and made ready to watch.</h2>
+<div class="stg" id="stg"></div>
+<div class="vis" id="vis"></div>
+<p class="note" id="note"></p>
+<div class="ctl"><button id="pv" aria-label="Previous stage"><i class="ti ti-arrow-left" aria-hidden="true"></i></button><button id="rp"><i class="ti ti-refresh" aria-hidden="true"></i> Replay stage</button><button id="nx">Next <i class="ti ti-arrow-right" aria-hidden="true"></i></button></div>
+<p class="footnote">Illustrative only. See <a href="../architecture.md">architecture.md</a> and <a href="../encryption.md">encryption.md</a>.</p>
+</main>
+<script>
+const R=['720p','480p','360p','240p'];
+let timers=[];const T=(f,ms)=>timers.push(setTimeout(f,ms));
+const V=()=>document.getElementById('vis');
+const blocks=(n,cls,lab)=>Array.from({length:n},(_,i)=>`<div class="b ${cls}" id="x${i}">${lab(i)}</div>`).join('');
+const S=[
+{k:'Record',n:'Your app records the interview, for example in the browser. Cipherframe does not record anything: it starts once your app has a video file, here a 12-minute 720p recording.',r(){V().innerHTML=`<div class="row">${blocks(12,'',i=>'')}</div><div class="st" id="s">Recording…</div>`;for(let i=0;i<12;i++)T(()=>{const b=document.getElementById('x'+i);b.className='b ok';b.textContent=i+':00'},i*220);T(()=>document.getElementById('s').textContent='Recording finished: interview.mp4, 12 min, 720p',12*220)}},
+{k:'Upload',n:'Your app asks api for presigned part URLs, and the file goes straight to the private source bucket in parts. When the connection drops, only the unfinished part is sent again; the parts already uploaded are kept.',r(){V().innerHTML=`<div class="row">${blocks(12,'',i=>'part '+(i+1))}</div><div class="st" id="s">Uploading to the source bucket…</div>`;const s=()=>document.getElementById('s');let d=0;for(let i=0;i<6;i++)T(()=>{document.getElementById('x'+i).className='b ok'},(d+=260));T(()=>{const b=document.getElementById('x6');b.className='b bad';b.textContent='dropped';s().textContent='Connection lost on part 7. Waiting to resume…'},(d+=260));T(()=>{const b=document.getElementById('x6');b.className='b';b.textContent='part 7';s().textContent='Back online: resuming from part 7, not from the start'},(d+=1400));for(let i=6;i<12;i++)T(()=>{document.getElementById('x'+i).className='b ok'},(d+=260));T(()=>s().textContent='All 12 parts uploaded. Your app calls commit.',(d+=200))}},
+{k:'Check',n:'A worker streams the original from storage and hashes it as it reads, so the file is read only once. FFprobe, run as a separate program, reads the facts. Anything over the limits is rejected before any encoding starts.',r(){const f=[['Container','MP4'],['Video','H.264, 1280×720, 30 fps'],['Audio','AAC, stereo'],['Duration','12:00'],['Rotation','none'],['Source hash','computed while downloading']];V().innerHTML=f.map((x,i)=>`<div class="row" id="x${i}" style="opacity:.2;transition:opacity .3s"><span class="lb" style="width:110px">${x[0]}</span><span style="font-size:13px">${x[1]}</span><i class="ti ti-check" style="color:var(--text-success);margin-left:auto" aria-hidden="true"></i></div>`).join('');f.forEach((_,i)=>T(()=>document.getElementById('x'+i).style.opacity=1,i*300))}},
+{k:'Ladder',n:'One encode per quality level: a ladder. The source is 720p, so 1080p is skipped, because upscaling only adds size, not detail. Every level uses quality-targeted encoding, so a still talking head takes fewer bits than a busy scene.',r(){V().innerHTML=`<div class="row"><span class="lb">1080p</span><div class="b off" style="flex:1">skipped: source is only 720p</div></div>`+R.map((r,i)=>`<div class="row"><span class="lb">${r}</span><div class="b" id="x${i}" style="flex:1">waiting</div></div>`).join('');R.forEach((r,i)=>T(()=>{const b=document.getElementById('x'+i);b.className='b ok';b.textContent=['about 2.6 Mbps','about 1.4 Mbps','about 0.8 Mbps','about 0.4 Mbps'][i]},400+i*400))}},
+{k:'Segment',n:'Each level is cut into small segments, 4 seconds in this example. The cuts land at exactly the same moments on every level, and every segment starts with a full frame (a keyframe). That is what lets the player switch quality between segments without a glitch.',r(){V().innerHTML=`<div class="row"><span class="lb"></span>${Array.from({length:8},(_,i)=>`<div style="flex:1;font-size:11px;color:var(--text-muted);text-align:center">${i*4}s</div>`).join('')}</div>`+R.map((r,j)=>`<div class="row"><span class="lb">${r}</span>${Array.from({length:8},(_,i)=>`<div class="b" id="y${j}_${i}">seg ${i+1}</div>`).join('')}</div>`).join('')+`<div class="st">Same cut points on every row: a switch from 720p segment 3 to 360p segment 4 is seamless.</div>`;for(let i=0;i<8;i++)T(()=>R.forEach((_,j)=>document.getElementById('y'+j+'_'+i).className='b ok'),i*180)}},
+{k:'Encrypt',n:'The video gets one content key. Every segment is encrypted with it (AES-128) and written to the private delivery bucket. KMS then locks (wraps) the key with a master key that never leaves KMS, and only the locked key is stored.',r(){V().innerHTML=R.map((r,j)=>`<div class="row"><span class="lb">${r}</span>${Array.from({length:8},(_,i)=>`<div class="b ok" id="y${j}_${i}">seg ${i+1}</div>`).join('')}</div>`).join('')+`<div class="st" id="s" style="display:flex;gap:8px;align-items:center"><i class="ti ti-key" aria-hidden="true"></i> content key: one per video</div>`;for(let i=0;i<8;i++)T(()=>R.forEach((_,j)=>{const b=document.getElementById('y'+j+'_'+i);b.className='b enc';b.innerHTML='<i class="ti ti-lock" aria-hidden="true"></i>'+(i+1)}),i*160);T(()=>document.getElementById('s').innerHTML='<i class="ti ti-lock" aria-hidden="true"></i> content key locked by KMS and stored locked. Segments in storage are unreadable on their own.',1500)}},
+{k:'Playlists',n:'Small text files tell the player what exists. The master playlist lists the quality levels with their bitrates. Each level’s playlist lists its segments and where to fetch the key. A signed manifest records a hash of every file produced.',r(){V().innerHTML=`<pre>master.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=2600000,RESOLUTION=1280x720
+720p.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
+360p.m3u8   …and 480p, 240p</pre><pre>720p.m3u8 (rewritten per session by edge)
+#EXT-X-KEY:METHOD=AES-128,URI="https://edge/…/key?t=TOKEN"
+#EXTINF:4.0,
+seg_00001.m4s?t=TOKEN</pre><div class="st"><i class="ti ti-certificate" aria-hidden="true"></i> Signed manifest: 4 levels × 180 segments + playlists, Merkle root signed</div>`}},
+{k:'Watch',n:'api sends your app the asset.ready webhook. When a viewer opens the video, your app asks api for a session, and the browser loads the session-scoped playlist from edge. From here the player picks a quality level for every segment (see adaptive-playback.html).',r(){const st=['Your app checks the viewer is allowed','App server asks api for a playback session','Browser gets a manifest URL with a short-lived token','Player loads playlists from edge, token on every request','edge checks the session is alive, then returns the key','Player downloads segments and picks a quality for each'];V().innerHTML=st.map((x,i)=>`<div class="row" id="x${i}" style="opacity:.2;transition:opacity .3s"><span class="lb" style="width:24px">${i+1}</span><span style="font-size:13px">${x}</span></div>`).join('');st.forEach((_,i)=>T(()=>document.getElementById('x'+i).style.opacity=1,i*350))}}
+];
+let c=0;const sg=document.getElementById('stg');
+S.forEach((s,i)=>{const e=document.createElement('span');e.textContent=s.k;e.onclick=()=>go(i);sg.appendChild(e)});
+function go(i){timers.forEach(clearTimeout);timers=[];c=(i+S.length)%S.length;[...sg.children].forEach((e,j)=>e.classList.toggle('on',j===c));document.getElementById('note').textContent=S[c].n;S[c].r()}
+document.getElementById('nx').onclick=()=>go(c+1);document.getElementById('pv').onclick=()=>go(c-1);document.getElementById('rp').onclick=()=>go(c);
+go(0);
+</script>
+</body>
+</html>

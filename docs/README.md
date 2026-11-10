@@ -9,4 +9,5 @@
 | [integrity.md](integrity.md) | Signed manifests, verifiable deletion, anchoring |
 | [api.md](api.md) | API surfaces and conventions |
 | [usage.md](usage.md) | End-to-end usage |
+| [visuals/](visuals/) | Interactive explainers: recording lifecycle, adaptive playback |
 | [adr/](adr/) | Architecture decision records |
