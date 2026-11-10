@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cipherframe:spec:jobs:envelope:1",
+  "title": "Cipherframe job envelope",
+  "description": "The versioned document the Go side writes to external_tasks.envelope and an external worker reads (ADR 0010). It never carries secrets, tokens, signed URLs or source object keys.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope_version", "task_id", "kind", "tenant_id", "attempt", "created_at", "trace", "payload"],
+  "properties": {
+    "envelope_version": {
+      "description": "Version of this contract. A worker must refuse an envelope with a version it does not know.",
+      "const": 1
+    },
+    "task_id": {
+      "description": "Identifier of the external_tasks row (a UUID, lower case).",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "kind": {
+      "description": "The kind of work, for example \"ml.embed\". Workers claim by kind.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]{2,63}$"
+    },
+    "tenant_id": {
+      "description": "Tenant that owns the work (ADR 0011 text form).",
+      "type": "string",
+      "pattern": "^ten_[0-7][0-9a-hjkmnp-tv-z]{25}$"
+    },
+    "asset_id": {
+      "description": "Asset the work concerns, when there is one (ADR 0011 text form).",
+      "type": "string",
+      "pattern": "^ast_[0-7][0-9a-hjkmnp-tv-z]{25}$"
+    },
+    "attempt": {
+      "description": "Attempt number, starting at 1. It grows when the task is retried or its lease is reclaimed.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "description": "When the task was created (RFC 3339).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace": {
+      "description": "Trace context for correlating logs across the hand-off.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "traceparent": {
+          "description": "W3C Trace Context traceparent header value.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+        }
+      }
+    },
+    "payload": {
+      "description": "Kind-specific input. Its shape is defined per kind and never holds secrets or source object keys.",
+      "type": "object"
+    }
+  }
+}
