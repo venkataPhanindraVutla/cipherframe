@@ -62,6 +62,7 @@ server-side only.
 | `unauthenticated` | 401 | no | Credentials are missing or invalid. |
 | `forbidden` | 403 | no | The caller is authenticated but not allowed to do this. |
 | `not_found` | 404 | no | The object does not exist, or is not visible to the caller. |
+| `method_not_allowed` | 405 | no | The path exists but does not support this HTTP method. |
 | `conflict` | 409 | no | The request conflicts with the current state of the object. |
 | `payload_too_large` | 413 | no | The request body exceeds the allowed size. |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
