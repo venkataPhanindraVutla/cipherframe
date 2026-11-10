@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "cipherframe-dev",
+      "credentials": [
+        {
+          "accessKey": "dev-placeholder-access-key",
+          "secretKey": "dev-placeholder-secret-key"
+        }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+# Local development stack (M1-8). Development only: every credential below is a public
+# placeholder and nothing here is hardened. See docs/usage.md ("Run locally with Docker Compose").
+
+name: cipherframe
+
+x-cipherframe-env: &cipherframe-env
+  CIPHERFRAME_ENV: development
+  CIPHERFRAME_LOG_LEVEL: info
+  CIPHERFRAME_API_LISTEN: ":8080"
+  CIPHERFRAME_EDGE_LISTEN: ":8081"
+  CIPHERFRAME_DATABASE_URL: postgres://cipherframe:dev-placeholder-postgres@postgres:5432/cipherframe?sslmode=disable
+  CIPHERFRAME_S3_ENDPOINT: http://seaweedfs:8333
+  CIPHERFRAME_S3_PUBLIC_ENDPOINT: http://localhost:8333
+  CIPHERFRAME_S3_REGION: us-east-1
+  CIPHERFRAME_S3_FORCE_PATH_STYLE: "true"
+  CIPHERFRAME_S3_SOURCE_BUCKET: cipherframe-source
+  CIPHERFRAME_S3_DELIVERY_BUCKET: cipherframe-delivery
+  CIPHERFRAME_S3_ACCESS_KEY_ID: dev-placeholder-access-key
+  CIPHERFRAME_S3_SECRET_ACCESS_KEY: dev-placeholder-secret-key
+  # Base64 of "dev-placeholder-pepper-0123456789abcdef" (39 bytes).
+  CIPHERFRAME_API_KEY_PEPPERS: "1:ZGV2LXBsYWNlaG9sZGVyLXBlcHBlci0wMTIzNDU2Nzg5YWJjZGVm"
+  CIPHERFRAME_API_KEY_PEPPER_CURRENT: "1"
+
+x-cipherframe-build: &cipherframe-build
+  context: ../..
+  dockerfile: build/Dockerfile
+
+services:
+  postgres:
+    image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    environment:
+      POSTGRES_USER: cipherframe
+      POSTGRES_PASSWORD: dev-placeholder-postgres
+      POSTGRES_DB: cipherframe
+    volumes:
+      # Postgres 18 images keep the data directory under /var/lib/postgresql.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cipherframe -d cipherframe"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
+    # Master, volume server, filer and the S3 gateway in one process. The identities file defines
+    # one development identity and no anonymous access, so every bucket is private.
+    command: ["server", "-dir=/data", "-ip.bind=0.0.0.0", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json"]
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweedfs-data:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:9333/cluster/status && wget -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -q 'HTTP/'
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  storage-init:
+    image: chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
+    entrypoint: ["/bin/sh", "/init-buckets.sh"]
+    volumes:
+      - ./seaweedfs/init-buckets.sh:/init-buckets.sh:ro
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    image: cipherframe-server:dev
+    build: *cipherframe-build
+    command: ["migrate"]
+    environment: *cipherframe-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  server:
+    image: cipherframe-server:dev
+    build: *cipherframe-build
+    # The worker role runs here because no job kind needs FFmpeg yet; the separate worker image
+    # arrives with M3.
+    command: ["--role=api,edge,worker"]
+    environment: *cipherframe-env
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  seaweedfs-data:
