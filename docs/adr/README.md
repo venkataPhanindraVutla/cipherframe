@@ -23,6 +23,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0015](0015-api-conventions-and-contract-test.md) | API conventions and contract test | none | Accepted | 2026-11-10 |
 | [0016](0016-api-key-pepper-versioning.md) | API-key pepper versioning | none | Accepted | 2026-11-10 |
 | [0017](0017-postgres-version-support.md) | Postgres version support | none | Accepted | 2026-11-10 |
+| [0018](0018-management-api-for-clients-and-keys.md) | Management API for clients and keys | none | Accepted (flagged for owner review before v1.0.0) | 2026-11-11 |
 
 ## Open gates
 
