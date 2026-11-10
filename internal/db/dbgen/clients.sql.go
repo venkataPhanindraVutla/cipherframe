@@ -97,3 +97,44 @@ func (q *Queries) ListClientsByTenant(ctx context.Context, arg ListClientsByTena
 	}
 	return items, nil
 }
+
+const listClientsPage = `-- name: ListClientsPage :many
+SELECT id, tenant_id, name, created_at, disabled_at FROM clients
+WHERE tenant_id = $1::uuid
+  AND ($2::uuid IS NULL OR id > $2::uuid)
+ORDER BY id
+LIMIT $3::integer
+`
+
+type ListClientsPageParams struct {
+	TenantID pgtype.UUID
+	AfterID  pgtype.UUID
+	MaxRows  int32
+}
+
+// Keyset pagination on the UUIDv7 id, which is creation-ordered. Pass a NULL after_id for the first page.
+func (q *Queries) ListClientsPage(ctx context.Context, arg ListClientsPageParams) ([]Client, error) {
+	rows, err := q.db.Query(ctx, listClientsPage, arg.TenantID, arg.AfterID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Client
+	for rows.Next() {
+		var i Client
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.DisabledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
