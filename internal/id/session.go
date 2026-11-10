@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log/slog"
 )
 
 const (
@@ -70,6 +71,10 @@ func (s SessionID) String() string {
 
 // GoString keeps %#v from printing the secret.
 func (s SessionID) GoString() string { return "id.SessionID{...}" }
+
+// LogValue implements slog.LogValuer so a session ID passed to a logger is
+// redacted. Session IDs grant playback and must never appear in logs.
+func (s SessionID) LogValue() slog.Value { return slog.StringValue(sessionPrefix + "_[redacted]") }
 
 // MarshalText implements encoding.TextMarshaler. The zero value is an error.
 func (s SessionID) MarshalText() ([]byte, error) {

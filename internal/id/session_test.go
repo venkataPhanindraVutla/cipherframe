@@ -1,8 +1,10 @@
 package id
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -66,5 +68,17 @@ func TestSessionGoStringHidesSecret(t *testing.T) {
 	a, _ := NewSession()
 	if strings.Contains(fmt.Sprintf("%#v", a), a.String()[4:12]) {
 		t.Fatal("GoString leaks")
+	}
+}
+
+func TestSessionIDLogRedacted(t *testing.T) {
+	s, err := NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("x", "session", s)
+	if strings.Contains(buf.String(), s.String()) || !strings.Contains(buf.String(), "ses_[redacted]") {
+		t.Fatal("session ID must be redacted in logs")
 	}
 }
