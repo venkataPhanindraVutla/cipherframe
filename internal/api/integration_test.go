@@ -573,4 +573,3 @@ func TestNoKeyMaterialInLogs(t *testing.T) {
 		t.Fatal("authorization data in the log")
 	}
 }
-
