@@ -38,7 +38,7 @@ func placeholderPepper() string {
 }
 
 // base is a valid development environment.
-var base = env{
+var base = env{ //nolint:gosec // test fixture
 	EnvDatabaseURL:         "postgres://app:pw@db:5432/cipherframe",
 	EnvS3SourceBucket:      "cf-source",
 	EnvS3DeliveryBucket:    "cf-delivery",
@@ -209,7 +209,7 @@ func TestFileVariables(t *testing.T) {
 
 	t.Run("only one newline trimmed", func(t *testing.T) {
 		e := base.with(EnvDatabaseURL, "\x00", EnvDatabaseURL+"_FILE", "/db")
-		c, err := load(e, map[string]string{"/db": "postgres://u:p@h/d\n\n"})
+		c, err := load(e, map[string]string{"/db": "postgres://u:p@h/d\n\n"}) //nolint:gosec // test fixture
 		if err == nil && c != nil {
 			t.Fatal("second newline must be kept, making the URL invalid")
 		}
@@ -217,7 +217,7 @@ func TestFileVariables(t *testing.T) {
 
 	t.Run("both set", func(t *testing.T) {
 		e := base.with(EnvDatabaseURL+"_FILE", "/db")
-		_, err := load(e, map[string]string{"/db": "postgres://u:p@h/d"})
+		_, err := load(e, map[string]string{"/db": "postgres://u:p@h/d"}) //nolint:gosec // test fixture
 		if err == nil || !strings.Contains(err.Error(), "both set") || !strings.Contains(err.Error(), EnvDatabaseURL) {
 			t.Fatalf("got %v", err)
 		}
@@ -244,7 +244,7 @@ func TestFileVariables(t *testing.T) {
 			EnvS3AccessKeyID+"_FILE", "/b", EnvS3SecretAccessKey+"_FILE", "/c",
 			EnvAPIKeyPeppers, "\x00", EnvAPIKeyPeppers+"_FILE", "/d",
 		)
-		c, err := load(e, map[string]string{
+		c, err := load(e, map[string]string{ //nolint:gosec // test fixture
 			"/a": "postgres://u:p@h/d\n", "/b": "AKIA\n", "/c": "sek\r\n", "/d": pepperEntry(),
 		})
 		if err != nil {

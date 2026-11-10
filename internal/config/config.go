@@ -20,9 +20,9 @@ const (
 	EnvS3SourceBucket      = "CIPHERFRAME_S3_SOURCE_BUCKET"
 	EnvS3DeliveryBucket    = "CIPHERFRAME_S3_DELIVERY_BUCKET"
 	EnvS3AccessKeyID       = "CIPHERFRAME_S3_ACCESS_KEY_ID"
-	EnvS3SecretAccessKey   = "CIPHERFRAME_S3_SECRET_ACCESS_KEY"
-	EnvAPIKeyPeppers       = "CIPHERFRAME_API_KEY_PEPPERS"
-	EnvAPIKeyPepperCurrent = "CIPHERFRAME_API_KEY_PEPPER_CURRENT"
+	EnvS3SecretAccessKey   = "CIPHERFRAME_S3_SECRET_ACCESS_KEY"   //nolint:gosec // environment variable name, not a credential
+	EnvAPIKeyPeppers       = "CIPHERFRAME_API_KEY_PEPPERS"        //nolint:gosec // environment variable name, not a credential
+	EnvAPIKeyPepperCurrent = "CIPHERFRAME_API_KEY_PEPPER_CURRENT" //nolint:gosec // environment variable name, not a credential
 )
 
 // PlaceholderPrefix marks a development placeholder secret. Production
