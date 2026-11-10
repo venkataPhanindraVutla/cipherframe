@@ -55,28 +55,30 @@ func migrateGoose(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-// migrateRiver applies River's schema. The advisory lock is session-scoped, so it is taken and
-// released on one dedicated connection.
+// migrateRiver applies River's schema in one transaction on one connection: the transaction takes
+// an advisory lock that Postgres releases at commit or rollback, and River's migrator runs on that
+// same transaction. Nothing else is borrowed from the pool while the lock is held, so concurrent
+// callers cannot exhaust a small pool and deadlock (a lock holder waiting for a connection that
+// the lock waiters hold).
 func migrateRiver(ctx context.Context, pool *pgxpool.Pool) error {
-	conn, err := pool.Acquire(ctx)
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("db: river migrations: %w", mapError(err))
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", riverLockKey); err != nil {
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", riverLockKey); err != nil {
 		return fmt.Errorf("db: river migrations lock: %w", mapError(err))
 	}
-	defer func() {
-		// The caller's context may be cancelled; the lock must still be released.
-		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", riverLockKey)
-	}()
-
-	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
+	// A driver without a pool is enough for MigrateTx.
+	migrator, err := rivermigrate.New(riverpgxv5.New(nil), nil)
 	if err != nil {
 		return fmt.Errorf("db: river migrator: %w", mapError(err))
 	}
-	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+	if _, err := migrator.MigrateTx(ctx, tx, rivermigrate.DirectionUp, nil); err != nil {
 		return fmt.Errorf("db: apply river migrations: %w", mapError(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("db: commit river migrations: %w", mapError(err))
 	}
 	return nil
 }
