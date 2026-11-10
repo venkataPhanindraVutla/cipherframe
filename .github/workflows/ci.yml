@@ -145,3 +145,44 @@ jobs:
       - run: go install github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
       - name: gitleaks (full history)
         run: gitleaks git --redact --no-banner --verbose .
+
+  compose:
+    name: compose (development stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COMPOSE_FILE: deploy/compose/compose.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build the image and start the stack
+        run: docker compose up -d --build --wait --wait-timeout 180
+      - name: readiness and liveness
+        run: |
+          for port in 8080 8081; do
+            ok=""
+            for _ in $(seq 1 60); do
+              if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/readyz")" = "200" ]; then
+                ok=1
+                break
+              fi
+              sleep 2
+            done
+            [ -n "$ok" ] || { echo "readyz on port ${port} did not return 200 within 2 minutes"; exit 1; }
+            curl -fsS "http://127.0.0.1:${port}/readyz"; echo
+            test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/healthz")" = "200"
+          done
+      - name: object storage refuses anonymous access
+        run: |
+          for bucket in cipherframe-source cipherframe-delivery; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8333/${bucket}/")"
+            echo "anonymous GET ${bucket}: ${code}"
+            test "${code}" = "403"
+          done
+      # TODO (after API keys exist, M1-7): bootstrap an API key against the running stack and call
+      # GET /v1/whoami with it.
+      - name: compose logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: tear down
+        if: always()
+        run: docker compose down -v
