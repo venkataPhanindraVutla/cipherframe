@@ -3,8 +3,9 @@ package jobs
 import (
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -15,11 +16,12 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 )
 
-const specDir = "../../spec/jobs"
+// specFS is the contract directory; reading through an fs.FS keeps the paths inside it.
+var specFS = os.DirFS("../../spec/jobs")
 
 func compileSchema(t *testing.T, file, url string) *jsonschema.Schema {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(specDir, file))
+	raw, err := fs.ReadFile(specFS, file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,12 +64,12 @@ func TestVectors(t *testing.T) {
 		"result-":   resultSchema(t),
 	}
 	for _, dir := range []string{"valid", "invalid"} {
-		files, err := filepath.Glob(filepath.Join(specDir, "vectors", dir, "*.json"))
+		files, err := fs.Glob(specFS, "vectors/"+dir+"/*.json")
 		if err != nil || len(files) == 0 {
 			t.Fatalf("no vectors in %s (%v)", dir, err)
 		}
 		for _, f := range files {
-			name := filepath.Base(f)
+			name := path.Base(f)
 			t.Run(dir+"/"+name, func(t *testing.T) {
 				var schema *jsonschema.Schema
 				for prefix, s := range schemas {
@@ -78,7 +80,7 @@ func TestVectors(t *testing.T) {
 				if schema == nil {
 					t.Fatalf("vector %s has no schema prefix", name)
 				}
-				raw, err := os.ReadFile(f)
+				raw, err := fs.ReadFile(specFS, f)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -97,7 +99,7 @@ func TestVectors(t *testing.T) {
 func TestVectorsAgreeWithGoValidation(t *testing.T) {
 	// The Go-side checks mirror the schema; the valid vectors must pass them too.
 	for _, name := range []string{"envelope-minimal", "envelope-full"} {
-		raw, err := os.ReadFile(filepath.Join(specDir, "vectors", "valid", name+".json"))
+		raw, err := fs.ReadFile(specFS, "vectors/valid/"+name+".json")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,18 +111,18 @@ func TestVectorsAgreeWithGoValidation(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	files, _ := filepath.Glob(filepath.Join(specDir, "vectors", "valid", "result-*.json"))
+	files, _ := fs.Glob(specFS, "vectors/valid/result-*.json")
 	for _, f := range files {
-		raw, _ := os.ReadFile(f)
+		raw, _ := fs.ReadFile(specFS, f)
 		if _, err := ParseResult(raw); err != nil {
-			t.Fatalf("%s: %v", filepath.Base(f), err)
+			t.Fatalf("%s: %v", path.Base(f), err)
 		}
 	}
-	files, _ = filepath.Glob(filepath.Join(specDir, "vectors", "invalid", "result-*.json"))
+	files, _ = fs.Glob(specFS, "vectors/invalid/result-*.json")
 	for _, f := range files {
-		raw, _ := os.ReadFile(f)
+		raw, _ := fs.ReadFile(specFS, f)
 		if _, err := ParseResult(raw); err == nil {
-			t.Fatalf("%s: Go parser accepted an invalid vector", filepath.Base(f))
+			t.Fatalf("%s: Go parser accepted an invalid vector", path.Base(f))
 		}
 	}
 }
@@ -203,8 +205,10 @@ func TestResultMarshalsToSchema(t *testing.T) {
 			{Kind: "ml.transcript", Key: "derived/b", SHA256: sha, SizeBytes: 0},
 		}},
 		"empty": {EnvelopeVersion: 1, TaskID: taskID, Status: StatusSucceeded},
-		"failed": {EnvelopeVersion: 1, TaskID: taskID, Status: StatusFailed,
-			Error: &TaskError{Code: "model_unavailable", Retryable: true, Message: "later"}},
+		"failed": {
+			EnvelopeVersion: 1, TaskID: taskID, Status: StatusFailed,
+			Error: &TaskError{Code: "model_unavailable", Retryable: true, Message: "later"},
+		},
 	}
 	for name, r := range results {
 		raw, err := json.Marshal(r)

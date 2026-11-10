@@ -14,7 +14,7 @@ import (
 )
 
 func TestClassify(t *testing.T) {
-	secret := "https://storage.invalid/obj?X-Signature=SECRET-TOKEN"
+	secret := "https://storage.invalid/obj?X-Signature=SECRET-TOKEN" //nolint:gosec // a fake value the test checks never leaks
 
 	cases := []struct {
 		name       string
@@ -82,7 +82,6 @@ func TestRetryable(t *testing.T) {
 }
 
 func TestWorkerRecoversPanics(t *testing.T) {
-	type pargs struct{ A int }
 	w := &worker[testArgs]{handler: func(context.Context, Job[testArgs]) error {
 		panic("password=hunter2")
 	}}
@@ -93,7 +92,6 @@ func TestWorkerRecoversPanics(t *testing.T) {
 	if codeFromStored(err.Error()) != "internal_error" || strings.Contains(err.Error(), "hunter2") {
 		t.Fatalf("panic error = %q", err.Error())
 	}
-	_ = pargs{}
 }
 
 type testArgs struct{ N int }

@@ -44,8 +44,7 @@ func (q *Queue) ListDead(ctx context.Context, cursor string, limit int) ([]DeadJ
 	params := river.NewJobListParams().
 		States(rivertype.JobStateDiscarded, rivertype.JobStateCancelled).
 		OrderBy(river.JobListOrderByID, river.SortOrderDesc).
-		// One extra row tells whether another page exists.
-		First(limit + 1)
+		First(limit)
 	if cursor != "" {
 		var c river.JobListCursor
 		if err := c.UnmarshalText([]byte(cursor)); err != nil {
@@ -59,13 +58,19 @@ func (q *Queue) ListDead(ctx context.Context, cursor string, limit int) ([]DeadJ
 	}
 	rows := res.Jobs
 	next := ""
-	if len(rows) > limit {
-		rows = rows[:limit]
-		text, err := river.JobListCursorFromJob(rows[len(rows)-1]).MarshalText()
+	if len(rows) == limit && res.LastCursor != nil {
+		// Peek one row further so that the last page has no cursor.
+		more, err := q.client.JobList(ctx, params.After(res.LastCursor).First(1))
 		if err != nil {
-			return nil, "", errs.Wrap(errs.InternalError, "could not build the next cursor", err)
+			return nil, "", db.MapError(err)
 		}
-		next = string(text)
+		if len(more.Jobs) > 0 {
+			text, err := res.LastCursor.MarshalText()
+			if err != nil {
+				return nil, "", errs.Wrap(errs.InternalError, "could not build the next cursor", err)
+			}
+			next = string(text)
+		}
 	}
 	out := make([]DeadJob, 0, len(rows))
 	for _, r := range rows {

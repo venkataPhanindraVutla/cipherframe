@@ -146,8 +146,10 @@ func (a *Artifact) UnmarshalJSON(b []byte) error {
 	if err := dec.Decode(&raw); err != nil || raw.Kind == nil || raw.Key == nil || raw.SHA256 == nil || raw.SizeBytes == nil {
 		return errors.New("jobs: malformed artifact")
 	}
-	*a = Artifact{Kind: *raw.Kind, Key: *raw.Key, SHA256: *raw.SHA256, SizeBytes: *raw.SizeBytes,
-		ModelID: raw.ModelID, ModelVersion: raw.ModelVersion}
+	*a = Artifact{
+		Kind: *raw.Kind, Key: *raw.Key, SHA256: *raw.SHA256, SizeBytes: *raw.SizeBytes,
+		ModelID: raw.ModelID, ModelVersion: raw.ModelVersion,
+	}
 	return nil
 }
 
