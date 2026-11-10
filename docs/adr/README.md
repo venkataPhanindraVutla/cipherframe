@@ -16,6 +16,13 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0008](0008-service-topology.md) | Service topology | P4 | Accepted | 2026-11-10 |
 | [0009](0009-tenancy-and-api-keys.md) | Tenancy and API keys | P7 (API keys) | Accepted | 2026-11-10 |
 | [0010](0010-language-neutral-job-contract.md) | Language-neutral job contract | P21 (contract) | Accepted | 2026-11-10 |
+| [0011](0011-id-scheme.md) | ID scheme | none | Accepted | 2026-11-10 |
+| [0012](0012-error-model.md) | Error model | none | Accepted | 2026-11-10 |
+| [0013](0013-configuration.md) | Configuration | none | Accepted | 2026-11-10 |
+| [0014](0014-local-object-storage-and-storage-port.md) | Local object storage and the storage port | none | Accepted | 2026-11-10 |
+| [0015](0015-api-conventions-and-contract-test.md) | API conventions and contract test | none | Accepted | 2026-11-10 |
+| [0016](0016-api-key-pepper-versioning.md) | API-key pepper versioning | none | Accepted | 2026-11-10 |
+| [0017](0017-postgres-version-support.md) | Postgres version support | none | Accepted | 2026-11-10 |
 
 ## Open gates
 
