@@ -73,8 +73,9 @@ never merged:
 `config.Load` / `config.FromOS` return a `*config.Config`. Secrets are `config.Secret`, whose
 `Reveal()` is the only way to read the value; its string, `fmt`, JSON, text and `slog` forms all print
 `[redacted]`. Logging the config (`slog.Info("config", "config", cfg)`) shows the effective settings
-with secrets redacted and credentials reduced to their state. Keep `Secret` fields exported in your own
-structs: `fmt` cannot call a formatter on an unexported field and would print the raw string.
+with secrets redacted and credentials reduced to their state. A `Secret` stays redacted even inside an
+unexported struct field: its value is held in a closure, so `fmt`'s reflection fallback prints a
+function address, not the value. Compare secrets with `Equal`, not `==`.
 
 ### What configuration handling does not protect against
 

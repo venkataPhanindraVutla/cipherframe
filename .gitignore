@@ -12,6 +12,9 @@ coverage.*
 *.pem
 *.key
 
+# Local agent worktrees and tool state
+/.claude/
+
 # Editors and OS
 .idea/
 .vscode/

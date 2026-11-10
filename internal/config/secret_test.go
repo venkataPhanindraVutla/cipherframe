@@ -44,3 +44,32 @@ func TestSecretRedaction(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// A Secret stored in an unexported field of another type must not leak through
+// fmt's reflection fallback.
+func TestSecretInUnexportedField(t *testing.T) {
+	const raw = "unexported-field-distinctive-value"
+	type holder struct {
+		name string
+		s    Secret
+		m    map[string]Secret
+		l    []Secret
+	}
+	h := holder{name: "x", s: NewSecret(raw), m: map[string]Secret{"k": NewSecret(raw)}, l: []Secret{NewSecret(raw)}}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
+		for _, o := range []string{fmt.Sprintf(verb, h), fmt.Sprintf(verb, &h)} {
+			if strings.Contains(o, raw) || strings.Contains(o, fmt.Sprintf("%x", raw)) {
+				t.Fatalf("secret leaked through %s on an unexported field", verb)
+			}
+		}
+	}
+}
+
+func TestSecretEqual(t *testing.T) {
+	if !NewSecret("a").Equal(NewSecret("a")) || NewSecret("a").Equal(NewSecret("b")) {
+		t.Fatal("Equal must compare values")
+	}
+	if !(Secret{}).Equal(NewSecret("")) {
+		t.Fatal("zero value must equal the empty secret")
+	}
+}
