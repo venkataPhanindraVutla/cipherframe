@@ -312,7 +312,10 @@ func testListPagination(t *testing.T, s storage.Store, p string) {
 	}
 
 	// Stopping early must not leak or error.
-	for range storage.ListAll(ctxFor(t), s, p) {
+	for _, err := range storage.ListAll(ctxFor(t), s, p) {
+		if err != nil {
+			t.Fatalf("ListAll (early stop): %v", err)
+		}
 		break
 	}
 
