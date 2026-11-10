@@ -1,0 +1,13 @@
+{
+  "envelope_version": 1,
+  "task_id": "0190a1b2-c3d4-7e5f-8a6b-0123456789ab",
+  "status": "succeeded",
+  "artifacts": [
+    {
+      "kind": "ml.embedding",
+      "key": "k",
+      "sha256": "ABC123",
+      "size_bytes": 1
+    }
+  ]
+}

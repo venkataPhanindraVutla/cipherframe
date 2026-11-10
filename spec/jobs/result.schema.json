@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cipherframe:spec:jobs:result:1",
+  "title": "Cipherframe job result",
+  "description": "The document an external worker writes to external_tasks.result when it completes or fails a task (ADR 0010). Every derived artifact must be listed so the Go side can register it (invariant I6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope_version", "task_id", "status"],
+  "properties": {
+    "envelope_version": {
+      "description": "Version of the contract the result follows; it equals the envelope's version.",
+      "const": 1
+    },
+    "task_id": {
+      "description": "Identifier of the task this result answers.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "status": {
+      "enum": ["succeeded", "failed"]
+    },
+    "error": {
+      "description": "Required when status is failed. The message is for operators only and must never hold secrets, tokens, signed URLs or source object keys.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "retryable", "message"],
+      "properties": {
+        "code": {
+          "description": "Stable lower_snake_case identifier of the failure.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,63}$"
+        },
+        "retryable": {
+          "description": "Whether repeating the task may succeed. False sends the task to the dead-letter list.",
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      }
+    },
+    "artifacts": {
+      "description": "Derived artifacts the worker wrote to storage. The Go side registers each one.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "key", "sha256", "size_bytes"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.]{2,63}$"
+          },
+          "key": {
+            "description": "Storage key of the derived artifact.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "sha256": {
+            "description": "Lower-case hex SHA-256 of the stored bytes.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "model_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "model_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": { "required": ["error"] }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "succeeded" } },
+        "required": ["status"]
+      },
+      "then": { "not": { "required": ["error"] } }
+    }
+  ]
+}

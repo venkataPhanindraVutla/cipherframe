@@ -1,0 +1,16 @@
+{
+  "envelope_version": 1,
+  "task_id": "0190a1b2-c3d4-7e5f-8a6b-0123456789ab",
+  "kind": "ml.transcribe",
+  "tenant_id": "ten_06gwdaegq9t2h274zqfhnv16ec",
+  "attempt": 3,
+  "created_at": "2026-11-10T09:30:00.123456+00:00",
+  "trace": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  },
+  "payload": {
+    "language": "en",
+    "rendition": "720p"
+  },
+  "asset_id": "ast_06gwdaegq9wg561wrz2fccv1w0"
+}

@@ -154,7 +154,7 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 			t.Fatalf("migrate run %d: %v", i+1, err)
 		}
 	}
-	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events"} {
+	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "external_tasks", "river_job", "river_migration"} {
 		var n int
 		err := pool.QueryRow(ctx,
 			"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
@@ -167,13 +167,20 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id > 0").Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 1 {
-		t.Fatalf("applied migrations = %d, want 1", applied)
+	if applied != 2 {
+		t.Fatalf("applied migrations = %d, want 2", applied)
 	}
-	// River tables belong to the next task.
-	var river int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_name LIKE 'river%'").Scan(&river); err != nil || river != 0 {
-		t.Fatalf("unexpected river tables: %d %v", river, err)
+	// River's schema is applied by the same call and is not re-applied by a further run.
+	var riverVersions int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM river_migration").Scan(&riverVersions); err != nil || riverVersions == 0 {
+		t.Fatalf("river migrations recorded = %d, err = %v", riverVersions, err)
+	}
+	if err := db.Migrate(ctx, pool); err != nil {
+		t.Fatalf("third migrate: %v", err)
+	}
+	var after int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM river_migration").Scan(&after); err != nil || after != riverVersions {
+		t.Fatalf("river migrations after a further run = %d, want %d (err %v)", after, riverVersions, err)
 	}
 }
 
@@ -747,4 +754,35 @@ func TestCancelledContextMapsToTimeout(t *testing.T) {
 	time.Sleep(time.Millisecond)
 	_, err := r.GetTenant(ctx, id.New[id.TenantKind]())
 	wantCode(t, err, errs.Timeout)
+}
+
+// TestMigrateConcurrentlySmallPool reproduces CI runners with two CPUs, where pgxpool defaults to
+// four connections: four concurrent Migrate calls must not deadlock on pool exhaustion.
+func TestMigrateConcurrentlySmallPool(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	base, _ := newDatabase(t)
+	cfg := base.Config().Copy()
+	cfg.MaxConns = 4
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	var wg sync.WaitGroup
+	errc := make(chan error, 6)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errc <- db.Migrate(ctx, pool)
+		}()
+	}
+	wg.Wait()
+	close(errc)
+	for err := range errc {
+		if err != nil {
+			t.Fatalf("concurrent migrate on a 4-connection pool: %v", err)
+		}
+	}
 }
