@@ -1,0 +1,9 @@
+Cipherframe
+Copyright 2026 The Cipherframe Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Cipherframe invokes FFmpeg and FFprobe as separate processes and does not link
+against them. FFmpeg is not distributed with the Cipherframe source code. Any
+container image that bundles an FFmpeg build documents that build's licence
+alongside the image.
