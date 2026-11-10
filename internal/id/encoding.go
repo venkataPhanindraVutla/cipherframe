@@ -62,7 +62,7 @@ func decode(dst []byte, s string) error {
 		bits += 5
 		if bits >= 8 {
 			bits -= 8
-			dst[n] = byte(acc >> bits)
+			dst[n] = byte((acc >> bits) & 0xff)
 			n++
 			acc &= 1<<bits - 1
 		}
