@@ -1,0 +1,7 @@
+# Reviewed false positives only. Each entry is one exact finding (commit:file:rule:line).
+# Add an entry only after confirming the value is fake, and say why.
+
+# internal/config tests: fake S3 credentials ("AKIAreal", "real", "real-secret") used to test
+# production placeholder rules. Not real keys.
+a5645d81e290e97d7cc84dece5282ef3d9ce2450:internal/config/load_test.go:generic-api-key:328
+a5645d81e290e97d7cc84dece5282ef3d9ce2450:internal/config/load_test.go:generic-api-key:352
