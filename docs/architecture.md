@@ -29,9 +29,52 @@ Whether these are separate binaries or one binary with roles is **pending (P4)**
 
 ## State
 
-- Datastore and job queue: **pending (P2)**.
+- Datastore: PostgreSQL (ADR 0007), described under [Datastore](#datastore). The job queue arrives
+  with M1-5.
 - Jobs use a language-neutral JSON envelope (`spec/jobs/`) so a non-Go worker can consume them
   (**pending P21** for the contract).
+
+## Datastore
+
+PostgreSQL is the only stateful dependency (ADR 0007). The minimum supported version is **16**
+(ADR 0017): `db.CheckServerVersion` refuses older servers and servers whose version it cannot read.
+CI runs the repository tests on 16 and 18.
+
+| Table | Holds |
+|---|---|
+| `tenants` | The isolation boundary. `disabled_at` fails authentication closed. |
+| `clients` | An embedding application or environment inside a tenant. |
+| `api_keys` | Named, scoped credentials of a client: prefix, `HMAC-SHA256(pepper, secret)`, the pepper version, and an optional previous hash that stays valid for a rotation overlap window. |
+| `assets` | Asset skeleton: owner tenant, creating client, lifecycle state. Later milestones add columns. |
+| `audit_events` | Append-only record of who did what, in which tenant. |
+
+- **Identifiers** are UUIDv7 values generated in Go (ADR 0011); no column has a database default id.
+  Repositories convert between database UUIDs and the typed IDs of `internal/id` at the boundary.
+- **Rotation** rewrites the secret on the same `api_keys` row (ADR 0009). The id, prefix, client and
+  scopes never change, so assets and audit rows that point at the key or its client stay valid. The
+  old hash moves to the `previous_*` columns; a CHECK constraint keeps those three columns all set or
+  all null.
+- **Audit rows have no foreign keys** on purpose. They must survive deletion of the tenant, client,
+  key or asset they describe, and an insert must never fail or block because a parent row is gone.
+  The cost is that nothing in the database stops an audit row naming a tenant that never existed;
+  the application only writes IDs it has just authenticated.
+- **Tenant isolation** is enforced in the queries: every tenant-scoped read takes the tenant ID and
+  filters on it, so another tenant's row is reported as not found. This is application-level
+  isolation, not Postgres row-level security.
+- **Errors** are mapped at the repository boundary: no rows is `not_found`, a unique violation is
+  `conflict`, connection loss and timeouts are `dependency_unavailable` and `timeout`, and anything
+  unrecognised is `internal_error`. An unknown failure is never reported as `not_found`.
+- **Migrations** are plain SQL files in `internal/db/migrations/`, embedded in the binary and applied
+  by goose through `db.Migrate`. The call is idempotent, and a Postgres advisory lock serialises
+  instances that start together. `sqlc` reads the same files to generate the typed queries in
+  `internal/db/dbgen`; CI runs `sqlc diff` to catch stale generated code.
+
+**What the datastore does not protect against.** Anyone with access to the database, such as an
+operator or a superuser, can read and change every row, including audit events. A leaked database
+without the pepper does not reveal usable API keys (ADR 0009), but a leaked database together with
+the pepper lets an attacker test candidate keys. Backups hold key hashes and, later, wrapped content
+key material for as long as they exist; how backups are covered by deletion is described in the
+deletion documentation, not here.
 
 ## Keys
 
