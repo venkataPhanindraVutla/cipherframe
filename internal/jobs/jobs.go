@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -100,6 +102,22 @@ type Registry struct {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{workers: river.NewWorkers(), kinds: map[string]KindConfig{}}
+}
+
+// Kinds returns the registered job kinds, sorted.
+func (r *Registry) Kinds() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Sorted(maps.Keys(r.kinds))
+}
+
+// CheckReady reports whether the queue's schema is present and the database answers. It backs the
+// "queue" readiness check: a database that has not been migrated is not ready.
+func CheckReady(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, "SELECT 1 FROM river_job LIMIT 1"); err != nil {
+		return db.MapError(err)
+	}
+	return nil
 }
 
 func (r *Registry) config(kind string) KindConfig {

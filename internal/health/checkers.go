@@ -33,3 +33,9 @@ func Storage(name string, s storage.Store) Checker {
 		return err
 	})
 }
+
+// Queue returns a checker named "queue" that runs check (for example jobs.CheckReady bound to a
+// pool).
+func Queue(check func(ctx context.Context) error) Checker {
+	return Func("queue", check)
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/worker"
 )
@@ -78,6 +79,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		health.Database(pool),
 		health.Storage("storage_source", buckets.Source),
 		health.Storage("storage_delivery", buckets.Delivery),
+		health.Queue(func(ctx context.Context) error { return jobs.CheckReady(ctx, pool) }),
 	}, extra...)
 	ready := health.NewRunner(log, ReadinessCheckTimeout, checkers...)
 
@@ -104,13 +106,36 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s)
 	}
 	if Has(opts.Roles, RoleWorker) {
-		services = append(services, workerService{w: worker.New(log)})
+		w, err := newWorker(pool, log)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		services = append(services, workerService{w: w})
 	}
 
 	log.InfoContext(ctx, "serving", slog.Any("roles", opts.Roles))
 	err = runServices(ctx, services)
 	log.InfoContext(ctx, "stopped")
 	return err
+}
+
+// workerConcurrency is how many jobs one worker process runs at once.
+const workerConcurrency = 10
+
+// newWorker builds the job registry and, when it has kinds, a working queue. Milestones register
+// their job kinds here (for example transcoding in M3).
+func newWorker(pool *pgxpool.Pool, log *slog.Logger) (*worker.Worker, error) {
+	reg := jobs.NewRegistry()
+	kinds := reg.Kinds()
+	if len(kinds) == 0 {
+		return worker.New(log, nil, nil), nil
+	}
+	q, err := jobs.NewQueue(pool, reg, jobs.Config{Workers: workerConcurrency, Logger: log})
+	if err != nil {
+		return nil, fmt.Errorf("worker: %w", err)
+	}
+	return worker.New(log, q, kinds), nil
 }
 
 func openDatabase(ctx context.Context, cfg *config.Config, log *slog.Logger) (*pgxpool.Pool, error) {

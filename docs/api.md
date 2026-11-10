@@ -75,8 +75,8 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 
   The checks are `database` (a ping of the connection pool), `storage_source` and
   `storage_delivery` (a `HEAD` for a fixed object key under a reserved prefix: "not found" counts as
-  reachable, a refused credential, a timeout or any other failure does not). The job-queue check
-  joins them when the queue lands (`health.Runner` takes any number of checkers). Each check has a
+  reachable, a refused credential, a timeout or any other failure does not), and `queue` (the job
+  queue's tables answer, so an unmigrated database is not ready). Each check has a
   2 second timeout, and checks run concurrently, so a hung dependency makes `/readyz` fail rather
   than hang. Use readiness, not liveness, to take an instance out of rotation.
 
