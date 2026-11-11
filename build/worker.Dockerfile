@@ -67,8 +67,9 @@ RUN meson setup build --prefix=${PREFIX} --libdir=lib --buildtype=release --defa
 FROM toolchain AS ffmpeg-src
 ARG FFMPEG_VERSION=9.0.2
 ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
-ADD --checksum=sha256:${FFMPEG_SHA256} \
-    https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz /src/ffmpeg.tar.xz
+# FFMPEG_URL can point at a mirror; the checksum is verified either way.
+ARG FFMPEG_URL=https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz
+ADD --checksum=sha256:${FFMPEG_SHA256} ${FFMPEG_URL} /src/ffmpeg.tar.xz
 RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-components=1
 
 # ---------------------------------------------------------------------------------------------

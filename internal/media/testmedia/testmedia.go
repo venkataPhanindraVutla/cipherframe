@@ -182,5 +182,5 @@ func SetMP4Duration(path string, d time.Duration) error {
 	if patched == 0 {
 		return errors.New("testmedia: no movie header found")
 	}
-	return os.WriteFile(path, data, 0o600)
+	return os.WriteFile(path, data, 0o600) //nolint:gosec // test helper rewrites a fixture the test created
 }

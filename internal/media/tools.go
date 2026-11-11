@@ -28,7 +28,6 @@ type Tools struct {
 // first is the one the worker's own build provides.
 type requirement struct {
 	anyOf []string
-	why   string
 }
 
 func (r requirement) String() string {
@@ -85,7 +84,7 @@ func (t Tools) CheckCapabilities(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("media: ffmpeg %q does not run (%v)%s", t.FFmpeg, err, joinProblems(problems))
+		return fmt.Errorf("media: ffmpeg %q does not run (%w)%s", t.FFmpeg, err, joinProblems(problems))
 	}
 
 	for _, l := range capabilities {

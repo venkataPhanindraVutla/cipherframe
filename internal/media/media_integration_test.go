@@ -271,7 +271,7 @@ func TestHLSFragmentedMP4Output(t *testing.T) {
 			t.Errorf("%s missing or empty: %v", f, err)
 		}
 	}
-	pl, _ := os.ReadFile(filepath.Join(dir, "index.m3u8"))
+	pl, _ := os.ReadFile(filepath.Join(dir, "index.m3u8")) //nolint:gosec // test reads its own temp dir
 	if !strings.Contains(string(pl), "#EXT-X-MAP") {
 		t.Errorf("playlist has no fMP4 init map:\n%s", pl)
 	}
