@@ -181,7 +181,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com"})
+	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Now: e.clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
