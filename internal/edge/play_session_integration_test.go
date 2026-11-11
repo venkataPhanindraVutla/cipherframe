@@ -59,7 +59,7 @@ func (e *env) registry() *kms.Registry {
 
 func (e *env) adminSvc() *playback.Service {
 	svc, err := playback.NewService(playback.Deps{
-		Pool: e.pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", KMS: e.registry(), Now: e.clk.Now,
+		Pool: e.pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", KMS: e.registry(), Access: e.access, Now: e.clk.Now,
 	})
 	if err != nil {
 		e.t.Fatal(err)

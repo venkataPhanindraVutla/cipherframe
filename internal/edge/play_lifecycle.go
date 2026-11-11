@@ -76,6 +76,7 @@ func (s *server) HeartbeatPlayback(ctx context.Context, _ gen.HeartbeatPlaybackR
 	if expiry.After(row.ExpiresAt) {
 		expiry = row.ExpiresAt
 	}
+	p.access.RecordHeartbeat(p.accessEvent(ctx, g, db.AccessHeartbeat))
 	tok, err := p.keyring.Sign(token.Claims{
 		SessionID: g.session.String(), AssetID: g.asset.String(), TenantID: g.tenant.String(),
 		Scopes:   token.ScopeManifest | token.ScopeKey | token.ScopeSegment,
@@ -106,8 +107,12 @@ func (s *server) EndPlayback(ctx context.Context, _ gen.EndPlaybackRequestObject
 	if p == nil {
 		return nil, errs.New(errs.DependencyUnavailable, "Playback is not available.")
 	}
-	if _, err := p.store.EndPlaybackSession(ctx, g.tenant, db.SessionHash(g.session), p.now().UTC().Truncate(time.Microsecond)); err != nil {
+	changed, err := p.store.EndPlaybackSession(ctx, g.tenant, db.SessionHash(g.session), p.now().UTC().Truncate(time.Microsecond))
+	if err != nil {
 		return nil, err
+	}
+	if changed { // repeating an end changes nothing and is not logged again
+		p.access.Record(p.accessEvent(ctx, g, db.AccessEnd))
 	}
 	return gen.EndPlayback204Response{Headers: gen.EndPlayback204ResponseHeaders{
 		CacheControl: playlistCacheControl, XRequestId: requestID(ctx),

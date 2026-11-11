@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
@@ -160,6 +161,11 @@ func (s *server) CreateBrowserPlaybackSession(ctx context.Context, req gen.Creat
 		if errors.As(err, &e) && e.Code == errs.Unauthenticated {
 			httpx.Logger(ctx).LogAttrs(ctx, slog.LevelDebug, "viewer session refused",
 				slog.String("method", method), slog.String("tenant", tenant.String()), slog.String("reason", denyReason(err)))
+			// No viewer ID: the authorization failed, so nothing vouches for one.
+			p.access.RecordSessionDenied(accesslog.Event{
+				TenantID: tenant, AssetID: asset, AuthMethod: method, Kind: db.AccessSessionDenied, At: p.now(),
+				RequestID: requestID(ctx), Client: accesslog.ClientFrom(ctx),
+			})
 		}
 		return nil, err
 	}

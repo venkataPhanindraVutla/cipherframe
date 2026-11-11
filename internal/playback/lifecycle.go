@@ -9,10 +9,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 )
 
 // Audit actions written when sessions are revoked (the audit_events.action column). A single
@@ -97,10 +99,10 @@ func (s *Service) RevokeSession(ctx context.Context, tenantID id.TenantID, actor
 	hash := db.SessionHash(sid)
 	now := s.now().UTC().Truncate(time.Microsecond)
 	var row db.PlaybackSession
+	var changedNow bool
 	err = db.Tx(ctx, s.pool, func(tx *db.Repos) error {
-		var changed bool
 		var err error
-		if row, changed, err = tx.RevokePlaybackSession(ctx, tenantID, hash, reason, now); err != nil || !changed {
+		if row, changedNow, err = tx.RevokePlaybackSession(ctx, tenantID, hash, reason, now); err != nil || !changedNow {
 			return err
 		}
 		_, err = tx.InsertAuditEvent(ctx, db.NewAuditEvent{
@@ -113,7 +115,21 @@ func (s *Service) RevokeSession(ctx context.Context, tenantID id.TenantID, actor
 	if err != nil {
 		return SessionStatus{}, err
 	}
+	if changedNow {
+		s.recordRevoked(ctx, db.SessionRef{IDHash: hash, TenantID: tenantID, AssetID: row.AssetID, ViewerID: row.ViewerID, AuthMethod: row.AuthMethod}, now)
+	}
 	return statusOf(row, time.Duration(set.IdleTimeoutSeconds)*time.Second, now), nil
+}
+
+// recordRevoked writes the access-trail row of a revoked session. The row carries no address or
+// user agent: the revoking caller is the embedding application, not the viewer.
+func (s *Service) recordRevoked(ctx context.Context, ref db.SessionRef, at time.Time) {
+	ev := accesslog.Event{
+		TenantID: ref.TenantID, AssetID: ref.AssetID, SessionHash: ref.IDHash, ViewerID: ref.ViewerID,
+		AuthMethod: ref.AuthMethod, Kind: db.AccessRevoked, At: at,
+	}
+	ev.RequestID, _ = reqid.FromContext(ctx)
+	s.access.Record(ev)
 }
 
 // RevokeSessions revokes every active session of the tenant that matches the viewer and/or the
@@ -134,9 +150,11 @@ func (s *Service) RevokeSessions(ctx context.Context, tenantID id.TenantID, acto
 	}
 	now := s.now().UTC().Truncate(time.Microsecond)
 	var n int64
+	var revoked []db.SessionRef
 	err := db.Tx(ctx, s.pool, func(tx *db.Repos) error {
-		refs, err := tx.RevokePlaybackSessionsByFilter(ctx, tenantID, viewerID, assetID, reason, now)
-		if n = int64(len(refs)); err != nil || n == 0 {
+		var err error
+		revoked, err = tx.RevokePlaybackSessionsByFilter(ctx, tenantID, viewerID, assetID, reason, now)
+		if n = int64(len(revoked)); err != nil || n == 0 {
 			return err
 		}
 		_, err = tx.InsertAuditEvent(ctx, db.NewAuditEvent{
@@ -145,7 +163,13 @@ func (s *Service) RevokeSessions(ctx context.Context, tenantID id.TenantID, acto
 		})
 		return err
 	})
-	return n, err
+	if err != nil {
+		return n, err
+	}
+	for _, ref := range revoked {
+		s.recordRevoked(ctx, ref, now)
+	}
+	return n, nil
 }
 
 // bulkTarget describes a bulk revoke for the audit log: the filters and how many sessions it hit.

@@ -68,6 +68,7 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 		return nil, unauthIfNotFound(err)
 	}
 	if asset.State != db.AssetReady {
+		p.access.RecordKeyDenied(p.accessEvent(ctx, g, db.AccessKeyDenied))
 		return nil, errPlaybackUnauthenticated()
 	}
 
@@ -82,6 +83,7 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 		}
 		retry := retryAfter(start.Add(keyWindow).Sub(now))
 		p.logRateLimited(ctx, g, db.EventKeyRate, retry)
+		p.access.RecordKeyDenied(p.accessEvent(ctx, g, db.AccessKeyDenied))
 		return rateLimited(ctx, "Too many key requests for this session. Retry after the time given.", retry), nil
 	}
 
@@ -96,6 +98,7 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 		// This token will not get the key again. The heartbeat returns a fresh one.
 		retry := max(g.settings.HeartbeatIntervalSeconds, 1)
 		p.logRateLimited(ctx, g, db.EventKeyReplay, retry)
+		p.access.RecordKeyDenied(p.accessEvent(ctx, g, db.AccessKeyDenied))
 		return rateLimited(ctx, "This playback token has used its key fetches. Request a new token with a heartbeat.", retry), nil
 	}
 
@@ -107,6 +110,7 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 	}
 	buf := key.Bytes()
 	key.Zero()
+	p.access.Record(p.accessEvent(ctx, g, db.AccessKey))
 	return gen.GetPlaybackKey200ApplicationoctetStreamResponse{
 		Body:          &keyBody{r: bytes.NewReader(buf), buf: buf},
 		ContentLength: int64(len(buf)),
