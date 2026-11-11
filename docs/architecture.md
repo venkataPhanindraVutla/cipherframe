@@ -395,8 +395,23 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
   fetches. The per-minute window is two columns on the session row, updated in one statement. No
   per-request state is kept in process, so the bounds are exact across replicas. Anomaly events go to
   `playback_events`; the per-token counter table is swept by a periodic task in the edge role
-  (`playback.RunKeyFetchSweeper`). The key is read into a 16-byte buffer that is cleared after the
+  (`playback.RunSweeper`). The key is read into a 16-byte buffer that is cleared after the
   response is written.
+- **Session lifecycle** (`internal/edge/play_lifecycle.go`): heartbeat and end run the same guard
+  without its session-row read, because each enforces the session's state inside the one statement
+  that changes it. The heartbeat is a single `UPDATE ... WHERE state = 'active' AND expires_at > now AND
+  last_heartbeat_at > now - idle AND last_heartbeat_at <= now - gap RETURNING *`: "usable", "not idle"
+  (judged on the previous heartbeat) and "not too frequent" cannot be separated by a concurrent request,
+  and a script cannot mint tokens faster than one per gap. When it returns no row, one read tells
+  "too soon" (429) from "unusable" (401). Edge signs the tokens it returns. That adds no exposure: the
+  symmetric HMAC key is already in the edge role to verify every token (ADR 0028), and a compromised
+  edge process could already forge tokens. Revocation (api role, `internal/playback/lifecycle.go`) is an
+  `UPDATE ... WHERE state = 'active'` on the row the guard reads on every playlist, key and heartbeat
+  request, which is why it applies at once there and not to segments, which never read the row.
+- **The expiry sweep** (`playback.RunSweeper`, edge role) ends active sessions past `expires_at` or idle
+  past their tenant's idle timeout, 1000 per statement (`FOR UPDATE SKIP LOCKED`, so replicas do not
+  wait for each other), over two partial indexes on active rows. It is housekeeping: no check depends on
+  it.
 - **The edge role holds KMS access.** The key endpoint needs the same key service as the worker, so an
   edge process builds the KMS provider and the content key manager at start-up and refuses to start
   when its configuration is missing or wrong (the check every role runs). An attacker who compromises

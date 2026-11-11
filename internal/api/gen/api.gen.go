@@ -81,6 +81,27 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for PlaybackSessionStatusState.
+const (
+	Active  PlaybackSessionStatusState = "active"
+	Ended   PlaybackSessionStatusState = "ended"
+	Revoked PlaybackSessionStatusState = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackSessionStatusState enum.
+func (e PlaybackSessionStatusState) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	case Ended:
+		return true
+	case Revoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	ProblemCodeAssetNotReady         ProblemCode = "asset_not_ready"
@@ -419,6 +440,35 @@ type HealthResponseStatus string
 // Name A human-readable name, 1 to 100 characters, no control characters.
 type Name = string
 
+// PlaybackSessionStatus defines model for PlaybackSessionStatus.
+type PlaybackSessionStatus struct {
+	AssetId   AssetIdValue `json:"asset_id"`
+	CreatedAt time.Time    `json:"created_at"`
+
+	// EndedAt Present only once the session has been recorded as ended.
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	LastHeartbeatAt time.Time  `json:"last_heartbeat_at"`
+
+	// RevokeReason Present only when a reason was given at revocation.
+	RevokeReason *string `json:"revoke_reason,omitempty"`
+
+	// RevokedAt Present only when the session was revoked.
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	SessionExpiresAt time.Time  `json:"session_expires_at"`
+
+	// SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+	SessionId SessionId `json:"session_id"`
+
+	// State `ended` also covers a session that is idle past the idle timeout or past its maximum
+	// age but not yet recorded as ended.
+	State    PlaybackSessionStatusState `json:"state"`
+	ViewerId string                     `json:"viewer_id"`
+}
+
+// PlaybackSessionStatusState `ended` also covers a session that is idle past the idle timeout or past its maximum
+// age but not yet recorded as ended.
+type PlaybackSessionStatusState string
+
 // PlaybackSettings A tenant's effective playback settings.
 type PlaybackSettings struct {
 	AllowedOrigins           []string `json:"allowed_origins"`
@@ -516,6 +566,30 @@ type ReadyResponse struct {
 // ReadyResponseStatus defines model for ReadyResponse.Status.
 type ReadyResponseStatus string
 
+// RevokePlaybackSessionRequest defines model for RevokePlaybackSessionRequest.
+type RevokePlaybackSessionRequest struct {
+	// Reason Why the session was revoked: at most 200 printable characters, no control characters.
+	// Stored and returned as is. Do not put personal data in it.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// RevokePlaybackSessionsRequest At least one of `viewer_id` and `asset_id` is required.
+type RevokePlaybackSessionsRequest struct {
+	AssetId *AssetIdValue `json:"asset_id,omitempty"`
+
+	// Reason As for a single revoke. Do not put personal data in it.
+	Reason *string `json:"reason,omitempty"`
+
+	// ViewerId Revoke the active sessions of this viewer.
+	ViewerId *string `json:"viewer_id,omitempty"`
+}
+
+// RevokedPlaybackSessions defines model for RevokedPlaybackSessions.
+type RevokedPlaybackSessions struct {
+	// Revoked How many sessions were revoked.
+	Revoked int `json:"revoked"`
+}
+
 // RotateKeyRequest defines model for RotateKeyRequest.
 type RotateKeyRequest struct {
 	// OverlapSeconds How long the previous secret keeps working.
@@ -569,6 +643,9 @@ type KeyId = string
 // Limit defines model for Limit.
 type Limit = int
 
+// SessionIdPath A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+type SessionIdPath = SessionId
+
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
 
@@ -613,6 +690,12 @@ type RotateKeyJSONRequestBody = RotateKeyRequest
 
 // CreatePlaybackSessionJSONRequestBody defines body for CreatePlaybackSession for application/json ContentType.
 type CreatePlaybackSessionJSONRequestBody = CreatePlaybackSessionRequest
+
+// RevokePlaybackSessionsJSONRequestBody defines body for RevokePlaybackSessions for application/json ContentType.
+type RevokePlaybackSessionsJSONRequestBody = RevokePlaybackSessionsRequest
+
+// RevokePlaybackSessionJSONRequestBody defines body for RevokePlaybackSession for application/json ContentType.
+type RevokePlaybackSessionJSONRequestBody = RevokePlaybackSessionRequest
 
 // UpdatePlaybackSettingsJSONRequestBody defines body for UpdatePlaybackSettings for application/json ContentType.
 type UpdatePlaybackSettingsJSONRequestBody = PlaybackSettingsInput
@@ -661,6 +744,15 @@ type ServerInterface interface {
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(w http.ResponseWriter, r *http.Request)
+	// RevokePlaybackSessions Revoke sessions by filter
+	// (POST /v1/playback-sessions/revoke)
+	RevokePlaybackSessions(w http.ResponseWriter, r *http.Request)
+	// GetPlaybackSession Get a playback session
+	// (GET /v1/playback-sessions/{session_id})
+	GetPlaybackSession(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath)
+	// RevokePlaybackSession Revoke a playback session
+	// (POST /v1/playback-sessions/{session_id}/revoke)
+	RevokePlaybackSession(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath)
 	// GetPlaybackSettings Get the playback settings
 	// (GET /v1/playback-settings)
 	GetPlaybackSettings(w http.ResponseWriter, r *http.Request)
@@ -1033,6 +1125,72 @@ func (siw *ServerInterfaceWrapper) CreatePlaybackSession(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// RevokePlaybackSessions operation middleware
+func (siw *ServerInterfaceWrapper) RevokePlaybackSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePlaybackSessions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlaybackSession operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId SessionIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackSession(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokePlaybackSession operation middleware
+func (siw *ServerInterfaceWrapper) RevokePlaybackSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId SessionIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePlaybackSession(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetPlaybackSettings operation middleware
 func (siw *ServerInterfaceWrapper) GetPlaybackSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -1210,6 +1368,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions", wrapper.CreatePlaybackSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions/revoke", wrapper.RevokePlaybackSessions)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-sessions/{session_id}", wrapper.GetPlaybackSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions/{session_id}/revoke", wrapper.RevokePlaybackSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-settings", wrapper.GetPlaybackSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-settings", wrapper.UpdatePlaybackSettings)
 
@@ -2704,6 +2865,359 @@ func (response CreatePlaybackSessiondefaultApplicationProblemPlusJSONResponse) V
 	return err
 }
 
+type RevokePlaybackSessionsRequestObject struct {
+	Body *RevokePlaybackSessionsJSONRequestBody
+}
+
+type RevokePlaybackSessionsResponseObject interface {
+	VisitRevokePlaybackSessionsResponse(w http.ResponseWriter) error
+}
+
+type RevokePlaybackSessions200ResponseHeaders struct {
+	XRequestId string
+}
+
+type RevokePlaybackSessions200JSONResponse struct {
+	Body    RevokedPlaybackSessions
+	Headers RevokePlaybackSessions200ResponseHeaders
+}
+
+func (response RevokePlaybackSessions200JSONResponse) VisitRevokePlaybackSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSessions400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RevokePlaybackSessions400ApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSessions401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response RevokePlaybackSessions401ApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSessions403ResponseHeaders struct {
+	XRequestId string
+}
+
+type RevokePlaybackSessions403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RevokePlaybackSessions403ResponseHeaders
+}
+
+func (response RevokePlaybackSessions403ApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSessionsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type RevokePlaybackSessionsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    RevokePlaybackSessionsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response RevokePlaybackSessionsdefaultApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSessionRequestObject struct {
+	SessionId SessionIdPath `json:"session_id"`
+}
+
+type GetPlaybackSessionResponseObject interface {
+	VisitGetPlaybackSessionResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackSession200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSession200JSONResponse struct {
+	Body    PlaybackSessionStatus
+	Headers GetPlaybackSession200ResponseHeaders
+}
+
+func (response GetPlaybackSession200JSONResponse) VisitGetPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSession401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSession401ApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSession403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSession403ApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSession404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSession404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackSession404ResponseHeaders
+}
+
+func (response GetPlaybackSession404ApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSessiondefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSessiondefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackSessiondefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackSessiondefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSessionRequestObject struct {
+	SessionId SessionIdPath `json:"session_id"`
+	Body      *RevokePlaybackSessionJSONRequestBody
+}
+
+type RevokePlaybackSessionResponseObject interface {
+	VisitRevokePlaybackSessionResponse(w http.ResponseWriter) error
+}
+
+type RevokePlaybackSession200ResponseHeaders struct {
+	XRequestId string
+}
+
+type RevokePlaybackSession200JSONResponse struct {
+	Body    PlaybackSessionStatus
+	Headers RevokePlaybackSession200ResponseHeaders
+}
+
+func (response RevokePlaybackSession200JSONResponse) VisitRevokePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSession400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RevokePlaybackSession400ApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSession401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response RevokePlaybackSession401ApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSession403ResponseHeaders struct {
+	XRequestId string
+}
+
+type RevokePlaybackSession403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RevokePlaybackSession403ResponseHeaders
+}
+
+func (response RevokePlaybackSession403ApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSession404ResponseHeaders struct {
+	XRequestId string
+}
+
+type RevokePlaybackSession404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RevokePlaybackSession404ResponseHeaders
+}
+
+func (response RevokePlaybackSession404ApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokePlaybackSessiondefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type RevokePlaybackSessiondefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    RevokePlaybackSessiondefaultResponseHeaders
+	StatusCode int
+}
+
+func (response RevokePlaybackSessiondefaultApplicationProblemPlusJSONResponse) VisitRevokePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetPlaybackSettingsRequestObject struct {
 }
 
@@ -3011,6 +3525,15 @@ type StrictServerInterface interface {
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(ctx context.Context, request CreatePlaybackSessionRequestObject) (CreatePlaybackSessionResponseObject, error)
+	// RevokePlaybackSessions Revoke sessions by filter
+	// (POST /v1/playback-sessions/revoke)
+	RevokePlaybackSessions(ctx context.Context, request RevokePlaybackSessionsRequestObject) (RevokePlaybackSessionsResponseObject, error)
+	// GetPlaybackSession Get a playback session
+	// (GET /v1/playback-sessions/{session_id})
+	GetPlaybackSession(ctx context.Context, request GetPlaybackSessionRequestObject) (GetPlaybackSessionResponseObject, error)
+	// RevokePlaybackSession Revoke a playback session
+	// (POST /v1/playback-sessions/{session_id}/revoke)
+	RevokePlaybackSession(ctx context.Context, request RevokePlaybackSessionRequestObject) (RevokePlaybackSessionResponseObject, error)
 	// GetPlaybackSettings Get the playback settings
 	// (GET /v1/playback-settings)
 	GetPlaybackSettings(ctx context.Context, request GetPlaybackSettingsRequestObject) (GetPlaybackSettingsResponseObject, error)
@@ -3444,6 +3967,99 @@ func (sh *strictHandler) CreatePlaybackSession(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreatePlaybackSessionResponseObject); ok {
 		if err := validResponse.VisitCreatePlaybackSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RevokePlaybackSessions operation middleware
+func (sh *strictHandler) RevokePlaybackSessions(w http.ResponseWriter, r *http.Request) {
+	var request RevokePlaybackSessionsRequestObject
+
+	var body RevokePlaybackSessionsJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RevokePlaybackSessions(ctx, request.(RevokePlaybackSessionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RevokePlaybackSessions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RevokePlaybackSessionsResponseObject); ok {
+		if err := validResponse.VisitRevokePlaybackSessionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackSession operation middleware
+func (sh *strictHandler) GetPlaybackSession(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath) {
+	var request GetPlaybackSessionRequestObject
+
+	request.SessionId = sessionId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackSession(ctx, request.(GetPlaybackSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackSessionResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RevokePlaybackSession operation middleware
+func (sh *strictHandler) RevokePlaybackSession(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath) {
+	var request RevokePlaybackSessionRequestObject
+
+	request.SessionId = sessionId
+
+	var body RevokePlaybackSessionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RevokePlaybackSession(ctx, request.(RevokePlaybackSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RevokePlaybackSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RevokePlaybackSessionResponseObject); ok {
+		if err := validResponse.VisitRevokePlaybackSessionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

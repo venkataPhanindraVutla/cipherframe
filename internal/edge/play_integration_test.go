@@ -181,7 +181,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com"})
+	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Now: e.clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -717,7 +717,7 @@ func TestCORS(t *testing.T) {
 		// Preflight: no token needed; 204 with the headers for an allowed origin only.
 		pf := e.do("OPTIONS", p, map[string]string{"Origin": testOrigin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"})
 		want(t, pf, 204)
-		if acao(pf) != testOrigin || pf.hdr.Get("Access-Control-Allow-Methods") != "GET, OPTIONS" ||
+		if acao(pf) != testOrigin || pf.hdr.Get("Access-Control-Allow-Methods") != "GET, POST, OPTIONS" ||
 			pf.hdr.Get("Access-Control-Allow-Headers") != "Authorization" || pf.hdr.Get("Access-Control-Allow-Credentials") != "" ||
 			!strings.Contains(pf.hdr.Get("Vary"), "Origin") {
 			t.Fatalf("%s: preflight headers = %v", p, pf.hdr)

@@ -35,6 +35,9 @@ var operationScopes = map[string][]db.Scope{
 	"AbortAsset":  {db.ScopeAssetsWrite},
 
 	"CreatePlaybackSession":  {db.ScopeSessionsWrite},
+	"GetPlaybackSession":     {db.ScopeSessionsWrite},
+	"RevokePlaybackSession":  {db.ScopeSessionsWrite},
+	"RevokePlaybackSessions": {db.ScopeSessionsWrite},
 	"GetPlaybackSettings":    {db.ScopeAdmin},
 	"UpdatePlaybackSettings": {db.ScopeAdmin},
 }
@@ -156,6 +159,18 @@ func (g guarded) CreateAsset(w http.ResponseWriter, r *http.Request) {
 
 func (g guarded) CreatePlaybackSession(w http.ResponseWriter, r *http.Request) {
 	g.a.run("CreatePlaybackSession", w, r, func(r *http.Request) { g.ServerInterface.CreatePlaybackSession(w, r) })
+}
+
+func (g guarded) GetPlaybackSession(w http.ResponseWriter, r *http.Request, sessionID gen.SessionIdPath) {
+	g.a.run("GetPlaybackSession", w, r, func(r *http.Request) { g.ServerInterface.GetPlaybackSession(w, r, sessionID) })
+}
+
+func (g guarded) RevokePlaybackSession(w http.ResponseWriter, r *http.Request, sessionID gen.SessionIdPath) {
+	g.a.run("RevokePlaybackSession", w, r, func(r *http.Request) { g.ServerInterface.RevokePlaybackSession(w, r, sessionID) })
+}
+
+func (g guarded) RevokePlaybackSessions(w http.ResponseWriter, r *http.Request) {
+	g.a.run("RevokePlaybackSessions", w, r, func(r *http.Request) { g.ServerInterface.RevokePlaybackSessions(w, r) })
 }
 
 func (g guarded) GetPlaybackSettings(w http.ResponseWriter, r *http.Request) {

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 )
@@ -134,6 +135,22 @@ type HealthResponse struct {
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
 
+// PlaybackHeartbeat defines model for PlaybackHeartbeat.
+type PlaybackHeartbeat struct {
+	// HeartbeatIntervalSeconds How often to send the next heartbeat.
+	HeartbeatIntervalSeconds int `json:"heartbeat_interval_seconds"`
+
+	// SessionExpiresAt The session ends at this time at the latest, heartbeats or not.
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+
+	// Token A fresh playback token with the manifest, key and segment scopes, shown only here. Use
+	// it for every later request; the previous token works until its own expiry.
+	Token string `json:"token"`
+
+	// TokenExpiresAt When the token stops working. Never later than `session_expires_at`.
+	TokenExpiresAt time.Time `json:"token_expires_at"`
+}
+
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Problem struct {
 	// Code Stable identifier to switch on. The closed registry in `internal/errs`.
@@ -211,6 +228,20 @@ type PlaybackUnauthenticated = Problem
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
 
+// EndPlaybackParams defines parameters for EndPlayback.
+type EndPlaybackParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
+// HeartbeatPlaybackParams defines parameters for HeartbeatPlayback.
+type HeartbeatPlaybackParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
 // GetPlaybackKeyParams defines parameters for GetPlaybackKey.
 type GetPlaybackKeyParams struct {
 	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
@@ -247,6 +278,12 @@ type ServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// EndPlayback End the session
+	// (POST /v1/play/{session_id}/end)
+	EndPlayback(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params EndPlaybackParams)
+	// HeartbeatPlayback Heartbeat
+	// (POST /v1/play/{session_id}/heartbeat)
+	HeartbeatPlayback(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params HeartbeatPlaybackParams)
 	// GetPlaybackKey Content key
 	// (GET /v1/play/{session_id}/key)
 	GetPlaybackKey(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackKeyParams)
@@ -295,6 +332,90 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EndPlayback operation middleware
+func (siw *ServerInterfaceWrapper) EndPlayback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params EndPlaybackParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EndPlayback(w, r, sessionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// HeartbeatPlayback operation middleware
+func (siw *ServerInterfaceWrapper) HeartbeatPlayback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params HeartbeatPlaybackParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.HeartbeatPlayback(w, r, sessionId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -686,6 +807,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/media.m3u8", wrapper.GetPlaybackMedia)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/{file}", wrapper.GetPlaybackSegment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/key", wrapper.GetPlaybackKey)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/play/{session_id}/heartbeat", wrapper.HeartbeatPlayback)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/play/{session_id}/end", wrapper.EndPlayback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts", wrapper.ListUploadParts)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts/{part_number}", wrapper.PutUploadPart)
 
@@ -827,6 +950,294 @@ type GetReadyzdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetReadyzdefaultApplicationProblemPlusJSONResponse) VisitGetReadyzResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndPlaybackRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Params    EndPlaybackParams
+}
+
+type EndPlaybackResponseObject interface {
+	VisitEndPlaybackResponse(w http.ResponseWriter) error
+}
+
+type EndPlayback204ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type EndPlayback204Response struct {
+	Headers EndPlayback204ResponseHeaders
+}
+
+func (response EndPlayback204Response) VisitEndPlaybackResponse(w http.ResponseWriter) error {
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(204)
+	return nil
+}
+
+type EndPlayback400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response EndPlayback400ApplicationProblemPlusJSONResponse) VisitEndPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndPlayback401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response EndPlayback401ApplicationProblemPlusJSONResponse) VisitEndPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndPlayback404ResponseHeaders struct {
+	XRequestId string
+}
+
+type EndPlayback404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers EndPlayback404ResponseHeaders
+}
+
+func (response EndPlayback404ApplicationProblemPlusJSONResponse) VisitEndPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndPlayback503ResponseHeaders struct {
+	XRequestId string
+}
+
+type EndPlayback503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers EndPlayback503ResponseHeaders
+}
+
+func (response EndPlayback503ApplicationProblemPlusJSONResponse) VisitEndPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndPlaybackdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type EndPlaybackdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    EndPlaybackdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response EndPlaybackdefaultApplicationProblemPlusJSONResponse) VisitEndPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type HeartbeatPlaybackRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Params    HeartbeatPlaybackParams
+}
+
+type HeartbeatPlaybackResponseObject interface {
+	VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error
+}
+
+type HeartbeatPlayback200ResponseHeaders struct {
+	CacheControl   string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type HeartbeatPlayback200JSONResponse struct {
+	Body    PlaybackHeartbeat
+	Headers HeartbeatPlayback200ResponseHeaders
+}
+
+func (response HeartbeatPlayback200JSONResponse) VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type HeartbeatPlayback400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response HeartbeatPlayback400ApplicationProblemPlusJSONResponse) VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type HeartbeatPlayback401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response HeartbeatPlayback401ApplicationProblemPlusJSONResponse) VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type HeartbeatPlayback404ResponseHeaders struct {
+	XRequestId string
+}
+
+type HeartbeatPlayback404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers HeartbeatPlayback404ResponseHeaders
+}
+
+func (response HeartbeatPlayback404ApplicationProblemPlusJSONResponse) VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type HeartbeatPlayback429ResponseHeaders struct {
+	RetryAfter int
+	XRequestId string
+}
+
+type HeartbeatPlayback429ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers HeartbeatPlayback429ResponseHeaders
+}
+
+func (response HeartbeatPlayback429ApplicationProblemPlusJSONResponse) VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type HeartbeatPlayback503ResponseHeaders struct {
+	XRequestId string
+}
+
+type HeartbeatPlayback503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers HeartbeatPlayback503ResponseHeaders
+}
+
+func (response HeartbeatPlayback503ApplicationProblemPlusJSONResponse) VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type HeartbeatPlaybackdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type HeartbeatPlaybackdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    HeartbeatPlaybackdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response HeartbeatPlaybackdefaultApplicationProblemPlusJSONResponse) VisitHeartbeatPlaybackResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -1664,6 +2075,12 @@ type StrictServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(ctx context.Context, request GetReadyzRequestObject) (GetReadyzResponseObject, error)
+	// EndPlayback End the session
+	// (POST /v1/play/{session_id}/end)
+	EndPlayback(ctx context.Context, request EndPlaybackRequestObject) (EndPlaybackResponseObject, error)
+	// HeartbeatPlayback Heartbeat
+	// (POST /v1/play/{session_id}/heartbeat)
+	HeartbeatPlayback(ctx context.Context, request HeartbeatPlaybackRequestObject) (HeartbeatPlaybackResponseObject, error)
 	// GetPlaybackKey Content key
 	// (GET /v1/play/{session_id}/key)
 	GetPlaybackKey(ctx context.Context, request GetPlaybackKeyRequestObject) (GetPlaybackKeyResponseObject, error)
@@ -1764,6 +2181,60 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetReadyzResponseObject); ok {
 		if err := validResponse.VisitGetReadyzResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// EndPlayback operation middleware
+func (sh *strictHandler) EndPlayback(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params EndPlaybackParams) {
+	var request EndPlaybackRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EndPlayback(ctx, request.(EndPlaybackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EndPlayback")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EndPlaybackResponseObject); ok {
+		if err := validResponse.VisitEndPlaybackResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// HeartbeatPlayback operation middleware
+func (sh *strictHandler) HeartbeatPlayback(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params HeartbeatPlaybackParams) {
+	var request HeartbeatPlaybackRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.HeartbeatPlayback(ctx, request.(HeartbeatPlaybackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "HeartbeatPlayback")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(HeartbeatPlaybackResponseObject); ok {
+		if err := validResponse.VisitHeartbeatPlaybackResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

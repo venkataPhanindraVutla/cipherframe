@@ -426,7 +426,7 @@ type sweepService struct {
 }
 
 func (s sweepService) run(ctx context.Context) error {
-	playback.RunKeyFetchSweeper(ctx, s.repos, playback.SweepInterval, s.log)
+	playback.RunSweeper(ctx, s.repos, playback.SweepInterval, s.log)
 	return nil
 }
 func (sweepService) close() {}

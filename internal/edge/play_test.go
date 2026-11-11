@@ -152,6 +152,14 @@ func (settingsOnlyStore) PlaybackSessionTenant(context.Context, []byte) (id.Tena
 	return id.TenantID{}, errs.New(errs.InternalError, "a successful segment request must not look up the session's tenant")
 }
 
+func (settingsOnlyStore) HeartbeatPlaybackSession(context.Context, id.TenantID, []byte, id.AssetID, time.Time, time.Duration, time.Duration) (db.PlaybackSession, db.HeartbeatOutcome, time.Duration, error) {
+	return db.PlaybackSession{}, db.HeartbeatUnusable, 0, errs.New(errs.InternalError, "a segment request must not heartbeat")
+}
+
+func (settingsOnlyStore) EndPlaybackSession(context.Context, id.TenantID, []byte, time.Time) (bool, error) {
+	return false, errs.New(errs.InternalError, "a segment request must not end the session")
+}
+
 // TestSegmentIsStreamed proves a segment is not buffered: a client that reads a little and hangs
 // up makes the handler stop reading the (1 GiB) object long before the end, and the object is
 // closed.

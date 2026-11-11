@@ -168,8 +168,8 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id > 0").Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 7 {
-		t.Fatalf("applied migrations = %d, want 7", applied)
+	if applied != 8 {
+		t.Fatalf("applied migrations = %d, want 8", applied)
 	}
 	// River's schema is applied by the same call and is not re-applied by a further run.
 	var riverVersions int
