@@ -474,6 +474,128 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/playback-sessions:
+    post:
+      operationId: createPlaybackSession
+      summary: Start a playback session
+      description: |
+        Starts a playback session for one viewer on one `ready` asset of the caller's tenant and
+        returns what the viewer's player needs: the session ID, a short-lived **playback token**
+        (shown only in this response), the heartbeat interval and the master playlist URL on edge
+        (ADR 0028, 0030). Requires the `sessions:write` scope.
+
+        An asset of another tenant is `not_found`, the same as one that does not exist. An asset
+        that is not `ready` is `409 asset_not_ready`. A viewer that already has the tenant's
+        maximum number of active sessions (default 3, `max_sessions_per_viewer` in the playback
+        settings; 0 means unlimited) gets `409 session_limit`, and existing sessions are left
+        alone. A session counts as active until it is revoked or ended, until it has had no
+        heartbeat for the idle timeout, or until it reaches its maximum age.
+
+        `viewer_id` is yours to choose. Use a pseudonymous identifier that only your application
+        can link to a person. Never send an email address, a name or another direct identifier: it
+        is stored with the session and counts against the viewer's session limit.
+
+        The player sends the token as `Authorization: Bearer <token>` on every request to edge
+        (`token_transport` is `header`). When the tenant has set `token_in_url`, `manifest_url`
+        carries the token as the query parameter `t` and `token_transport` is `url`; that mode is
+        for native HLS players that cannot set headers, and the token can then appear in browser
+        history and in logs of proxies the operator does not control (ADR 0030).
+      tags: [api]
+      security:
+        - bearerAuth: [sessions:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlaybackSessionRequest"
+      responses:
+        "201":
+          description: The session was created. `token` and a `manifest_url` carrying it are shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedPlaybackSession"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/playback-settings:
+    get:
+      operationId: getPlaybackSettings
+      summary: Get the playback settings
+      description: |
+        Returns the tenant's effective playback settings: the stored ones, or the defaults of
+        ADR 0028 when none were ever stored (then `updated_at` is absent). Requires the `admin`
+        scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: The effective settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackSettings"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updatePlaybackSettings
+      summary: Replace the playback settings
+      description: |
+        Replaces every setting of the tenant (a full replacement, not a patch: send all fields).
+        Invalid values are `invalid_request` with an `errors` entry per field and nothing is
+        stored. The new values apply to sessions created afterwards; sessions that already exist
+        keep the limits they were created with, except that the idle timeout and the per-viewer
+        limit are read at each new session creation. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackSettingsInput"
+      responses:
+        "200":
+          description: The settings were replaced.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackSettings"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/uploads/multipart/{asset_id}/parts:
     get:
       operationId: listUploadParts
@@ -682,7 +804,7 @@ components:
         type: string
         pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     CacheControlNoStore:
-      description: "Always `no-store`; the body holds a full API key or an upload token."
+      description: "Always `no-store`; the body holds a full API key, an upload token or a playback token."
       required: true
       schema:
         type: string
@@ -1011,6 +1133,174 @@ components:
             $ref: "#/components/schemas/Asset"
         next_cursor:
           type: string
+    SessionId:
+      type: string
+      pattern: "^ses_[0-9a-hjkmnp-tv-z]{52}$"
+      description: A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+    CreatePlaybackSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [asset_id, viewer_id]
+      properties:
+        asset_id:
+          $ref: "#/components/schemas/AssetIdValue"
+        viewer_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: |
+            Your pseudonymous ID for the viewer: 1 to 128 printable characters, no control
+            characters. Use an ID only your application can link to a person, never an email
+            address.
+    CreatedPlaybackSession:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - token
+        - token_expires_at
+        - heartbeat_interval_seconds
+        - session_expires_at
+        - manifest_url
+        - token_transport
+      properties:
+        session_id:
+          $ref: "#/components/schemas/SessionId"
+        token:
+          type: string
+          maxLength: 1024
+          description: |
+            The playback token (`v1.<payload>.<kid>.<mac>`), shown only here. It allows the
+            manifest, key and segment requests of this session and asset until `token_expires_at`.
+            Each heartbeat returns a fresh one.
+        token_expires_at:
+          type: string
+          format: date-time
+          description: When the token stops working. Never later than `session_expires_at`.
+        heartbeat_interval_seconds:
+          type: integer
+          description: How often the player should send a heartbeat.
+        session_expires_at:
+          type: string
+          format: date-time
+          description: The session ends at this time at the latest, heartbeats or not.
+        manifest_url:
+          type: string
+          format: uri
+          description: |
+            The master playlist on edge, `<edge URL>/v1/play/<session_id>/master.m3u8`. It ends
+            with `?t=<token>` only when `token_transport` is `url`.
+        token_transport:
+          type: string
+          enum: [header, url]
+          description: |
+            `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
+            to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+    PlaybackSettingsInput:
+      description: |
+        Every playback setting of a tenant (ADR 0028, 0030). This is a full replacement, so every
+        field is required: a missing field is `invalid_request` with an `errors` entry naming it.
+        (The schema does not mark them `required` so that a missing field can be told apart from
+        a zero value, which `max_sessions_per_viewer` and `token_in_url` accept.)
+      type: object
+      additionalProperties: false
+      properties:
+        token_ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          description: How long a playback token works. Default 600.
+        heartbeat_interval_seconds:
+          type: integer
+          minimum: 10
+          maximum: 600
+          description: |
+            How often the player sends a heartbeat. Must be less than `token_ttl_seconds` and less
+            than `idle_timeout_seconds`. Default 60.
+        idle_timeout_seconds:
+          type: integer
+          minimum: 30
+          maximum: 3600
+          description: A session with no heartbeat for this long ends. Default 300.
+        session_max_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          description: A session ends this long after it starts, at the latest. Default 14400 (4 hours).
+        max_sessions_per_viewer:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: |
+            The most active sessions one `viewer_id` may have; a new one beyond it is
+            `409 session_limit`. 0 means unlimited. Default 3.
+        key_fetches_per_token:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: The most key requests one playback token may make. Default 20.
+        key_requests_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 600
+          description: The most key requests one session may make per minute. Default 30.
+        allowed_origins:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: |
+            Browser origins allowed to play (CORS on edge). Each is an exact origin
+            `https://host[:port]`, or `http://localhost[:port]` for development: lower case, no
+            path, no wildcard, and no port that is the scheme's default. Default empty.
+          items:
+            type: string
+            maxLength: 300
+        token_in_url:
+          type: boolean
+          description: |
+            Put the playback token in the manifest URL as `?t=` for native HLS players that cannot
+            set headers (ADR 0030). Off by default: tokens in URLs can end up in browser history
+            and in proxy and CDN logs.
+    PlaybackSettings:
+      description: A tenant's effective playback settings.
+      type: object
+      additionalProperties: false
+      required:
+        - token_ttl_seconds
+        - heartbeat_interval_seconds
+        - idle_timeout_seconds
+        - session_max_seconds
+        - max_sessions_per_viewer
+        - key_fetches_per_token
+        - key_requests_per_minute
+        - allowed_origins
+        - token_in_url
+      properties:
+        token_ttl_seconds:
+          type: integer
+        heartbeat_interval_seconds:
+          type: integer
+        idle_timeout_seconds:
+          type: integer
+        session_max_seconds:
+          type: integer
+        max_sessions_per_viewer:
+          type: integer
+          description: 0 means unlimited.
+        key_fetches_per_token:
+          type: integer
+        key_requests_per_minute:
+          type: integer
+        allowed_origins:
+          type: array
+          items:
+            type: string
+        token_in_url:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          description: When the settings were last replaced. Absent while the defaults are in force.
     UploadPart:
       type: object
       additionalProperties: false
@@ -1087,6 +1377,7 @@ components:
           type: string
           description: Stable identifier to switch on. The closed registry in `internal/errs`.
           enum:
+            - asset_not_ready
             - conflict
             - dependency_unavailable
             - forbidden
@@ -1096,6 +1387,7 @@ components:
             - not_found
             - payload_too_large
             - rate_limited
+            - session_limit
             - timeout
             - unauthenticated
         retryable:
@@ -1103,3 +1395,20 @@ components:
         request_id:
           type: string
           pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        errors:
+          type: array
+          description: |
+            Present on some `invalid_request` responses: one entry per invalid field. Messages are
+            fixed text and never quote the submitted value.
+          items:
+            $ref: "#/components/schemas/FieldError"
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: The JSON name of the field, with an index for list items, for example `allowed_origins[2]`.
+        message:
+          type: string

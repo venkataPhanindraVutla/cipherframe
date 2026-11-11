@@ -14,6 +14,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
 
@@ -34,6 +35,9 @@ type Deps struct {
 	ContentKeys *contentkey.Manager
 	// Assets serves the asset endpoints (M3-1). Without it they answer 503 dependency_unavailable.
 	Assets *uploads.Service
+	// Playback serves the playback-session and playback-settings endpoints (M4-1). Without it
+	// they answer 503 dependency_unavailable.
+	Playback *playback.Service
 }
 
 // API is the control-plane HTTP handler.
@@ -50,7 +54,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})

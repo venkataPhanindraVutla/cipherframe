@@ -10,7 +10,23 @@ import "fmt"
 type Error struct {
 	Code   Code
 	Detail string
+	// Fields lists the invalid request fields of an invalid_request error. Like Detail, it is sent
+	// to clients, so it holds field names and fixed messages only, never submitted values.
+	Fields []FieldError
 	cause  error
+}
+
+// FieldError says what is wrong with one request field.
+type FieldError struct {
+	// Field is the JSON name of the field, with an index for list items: "allowed_origins[2]".
+	Field string `json:"field"`
+	// Message is a fixed, human-readable reason. It never quotes the submitted value.
+	Message string `json:"message"`
+}
+
+// Invalid returns an invalid_request error that carries one entry per invalid field.
+func Invalid(detail string, fields []FieldError) *Error {
+	return &Error{Code: InvalidRequest, Detail: detail, Fields: fields}
 }
 
 // New returns an Error with no cause.

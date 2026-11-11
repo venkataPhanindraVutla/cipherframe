@@ -33,6 +33,10 @@ var operationScopes = map[string][]db.Scope{
 	"GetAsset":    {db.ScopeAssetsRead},
 	"CommitAsset": {db.ScopeAssetsWrite},
 	"AbortAsset":  {db.ScopeAssetsWrite},
+
+	"CreatePlaybackSession":  {db.ScopeSessionsWrite},
+	"GetPlaybackSettings":    {db.ScopeAdmin},
+	"UpdatePlaybackSettings": {db.ScopeAdmin},
 }
 
 // publicOperations are served without authentication.
@@ -148,6 +152,18 @@ func (g guarded) RevokeKey(w http.ResponseWriter, r *http.Request, keyID gen.Key
 
 func (g guarded) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	g.a.run("CreateAsset", w, r, func(r *http.Request) { g.ServerInterface.CreateAsset(w, r) })
+}
+
+func (g guarded) CreatePlaybackSession(w http.ResponseWriter, r *http.Request) {
+	g.a.run("CreatePlaybackSession", w, r, func(r *http.Request) { g.ServerInterface.CreatePlaybackSession(w, r) })
+}
+
+func (g guarded) GetPlaybackSettings(w http.ResponseWriter, r *http.Request) {
+	g.a.run("GetPlaybackSettings", w, r, func(r *http.Request) { g.ServerInterface.GetPlaybackSettings(w, r) })
+}
+
+func (g guarded) UpdatePlaybackSettings(w http.ResponseWriter, r *http.Request) {
+	g.a.run("UpdatePlaybackSettings", w, r, func(r *http.Request) { g.ServerInterface.UpdatePlaybackSettings(w, r) })
 }
 
 func (g guarded) ListAssets(w http.ResponseWriter, r *http.Request, params gen.ListAssetsParams) {

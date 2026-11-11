@@ -68,6 +68,8 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/assets` | yes | no | `assets:write` |
 | `GET /v1/assets`, `GET /v1/assets/{asset_id}` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort` | yes | no | `assets:write` |
+| `POST /v1/playback-sessions` | yes | no | `sessions:write` |
+| `GET /v1/playback-settings`, `PUT /v1/playback-settings` | yes | no | `admin` |
 | `PUT /v1/uploads/multipart/{asset_id}/parts/{part_number}` | no | yes | upload token |
 | `GET /v1/uploads/multipart/{asset_id}/parts` | no | yes | upload token |
 | tus: `POST /v1/uploads/tus/`, `HEAD` and `PATCH /v1/uploads/tus/{asset_id}` | no | yes (tusd mount) | upload token |
@@ -259,6 +261,104 @@ CORS: the multipart endpoints answer any origin without credentials, because the
 - Duration and resolution limits are enforced later, by the probe step.
 - An uploader can lie about `content_type`; it is stored as object metadata only.
 
+## Playback sessions and settings (ADR 0028, 0030)
+
+Endpoint names and shapes are flagged for owner review before v1.0.0. This section covers the
+control plane only: the edge routes that serve a session's playlists, keys and segments, and the
+heartbeat and revoke endpoints, arrive with later M4 tasks.
+
+**Start a session.** `POST /v1/playback-sessions` (scope `sessions:write`) with
+`{"asset_id": "ast_…", "viewer_id": "u-8f3a…"}`. The asset must belong to your tenant and be `ready`.
+The `201` answer, `Cache-Control: no-store`:
+
+```json
+{
+  "session_id": "ses_…",
+  "token": "v1.…",
+  "token_expires_at": "2026-11-12T10:10:00Z",
+  "heartbeat_interval_seconds": 60,
+  "session_expires_at": "2026-11-12T14:00:00Z",
+  "manifest_url": "https://media.example.com/v1/play/ses_…/master.m3u8",
+  "token_transport": "header"
+}
+```
+
+Give `manifest_url`, the token and the heartbeat interval to the player. With `token_transport`
+`header` (the default) the player sends `Authorization: Bearer <token>` on every request to edge, and
+no URL contains the token. The token allows the manifest, key and segment requests of this one
+session and asset, and expires after the tenant's token TTL (10 minutes by default), never later than
+the session itself. The session ends after 4 hours at most, or after 5 minutes without a heartbeat.
+
+| Status | Code | When |
+|---|---|---|
+| `400` | `invalid_request` | `viewer_id` or `asset_id` is malformed (see `errors`). |
+| `403` | `forbidden` | The key lacks `sessions:write`. |
+| `404` | `not_found` | No such asset, including an asset of another tenant (never `403`). |
+| `409` | `asset_not_ready` | The asset is not `ready` (still uploading or processing, or failed). |
+| `409` | `session_limit` | The viewer already has the maximum number of active sessions. |
+
+**Viewer IDs and privacy.** `viewer_id` (1 to 128 printable characters, no control characters) is
+stored with the session and is the key of the concurrency limit. Use a **pseudonymous** identifier
+that only your application can link to a person, for example a random user ID or a keyed hash. Never
+send an email address, a name, a phone number or another direct identifier: Cipherframe has no use
+for one, and it would then sit in session rows. It is not returned in any response, written to any
+log or sent to the browser.
+
+**Concurrency limit.** By default a viewer (your `viewer_id`, within your tenant) may have 3 active
+sessions. A fourth is `409 session_limit` and the existing sessions are left alone (they are not
+revoked to make room). A session counts as active until it is revoked or ended, until it has had no
+heartbeat for the idle timeout, or until it reaches its maximum age; idle and expired ones are marked
+`ended` the next time that viewer starts a session. The check and the insert run under a lock on the
+(tenant, viewer) pair, so parallel requests cannot exceed the limit. `max_sessions_per_viewer` `0`
+means unlimited.
+
+**Where the secrets live.** A session ID and a token grant playback, so the database stores only the
+SHA-256 of the session ID, and neither appears in a log line or an error. The token is shown only in
+this response (the manifest URL carries it only when the tenant turned `token_in_url` on). Anyone who
+holds a token can play until it expires: tokens are not bound to an address or a device, and revoking
+a session stops key fetches only (AES-128 HLS is not DRM, ADR 0028).
+
+**Settings.** `GET /v1/playback-settings` (scope `admin`) returns the tenant's effective settings;
+`PUT /v1/playback-settings` replaces all of them (send every field). A tenant that never set any uses
+the defaults, and `updated_at` is absent until the first `PUT`.
+
+| Field | Default | Range | Meaning |
+|---|---|---|---|
+| `token_ttl_seconds` | 600 | 60 to 3600 | How long a token works. |
+| `heartbeat_interval_seconds` | 60 | 10 to 600 | How often the player sends a heartbeat. Less than the token TTL and the idle timeout. |
+| `idle_timeout_seconds` | 300 | 30 to 3600 | A session without a heartbeat for this long ends. |
+| `session_max_seconds` | 14400 | 300 to 86400 | Maximum session age. |
+| `max_sessions_per_viewer` | 3 | 0 to 100 | Active sessions per viewer; 0 is unlimited. |
+| `key_fetches_per_token` | 20 | 1 to 1000 | Key requests one token may make (enforced by the key endpoint, M4-4). |
+| `key_requests_per_minute` | 30 | 1 to 600 | Key requests one session may make per minute (key endpoint, M4-4). |
+| `allowed_origins` | `[]` | at most 20 | Browser origins allowed to play (CORS on edge, M4-3). |
+| `token_in_url` | `false` | | Put the token in the manifest URL for native HLS players. |
+
+`allowed_origins` entries are exact origins as a browser writes them: `https://host[:port]`, or
+`http://localhost[:port]` for development. Lower case, no path, no trailing slash, no wildcard, no
+user information, and no port that is the scheme's default (`https://example.com`, not
+`https://example.com:443`). Duplicates are rejected. An invalid request is `400 invalid_request` with
+one `errors` entry per field, for example `allowed_origins[1]`, and nothing is stored. A change
+applies to sessions created afterwards.
+
+**Token in URLs (`token_in_url`).** Off by default, so no URL carries a token (pitfall 9). Turn it on
+only for tenants that must support native HLS players (for example Safari on iOS) that cannot set
+headers: `manifest_url` then ends in `?t=<token>` and `token_transport` is `url`. The token can then
+appear in browser history and in the logs of proxies and CDNs that you do not control; it lasts at
+most the token TTL, and revoking the session still stops key fetches. Edge strips the parameter from
+what it logs and sends `Referrer-Policy: no-referrer` (M4-3, ADR 0030).
+
+### What the playback endpoints do not protect against
+
+- A token holder can fetch the playlists and segments of that one session until the token expires.
+  Segments already downloaded stay decryptable by anyone who also fetched the key.
+- The concurrency limit counts sessions per `viewer_id`. A caller that gives each of one person's
+  tabs a different `viewer_id` defeats it, so derive the ID from your own user, not per page.
+- The limit is not a licensing control: it is checked when a session starts, and heartbeats (later)
+  keep sessions alive.
+- Anything that can call `POST /v1/playback-sessions` with a `sessions:write` key can start sessions
+  for any `viewer_id` of its tenant, up to the limit, for any ready asset of the tenant.
+
 ## Conventions
 
 ### ID formats (ADR 0011)
@@ -309,10 +409,16 @@ server-side only.
 | `method_not_allowed` | 405 | no | The path exists but does not support this HTTP method. |
 | `conflict` | 409 | no | The request conflicts with the current state of the object. |
 | `payload_too_large` | 413 | no | The request body exceeds the allowed size. |
+| `asset_not_ready` | 409 | no | The operation needs a `ready` asset and this one is not (yet). |
+| `session_limit` | 409 | no | The viewer already has the tenant's maximum number of active playback sessions. |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |
 | `timeout` | 504 | yes | The operation did not finish in time. |
+
+Some `invalid_request` answers also carry an `errors` array with one `{"field", "message"}` entry per
+invalid field (for example `{"field": "allowed_origins[1]", "message": "must be an origin such as
+https://example.com"}`). Messages are fixed text and never quote what was submitted.
 
 Adding a code is compatible; renaming or removing one is breaking. The registry is published as an
 enum in the OpenAPI spec.

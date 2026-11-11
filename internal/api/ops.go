@@ -6,6 +6,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
@@ -15,6 +16,8 @@ type server struct {
 	ready  *health.Runner
 	mgr    *auth.Manager
 	assets *uploads.Service
+	// playback creates playback sessions and serves the playback settings (M4-1).
+	playback *playback.Service
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

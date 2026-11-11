@@ -23,6 +23,8 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	kmsregistry "github.com/venkataPhanindraVutla/cipherframe/internal/kms/registry"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/worker"
@@ -135,6 +137,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
+		playbackSvc, err := newPlaybackService(pool, cfg)
+		if err != nil {
+			cleanup()
+			return err
+		}
 		handler := api.New(api.Deps{
 			Log:      log,
 			Ready:    ready,
@@ -143,6 +150,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 
 			ContentKeys: contentKeys,
 			Assets:      assets,
+			Playback:    playbackSvc,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
@@ -205,6 +213,21 @@ func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.C
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assets: %w", err)
+	}
+	return svc, nil
+}
+
+// newPlaybackService builds the playback service of the api role: it signs playback tokens with
+// the configured keyring (ADR 0028) and tells clients where the edge serves playlists, so it needs
+// the edge's public URL (already required by the asset service).
+func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config) (*playback.Service, error) {
+	keyring, err := token.KeyringFromConfig(cfg.Playback)
+	if err != nil {
+		return nil, fmt.Errorf("playback: %w", err)
+	}
+	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL})
+	if err != nil {
+		return nil, fmt.Errorf("playback: %w", err)
 	}
 	return svc, nil
 }

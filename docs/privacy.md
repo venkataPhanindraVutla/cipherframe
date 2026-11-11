@@ -7,6 +7,9 @@
 - Recordings, transcripts, subtitles and thumbnails are treated as personal data.
 - Cipherframe records an **access trail** (who, when, which session events) and nothing more. There
   are no viewer behavioural analytics (invariant I10).
+- A playback session stores the embedding application's `viewer_id` and nothing else about the
+  viewer. It must be a pseudonymous identifier, never an email address or other direct identifier
+  ([api.md](api.md#playback-sessions-and-settings-adr-0028-0030)).
 - ML features (v2.1) are opt-in per tenant, run locally, and send no media, audio, frames or
   transcripts to third parties.
 - Every derived artifact is registered with the purge job and counted in the signed deletion record

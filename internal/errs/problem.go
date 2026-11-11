@@ -24,6 +24,8 @@ type Problem struct {
 	Code      Code   `json:"code"`
 	Retryable bool   `json:"retryable"`
 	RequestID string `json:"request_id"`
+	// Errors lists the invalid fields of an invalid_request response. Absent otherwise.
+	Errors []FieldError `json:"errors,omitempty"`
 }
 
 // ToProblem converts err to a Problem. It finds an *Error with errors.As. A nil error, a
@@ -31,14 +33,19 @@ type Problem struct {
 // generic detail; the original error text is never included.
 func ToProblem(err error, requestID string) Problem {
 	code, detail := InternalError, genericDetail
+	var fields []FieldError
 	var e *Error
 	if errors.As(err, &e) && e != nil {
 		if _, ok := registry[e.Code]; ok {
 			code, detail = e.Code, e.Detail
+			if code == InvalidRequest {
+				fields = e.Fields
+			}
 		}
 	}
 	info := registry[code]
 	return Problem{
+		Errors:    fields,
 		Type:      TypePrefix + string(code),
 		Title:     info.Title,
 		Status:    info.Status,

@@ -110,6 +110,35 @@ type ExternalTask struct {
 	CompletedAt *time.Time
 }
 
+type PlaybackSession struct {
+	IDHash          []byte
+	TenantID        pgtype.UUID
+	ClientID        pgtype.UUID
+	AssetID         pgtype.UUID
+	ViewerID        string
+	State           string
+	CreatedAt       time.Time
+	LastHeartbeatAt time.Time
+	ExpiresAt       time.Time
+	EndedAt         *time.Time
+	RevokedAt       *time.Time
+	RevokeReason    *string
+}
+
+type PlaybackSetting struct {
+	TenantID                 pgtype.UUID
+	TokenTtlSeconds          int32
+	HeartbeatIntervalSeconds int32
+	IdleTimeoutSeconds       int32
+	SessionMaxSeconds        int32
+	MaxSessionsPerViewer     int32
+	KeyFetchesPerToken       int32
+	KeyRequestsPerMinute     int32
+	AllowedOrigins           []string
+	TokenInUrl               bool
+	UpdatedAt                time.Time
+}
+
 type Tenant struct {
 	ID         pgtype.UUID
 	Name       string

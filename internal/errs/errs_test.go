@@ -15,6 +15,7 @@ import (
 var declared = []Code{
 	InvalidRequest, Unauthenticated, Forbidden, NotFound, MethodNotAllowed, Conflict,
 	PayloadTooLarge, RateLimited, InternalError, DependencyUnavailable, Timeout,
+	AssetNotReady, SessionLimit,
 }
 
 func marshal(t *testing.T, p Problem) string {
@@ -52,6 +53,7 @@ func TestRegistryValues(t *testing.T) {
 		NotFound: {404, false}, MethodNotAllowed: {405, false}, Conflict: {409, false}, PayloadTooLarge: {413, false},
 		RateLimited: {429, true}, InternalError: {500, false},
 		DependencyUnavailable: {503, true}, Timeout: {504, true},
+		AssetNotReady: {409, false}, SessionLimit: {409, false},
 	}
 	for c, w := range cases {
 		i, _ := Lookup(c)
@@ -67,6 +69,22 @@ func TestGoldenNotFound(t *testing.T) {
 		`"detail":"Asset not found.","code":"not_found","retryable":false,"request_id":"req-1"}`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestGoldenFieldErrors(t *testing.T) {
+	err := Invalid("The settings are invalid.", []FieldError{{Field: "allowed_origins[1]", Message: "must be an origin"}})
+	got := marshal(t, ToProblem(err, "req-3"))
+	const want = `{"type":"urn:cipherframe:error:invalid_request","title":"Invalid request","status":400,` +
+		`"detail":"The settings are invalid.","code":"invalid_request","retryable":false,"request_id":"req-3",` +
+		`"errors":[{"field":"allowed_origins[1]","message":"must be an origin"}]}`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	// Only invalid_request carries field errors.
+	other := &Error{Code: Conflict, Detail: "x", Fields: []FieldError{{Field: "a", Message: "b"}}}
+	if got := marshal(t, ToProblem(other, "r")); strings.Contains(got, "errors") {
+		t.Fatalf("field errors on a conflict: %s", got)
 	}
 }
 
