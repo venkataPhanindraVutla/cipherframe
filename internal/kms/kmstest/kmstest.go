@@ -218,14 +218,22 @@ func Run(t *testing.T, newProvider func(t *testing.T) kms.Provider, opts ...Opti
 
 	if o.rotated != nil {
 		t.Run("mixed versions", func(t *testing.T) {
+			// Read and wrap with the older provider before o.rotated runs: a provider whose
+			// current KEK lives on a server (Vault) moves to the new version the moment the
+			// rotation happens, so the old reference can only be captured before it.
 			before := newProvider(t)
-			after := o.rotated(t)
-			if before.Name() != after.Name() {
-				t.Fatal("rotated provider has a different name")
-			}
 			oldRef, err := before.Current(ctx)
 			if err != nil {
 				t.Fatal(err)
+			}
+			ptOld, ptNew := secret(), secret()
+			wOld, err := before.Wrap(ctx, ptOld, aad)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after := o.rotated(t)
+			if before.Name() != after.Name() {
+				t.Fatal("rotated provider has a different name")
 			}
 			newRef, err := after.Current(ctx)
 			if err != nil {
@@ -233,11 +241,6 @@ func Run(t *testing.T, newProvider func(t *testing.T) kms.Provider, opts ...Opti
 			}
 			if oldRef == newRef {
 				t.Fatal("rotation did not change the current KEK version")
-			}
-			ptOld, ptNew := secret(), secret()
-			wOld, err := before.Wrap(ctx, ptOld, aad)
-			if err != nil {
-				t.Fatal(err)
 			}
 			wNew, err := after.Wrap(ctx, ptNew, aad)
 			if err != nil {
