@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -99,7 +101,45 @@ func NewProcessor(d Deps) (*Processor, error) {
 	if err := prepareWorkDir(d.WorkDir); err != nil {
 		return nil, err
 	}
+	if n, err := sweepStaleJobDirs(d.WorkDir, d.TranscodeTimeout+staleJobGrace, d.Now()); err != nil {
+		d.Log.Warn("could not sweep stale job directories", slog.String("error", err.Error()))
+	} else if n > 0 {
+		d.Log.Info("removed stale job directories", slog.Int("count", n))
+	}
 	return &Processor{Deps: d}, nil
+}
+
+// staleJobGrace is added to the transcode timeout before a leftover job directory counts as stale.
+const staleJobGrace = time.Hour
+
+// sweepStaleJobDirs removes job directories (job-*) last modified before now-olderThan. A worker
+// killed without cleanup (SIGKILL, OOM) can leave plaintext segments behind; a directory older than
+// any job may run cannot belong to a live job, even if several workers share the base directory.
+func sweepStaleJobDirs(dir string, olderThan time.Duration, now time.Time) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("pipeline: read work directory: %w", err)
+	}
+	removed := 0
+	var errs []error
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "job-") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) < olderThan {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		removed++
+	}
+	return removed, errors.Join(errs...)
 }
 
 // prepareWorkDir creates the base directory with mode 0700 and refuses one that other users can
