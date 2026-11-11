@@ -265,9 +265,8 @@ func TestDeadContextIsUnavailableWithoutACall(t *testing.T) {
 
 // apiErr is a smithy API error with an HTTP status, as the SDK returns.
 type apiErr struct {
-	code   string
-	msg    string
-	status int
+	code string
+	msg  string
 }
 
 func (e *apiErr) Error() string                 { return e.code + ": " + e.msg }
@@ -292,7 +291,7 @@ func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
 
 func TestErrorMapping(t *testing.T) {
-	const secretish = "arn:aws:kms:eu-west-1:123456789012:key/SECRET-MARKER request id 99"
+	const leakyText = "arn:aws:kms:eu-west-1:123456789012:key/SECRET-MARKER request id 99" //nolint:gosec // test fixture, not a credential
 	tests := []struct {
 		name string
 		err  error
@@ -302,8 +301,8 @@ func TestErrorMapping(t *testing.T) {
 		{"invalid state", &kmstypes.KMSInvalidStateException{}, kms.NotConfigured, "KMSInvalidStateException"},
 		{"disabled", &kmstypes.DisabledException{}, kms.NotConfigured, "DisabledException"},
 		{"not found", &kmstypes.NotFoundException{}, kms.NotConfigured, "NotFoundException"},
-		{"access denied", &apiErr{code: "AccessDeniedException", msg: secretish}, kms.Denied, "AccessDeniedException"},
-		{"bad token", &apiErr{code: "UnrecognizedClientException", msg: secretish}, kms.Denied, "UnrecognizedClientException"},
+		{"access denied", &apiErr{code: "AccessDeniedException", msg: leakyText}, kms.Denied, "AccessDeniedException"},
+		{"bad token", &apiErr{code: "UnrecognizedClientException", msg: leakyText}, kms.Denied, "UnrecognizedClientException"},
 		{"expired token", &apiErr{code: "ExpiredTokenException"}, kms.Denied, "ExpiredTokenException"},
 		{"invalid ciphertext", &kmstypes.InvalidCiphertextException{}, kms.Invalid, "InvalidCiphertextException"},
 		{"incorrect key", &kmstypes.IncorrectKeyException{}, kms.Invalid, "IncorrectKeyException"},
@@ -313,17 +312,17 @@ func TestErrorMapping(t *testing.T) {
 		{"internal", &kmstypes.KMSInternalException{}, kms.Unavailable, "KMSInternalException"},
 		{"dependency timeout", &kmstypes.DependencyTimeoutException{}, kms.Unavailable, "DependencyTimeoutException"},
 		{"key unavailable", &kmstypes.KeyUnavailableException{}, kms.Unavailable, "KeyUnavailableException"},
-		{"503 no code", responseErr(503, errors.New(secretish)), kms.Unavailable, ""},
-		{"429 no code", responseErr(429, errors.New(secretish)), kms.Unavailable, ""},
-		{"403 no code", responseErr(403, errors.New(secretish)), kms.Denied, ""},
-		{"418 unknown", responseErr(418, errors.New(secretish)), kms.Other, ""},
-		{"unknown code", &apiErr{code: "SomethingNew", msg: secretish}, kms.Other, "SomethingNew"},
-		{"hostile code", &apiErr{code: "bad code with spaces " + secretish}, kms.Other, ""},
+		{"503 no code", responseErr(503, errors.New(leakyText)), kms.Unavailable, ""},
+		{"429 no code", responseErr(429, errors.New(leakyText)), kms.Unavailable, ""},
+		{"403 no code", responseErr(403, errors.New(leakyText)), kms.Denied, ""},
+		{"418 unknown", responseErr(418, errors.New(leakyText)), kms.Other, ""},
+		{"unknown code", &apiErr{code: "SomethingNew", msg: leakyText}, kms.Other, "SomethingNew"},
+		{"hostile code", &apiErr{code: "bad code with spaces " + leakyText}, kms.Other, ""},
 		{"connection refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, kms.Unavailable, ""},
 		{"reset", fmt.Errorf("read: %w", syscall.ECONNRESET), kms.Unavailable, ""},
 		{"eof", io.ErrUnexpectedEOF, kms.Unavailable, ""},
 		{"net timeout", timeoutErr{}, kms.Unavailable, ""},
-		{"opaque", errors.New(secretish), kms.Other, ""},
+		{"opaque", errors.New(leakyText), kms.Other, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -381,7 +380,7 @@ func (b *blockingAPI) Encrypt(ctx context.Context, _ *awskmssdk.EncryptInput, _ 
 
 func TestPrintedFormsAreFixed(t *testing.T) {
 	p := newTest(&fake{})
-	for _, s := range []string{fmt.Sprintf("%v", p), fmt.Sprintf("%+v", p), fmt.Sprintf("%#v", p), fmt.Sprintf("%s", p)} { //nolint:gosimple // exercising every verb
+	for _, s := range []string{fmt.Sprintf("%v", p), fmt.Sprintf("%+v", p), fmt.Sprintf("%#v", p), fmt.Sprint(p)} {
 		if s != "awskms.Provider" {
 			t.Fatalf("printed %q", s)
 		}

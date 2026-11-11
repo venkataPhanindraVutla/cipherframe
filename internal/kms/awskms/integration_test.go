@@ -158,7 +158,7 @@ type proxy struct {
 func newProxy(t *testing.T, target string) *proxy {
 	t.Helper()
 	p := &proxy{target: target}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func (p *proxy) serve(ln net.Listener) {
 			if err != nil {
 				return
 			}
-			up, err := net.Dial("tcp", p.target)
+			up, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", p.target)
 			if err != nil {
 				_ = c.Close()
 				continue
@@ -206,7 +206,7 @@ func (p *proxy) stop() {
 }
 
 func (p *proxy) restart() error {
-	ln, err := net.Listen("tcp", p.addr)
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", p.addr)
 	if err != nil {
 		return err
 	}
