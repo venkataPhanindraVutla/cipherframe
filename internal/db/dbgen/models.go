@@ -110,6 +110,24 @@ type ExternalTask struct {
 	CompletedAt *time.Time
 }
 
+type PlaybackEvent struct {
+	ID          pgtype.UUID
+	TenantID    pgtype.UUID
+	SessionHash []byte
+	AssetID     pgtype.UUID
+	Kind        string
+	At          time.Time
+	Detail      []byte
+}
+
+type PlaybackKeyFetch struct {
+	TokenHash   []byte
+	SessionHash []byte
+	Fetches     int32
+	ExpiresAt   time.Time
+	ExceededAt  *time.Time
+}
+
 type PlaybackSession struct {
 	IDHash          []byte
 	TenantID        pgtype.UUID
@@ -123,6 +141,8 @@ type PlaybackSession struct {
 	EndedAt         *time.Time
 	RevokedAt       *time.Time
 	RevokeReason    *string
+	KeyWindowStart  *time.Time
+	KeyWindowCount  int32
 }
 
 type PlaybackSetting struct {
