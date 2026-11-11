@@ -43,7 +43,7 @@ func session(t testing.TB) string {
 func claims(t testing.TB, sc Scope) Claims {
 	t.Helper()
 	return Claims{
-		SessionID: session(t), AssetID: id.New[id.AssetKind]().String(),
+		SessionID: session(t), AssetID: id.New[id.AssetKind]().String(), TenantID: id.New[id.TenantKind]().String(),
 		Scopes: sc, IssuedAt: t0, Expiry: t0.Add(10 * time.Minute),
 	}
 }
@@ -103,7 +103,7 @@ func TestVerifyFailures(t *testing.T) {
 		return signed + "." + base64.RawURLEncoding.EncodeToString(mac(k.keys[1], signed))
 	}
 	exp := fmt.Sprint(t0.Add(time.Hour).Unix())
-	good := fmt.Sprintf(`{"s":%q,"a":%q,"m":1,"i":%d,"e":%s}`, c.SessionID, c.AssetID, t0.Unix(), exp)
+	good := fmt.Sprintf(`{"s":%q,"a":%q,"n":%q,"m":1,"i":%d,"e":%s}`, c.SessionID, c.AssetID, c.TenantID, t0.Unix(), exp)
 	if _, err := k.Verify(signRaw(good), t0, ScopeManifest, c.AssetID); err != nil {
 		t.Fatalf("control token rejected: %v", err)
 	}
@@ -142,6 +142,7 @@ func TestVerifyFailures(t *testing.T) {
 		{"not json", signRaw("nope"), t0, ScopeManifest, c.AssetID},
 		{"zero scope in payload", signRaw(strings.Replace(good, `"m":1`, `"m":0`, 1)), t0, ScopeManifest, c.AssetID},
 		{"unknown scope bit in payload", signRaw(strings.Replace(good, `"m":1`, `"m":9`, 1)), t0, ScopeManifest, c.AssetID},
+		{"empty tenant in payload", signRaw(strings.Replace(good, c.TenantID, "", 1)), t0, ScopeManifest, c.AssetID},
 		{"empty session in payload", signRaw(strings.Replace(good, c.SessionID, "", 1)), t0, ScopeManifest, c.AssetID},
 		{"expiry before issue", signRaw(strings.Replace(good, exp, "1", 1)), t0, ScopeManifest, c.AssetID},
 	}
@@ -355,4 +356,39 @@ func FuzzVerify(f *testing.F) {
 			t.Fatal("accepted a token that does not satisfy the request")
 		}
 	})
+}
+
+func TestOpenReturnsClaimsWithoutAnAssetCheck(t *testing.T) {
+	k := testKeyring(t, 1, 1)
+	c := claims(t, ScopeManifest|ScopeSegment)
+	tok, err := k.Sign(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := k.Open(tok, t0.Add(time.Minute), ScopeSegment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != c.SessionID || got.AssetID != c.AssetID || got.TenantID != c.TenantID || got.Scopes != c.Scopes {
+		t.Fatalf("claims = %+v, want %+v", got, c)
+	}
+	for name, run := range map[string]func() error{
+		"scope":   func() error { _, err := k.Open(tok, t0, ScopeKey); return err },
+		"expired": func() error { _, err := k.Open(tok, t0.Add(time.Hour), ScopeSegment); return err },
+		"no need": func() error { _, err := k.Open(tok, t0, 0); return err },
+		"garbage": func() error { _, err := k.Open("garbage", t0, ScopeSegment); return err },
+	} {
+		if err := run(); !isInvalid(err) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestSignRequiresATenant(t *testing.T) {
+	k := testKeyring(t, 1, 1)
+	c := claims(t, ScopeManifest)
+	c.TenantID = ""
+	if _, err := k.Sign(c); err == nil {
+		t.Fatal("Sign accepted claims without a tenant")
+	}
 }

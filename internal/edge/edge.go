@@ -1,6 +1,6 @@
-// Package edge is the browser-facing data-plane listener (ADR 0008): playlists, the key endpoint
-// and segments arrive with later tasks. For now it serves health and readiness from its own small
-// router.
+// Package edge is the browser-facing data-plane listener (ADR 0008): health and readiness, the
+// upload endpoints, and the session-scoped playlists and segments (play.go). The key endpoint
+// arrives with a later task.
 //
 // This package must not import internal/api or internal/worker (enforced by depguard).
 package edge
@@ -24,6 +24,9 @@ type Deps struct {
 	// Uploads serves the upload endpoints (M3-2). Without it they answer 503
 	// dependency_unavailable.
 	Uploads *Uploads
+	// Playback serves the session-scoped playlists and segments (M4-3). Without it those routes
+	// answer 503 dependency_unavailable.
+	Playback *Playback
 }
 
 // Edge is the data-plane HTTP handler.
@@ -39,16 +42,16 @@ func New(d Deps) *Edge {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, up: d.Uploads}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, up: d.Uploads, play: d.Playback}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})
-	gen.HandlerWithOptions(guarded{ServerInterface: strict, up: d.Uploads}, gen.StdHTTPServerOptions{
+	gen.HandlerWithOptions(guarded{ServerInterface: strict, up: d.Uploads, play: d.Playback}, gen.StdHTTPServerOptions{
 		BaseRouter:       router,
 		ErrorHandlerFunc: httpx.RequestErrorHandler,
 	})
 	router.Mount(TusMount, tusHandler(d.Uploads))
-	mw := append(httpx.Standard(d.Log), uploadCORS)
+	mw := append(httpx.Standard(d.Log), playGate(d.Playback), uploadCORS)
 	return &Edge{router: router, handler: httpx.Chain(router, mw...)}
 }
 

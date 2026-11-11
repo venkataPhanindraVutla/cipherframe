@@ -127,6 +127,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 			if strings.HasPrefix(path, "/v1/playback-") {
 				continue // exercised by TestPlaybackOperationsMatchSpec
 			}
+			if strings.HasPrefix(path, "/v1/play/") {
+				continue // exercised by TestEdgePlaybackOperationsMatchSpec
+			}
 			if op.Security != nil && len(*op.Security) > 0 && !covered[op.OperationID] {
 				t.Errorf("%s %s (%s) was not exercised with a 2xx response", method, path, op.OperationID)
 			}

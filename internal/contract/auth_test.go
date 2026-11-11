@@ -196,6 +196,9 @@ func TestUploadOperationsRequireAnUploadToken(t *testing.T) {
 			if op.Security == nil || len(*op.Security) == 0 || !slices.Contains(op.Tags, "edge") {
 				continue
 			}
+			if _, ok := (*op.Security)[0]["playbackToken"]; ok {
+				continue // the playback routes have their own tests (playback_integration_test.go)
+			}
 			if _, ok := (*op.Security)[0]["uploadToken"]; !ok {
 				t.Errorf("%s %s: edge operations must use the uploadToken scheme", method, path)
 				continue

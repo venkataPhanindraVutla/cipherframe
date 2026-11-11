@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -173,6 +174,9 @@ type ReadyResponse struct {
 // ReadyResponseStatus defines model for ReadyResponse.Status.
 type ReadyResponseStatus string
 
+// SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+type SessionId = string
+
 // UploadPart defines model for UploadPart.
 type UploadPart struct {
 	Etag       string `json:"etag"`
@@ -189,8 +193,44 @@ type UploadPartList struct {
 // AssetId defines model for AssetId.
 type AssetId = string
 
+// PlayFile defines model for PlayFile.
+type PlayFile = string
+
+// PlayRendition defines model for PlayRendition.
+type PlayRendition = string
+
+// PlaySessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+type PlaySessionId = SessionId
+
+// PlayTokenQuery defines model for PlayTokenQuery.
+type PlayTokenQuery = string
+
+// PlaybackUnauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
+type PlaybackUnauthenticated = Problem
+
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
+
+// GetPlaybackMasterParams defines parameters for GetPlaybackMaster.
+type GetPlaybackMasterParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
+// GetPlaybackMediaParams defines parameters for GetPlaybackMedia.
+type GetPlaybackMediaParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
+// GetPlaybackSegmentParams defines parameters for GetPlaybackSegment.
+type GetPlaybackSegmentParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -200,6 +240,15 @@ type ServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// GetPlaybackMaster Session master playlist
+	// (GET /v1/play/{session_id}/master.m3u8)
+	GetPlaybackMaster(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackMasterParams)
+	// GetPlaybackMedia Session media playlist
+	// (GET /v1/play/{session_id}/{rendition}/media.m3u8)
+	GetPlaybackMedia(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, rendition PlayRendition, params GetPlaybackMediaParams)
+	// GetPlaybackSegment Init or media segment
+	// (GET /v1/play/{session_id}/{rendition}/{file})
+	GetPlaybackSegment(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, rendition PlayRendition, file PlayFile, params GetPlaybackSegmentParams)
 	// ListUploadParts List received parts
 	// (GET /v1/uploads/multipart/{asset_id}/parts)
 	ListUploadParts(w http.ResponseWriter, r *http.Request, assetId AssetId)
@@ -236,6 +285,159 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlaybackMaster operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackMaster(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackMasterParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackMaster(w, r, sessionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlaybackMedia operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackMedia(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "rendition" -------------
+	var rendition PlayRendition
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rendition", r.PathValue("rendition"), &rendition, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rendition", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackMediaParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackMedia(w, r, sessionId, rendition, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlaybackSegment operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackSegment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "rendition" -------------
+	var rendition PlayRendition
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rendition", r.PathValue("rendition"), &rendition, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rendition", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "file" -------------
+	var file PlayFile
+
+	err = runtime.BindStyledParameterWithOptions("simple", "file", r.PathValue("file"), &file, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "file", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackSegmentParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackSegment(w, r, sessionId, rendition, file, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -428,10 +630,23 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadyz)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/master.m3u8", wrapper.GetPlaybackMaster)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/media.m3u8", wrapper.GetPlaybackMedia)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/{file}", wrapper.GetPlaybackSegment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts", wrapper.ListUploadParts)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts/{part_number}", wrapper.PutUploadPart)
 
 	return m
+}
+
+type PlaybackUnauthenticatedResponseHeaders struct {
+	WWWAuthenticate string
+	XRequestId      string
+}
+type PlaybackUnauthenticatedApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers PlaybackUnauthenticatedResponseHeaders
 }
 
 type ProblemResponseHeaders struct {
@@ -559,6 +774,390 @@ type GetReadyzdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetReadyzdefaultApplicationProblemPlusJSONResponse) VisitGetReadyzResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMasterRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Params    GetPlaybackMasterParams
+}
+
+type GetPlaybackMasterResponseObject interface {
+	VisitGetPlaybackMasterResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackMaster200ResponseHeaders struct {
+	CacheControl   string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type GetPlaybackMaster200ApplicationvndAppleMpegurlResponse struct {
+	Body          io.Reader
+	Headers       GetPlaybackMaster200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackMaster200ApplicationvndAppleMpegurlResponse) VisitGetPlaybackMasterResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackMaster400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackMaster400ApplicationProblemPlusJSONResponse) VisitGetPlaybackMasterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMaster401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackMaster401ApplicationProblemPlusJSONResponse) VisitGetPlaybackMasterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMaster404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackMaster404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackMaster404ResponseHeaders
+}
+
+func (response GetPlaybackMaster404ApplicationProblemPlusJSONResponse) VisitGetPlaybackMasterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMasterdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackMasterdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackMasterdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackMasterdefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackMasterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMediaRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Rendition PlayRendition `json:"rendition"`
+	Params    GetPlaybackMediaParams
+}
+
+type GetPlaybackMediaResponseObject interface {
+	VisitGetPlaybackMediaResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackMedia200ResponseHeaders struct {
+	CacheControl   string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type GetPlaybackMedia200ApplicationvndAppleMpegurlResponse struct {
+	Body          io.Reader
+	Headers       GetPlaybackMedia200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackMedia200ApplicationvndAppleMpegurlResponse) VisitGetPlaybackMediaResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackMedia400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackMedia400ApplicationProblemPlusJSONResponse) VisitGetPlaybackMediaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMedia401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackMedia401ApplicationProblemPlusJSONResponse) VisitGetPlaybackMediaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMedia404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackMedia404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackMedia404ResponseHeaders
+}
+
+func (response GetPlaybackMedia404ApplicationProblemPlusJSONResponse) VisitGetPlaybackMediaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackMediadefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackMediadefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackMediadefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackMediadefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackMediaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSegmentRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Rendition PlayRendition `json:"rendition"`
+	File      PlayFile      `json:"file"`
+	Params    GetPlaybackSegmentParams
+}
+
+type GetPlaybackSegmentResponseObject interface {
+	VisitGetPlaybackSegmentResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackSegment200ResponseHeaders struct {
+	CacheControl   string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type GetPlaybackSegment200VideoisoSegmentResponse struct {
+	Body          io.Reader
+	Headers       GetPlaybackSegment200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackSegment200VideoisoSegmentResponse) VisitGetPlaybackSegmentResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "video/iso.segment")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackSegment200Videomp4Response struct {
+	Body          io.Reader
+	Headers       GetPlaybackSegment200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackSegment200Videomp4Response) VisitGetPlaybackSegmentResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "video/mp4")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackSegment400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSegment400ApplicationProblemPlusJSONResponse) VisitGetPlaybackSegmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSegment401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSegment401ApplicationProblemPlusJSONResponse) VisitGetPlaybackSegmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSegment404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSegment404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackSegment404ResponseHeaders
+}
+
+func (response GetPlaybackSegment404ApplicationProblemPlusJSONResponse) VisitGetPlaybackSegmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSegmentdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSegmentdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackSegmentdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackSegmentdefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackSegmentResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -845,6 +1444,15 @@ type StrictServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(ctx context.Context, request GetReadyzRequestObject) (GetReadyzResponseObject, error)
+	// GetPlaybackMaster Session master playlist
+	// (GET /v1/play/{session_id}/master.m3u8)
+	GetPlaybackMaster(ctx context.Context, request GetPlaybackMasterRequestObject) (GetPlaybackMasterResponseObject, error)
+	// GetPlaybackMedia Session media playlist
+	// (GET /v1/play/{session_id}/{rendition}/media.m3u8)
+	GetPlaybackMedia(ctx context.Context, request GetPlaybackMediaRequestObject) (GetPlaybackMediaResponseObject, error)
+	// GetPlaybackSegment Init or media segment
+	// (GET /v1/play/{session_id}/{rendition}/{file})
+	GetPlaybackSegment(ctx context.Context, request GetPlaybackSegmentRequestObject) (GetPlaybackSegmentResponseObject, error)
 	// ListUploadParts List received parts
 	// (GET /v1/uploads/multipart/{asset_id}/parts)
 	ListUploadParts(ctx context.Context, request ListUploadPartsRequestObject) (ListUploadPartsResponseObject, error)
@@ -933,6 +1541,90 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetReadyzResponseObject); ok {
 		if err := validResponse.VisitGetReadyzResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackMaster operation middleware
+func (sh *strictHandler) GetPlaybackMaster(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackMasterParams) {
+	var request GetPlaybackMasterRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackMaster(ctx, request.(GetPlaybackMasterRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackMaster")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackMasterResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackMasterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackMedia operation middleware
+func (sh *strictHandler) GetPlaybackMedia(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, rendition PlayRendition, params GetPlaybackMediaParams) {
+	var request GetPlaybackMediaRequestObject
+
+	request.SessionId = sessionId
+	request.Rendition = rendition
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackMedia(ctx, request.(GetPlaybackMediaRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackMedia")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackMediaResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackMediaResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackSegment operation middleware
+func (sh *strictHandler) GetPlaybackSegment(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, rendition PlayRendition, file PlayFile, params GetPlaybackSegmentParams) {
+	var request GetPlaybackSegmentRequestObject
+
+	request.SessionId = sessionId
+	request.Rendition = rendition
+	request.File = file
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackSegment(ctx, request.(GetPlaybackSegmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackSegment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackSegmentResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackSegmentResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

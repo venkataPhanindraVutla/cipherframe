@@ -99,6 +99,18 @@ func (q *Queries) GetPlaybackSession(ctx context.Context, arg GetPlaybackSession
 	return i, err
 }
 
+const getPlaybackSessionTenant = `-- name: GetPlaybackSessionTenant :one
+SELECT tenant_id FROM playback_sessions WHERE id_hash = $1
+`
+
+// Edge answers a CORS preflight, which carries no token, knowing only the session in the path.
+func (q *Queries) GetPlaybackSessionTenant(ctx context.Context, idHash []byte) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getPlaybackSessionTenant, idHash)
+	var tenant_id pgtype.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
+}
+
 const getPlaybackSettings = `-- name: GetPlaybackSettings :one
 SELECT tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at FROM playback_settings WHERE tenant_id = $1
 `

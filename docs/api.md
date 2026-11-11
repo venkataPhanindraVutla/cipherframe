@@ -70,6 +70,8 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort` | yes | no | `assets:write` |
 | `POST /v1/playback-sessions` | yes | no | `sessions:write` |
 | `GET /v1/playback-settings`, `PUT /v1/playback-settings` | yes | no | `admin` |
+| `GET /v1/play/{session_id}/master.m3u8`, `GET /v1/play/{session_id}/{rendition}/media.m3u8` | no | yes | playback token (`manifest`) |
+| `GET /v1/play/{session_id}/{rendition}/{file}` | no | yes | playback token (`segment`) |
 | `PUT /v1/uploads/multipart/{asset_id}/parts/{part_number}` | no | yes | upload token |
 | `GET /v1/uploads/multipart/{asset_id}/parts` | no | yes | upload token |
 | tus: `POST /v1/uploads/tus/`, `HEAD` and `PATCH /v1/uploads/tus/{asset_id}` | no | yes (tusd mount) | upload token |
@@ -264,8 +266,8 @@ CORS: the multipart endpoints answer any origin without credentials, because the
 ## Playback sessions and settings (ADR 0028, 0030)
 
 Endpoint names and shapes are flagged for owner review before v1.0.0. This section covers the
-control plane only: the edge routes that serve a session's playlists, keys and segments, and the
-heartbeat and revoke endpoints, arrive with later M4 tasks.
+control plane and the edge playlist and segment routes (below). The key endpoint
+(`/v1/play/{session_id}/key`), heartbeat and revoke arrive with later M4 tasks.
 
 **Start a session.** `POST /v1/playback-sessions` (scope `sessions:write`) with
 `{"asset_id": "ast_…", "viewer_id": "u-8f3a…"}`. The asset must belong to your tenant and be `ready`.
@@ -329,9 +331,9 @@ the defaults, and `updated_at` is absent until the first `PUT`.
 | `idle_timeout_seconds` | 300 | 30 to 3600 | A session without a heartbeat for this long ends. |
 | `session_max_seconds` | 14400 | 300 to 86400 | Maximum session age. |
 | `max_sessions_per_viewer` | 3 | 0 to 100 | Active sessions per viewer; 0 is unlimited. |
-| `key_fetches_per_token` | 20 | 1 to 1000 | Key requests one token may make (enforced by the key endpoint, M4-4). |
-| `key_requests_per_minute` | 30 | 1 to 600 | Key requests one session may make per minute (key endpoint, M4-4). |
-| `allowed_origins` | `[]` | at most 20 | Browser origins allowed to play (CORS on edge, M4-3). |
+| `key_fetches_per_token` | 20 | 1 to 1000 | Key requests one token may make (enforced by the key endpoint, a later task). |
+| `key_requests_per_minute` | 30 | 1 to 600 | Key requests one session may make per minute (key endpoint, a later task). |
+| `allowed_origins` | `[]` | at most 20 | Browser origins allowed to play (CORS on edge, see below). |
 | `token_in_url` | `false` | | Put the token in the manifest URL for native HLS players. |
 
 `allowed_origins` entries are exact origins as a browser writes them: `https://host[:port]`, or
@@ -339,19 +341,84 @@ the defaults, and `updated_at` is absent until the first `PUT`.
 user information, and no port that is the scheme's default (`https://example.com`, not
 `https://example.com:443`). Duplicates are rejected. An invalid request is `400 invalid_request` with
 one `errors` entry per field, for example `allowed_origins[1]`, and nothing is stored. A change
-applies to sessions created afterwards.
+applies to new sessions, and edge picks up `token_in_url`, `allowed_origins` and `idle_timeout_seconds`
+within 30 seconds (its settings cache).
 
 **Token in URLs (`token_in_url`).** Off by default, so no URL carries a token (pitfall 9). Turn it on
 only for tenants that must support native HLS players (for example Safari on iOS) that cannot set
 headers: `manifest_url` then ends in `?t=<token>` and `token_transport` is `url`. The token can then
 appear in browser history and in the logs of proxies and CDNs that you do not control; it lasts at
 most the token TTL, and revoking the session still stops key fetches. Edge strips the parameter from
-what it logs and sends `Referrer-Policy: no-referrer` (M4-3, ADR 0030).
+what it logs and sends `Referrer-Policy: no-referrer` (ADR 0030).
+
+### Playlists and segments on edge (ADR 0027, 0030)
+
+Three `GET` routes on the edge listener serve a session. The player starts at `manifest_url` and
+follows the URIs in the playlists; it never builds a URL itself.
+
+| Route | Scope | Returns |
+|---|---|---|
+| `/v1/play/{session_id}/master.m3u8` | `manifest` | The master playlist. Each variant URI is `<rendition>/media.m3u8`. |
+| `/v1/play/{session_id}/{rendition}/media.m3u8` | `manifest` | One rendition's media playlist. |
+| `/v1/play/{session_id}/{rendition}/{file}` | `segment` | `init.mp4` (`video/mp4`) or `seg-<n>.m4s` (`video/iso.segment`), streamed from the delivery bucket with `Content-Length`. |
+
+**Rewriting.** The stored playlists are canonical templates with the placeholder `cipherframe-key`
+as the key URI (ADR 0027). Edge rewrites them per request with a strict line rewriter that touches
+only URI lines and `URI="..."` attributes and refuses a stored playlist that holds anything else.
+In a media playlist the key URI becomes the relative `../key`, which resolves to
+`/v1/play/{session_id}/key` (the route is reserved; a later task serves it), and the init and
+segment URIs are file names relative to the rendition. A relative URI works behind any path prefix
+and carries nothing secret. Playlists are `Content-Type: application/vnd.apple.mpegurl`,
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Segments are
+`Cache-Control: private, max-age=300` and `Referrer-Policy: no-referrer`.
+
+**The token** (ADR 0030). Send `Authorization: Bearer <token>` on every request. Only when the tenant
+has `token_in_url` on is the query parameter `t` accepted too, and then every URI in the playlists
+carries `?t=<token>`. A request with both forms, or `t` twice, is `400 invalid_request`. With
+`token_in_url` off, `t` is refused with `401`. Every other token failure (missing, malformed, bad
+signature, expired, wrong scope, a token for another session than the one in the path) is the same
+`401` with one generic detail and `WWW-Authenticate: Bearer`. The asset and tenant come from the
+token, never from the request.
+
+**What is checked where.** Segments are stateless: edge verifies the token (signature, expiry,
+scope, session) and streams the object, with no database query on a cache hit. Playlists also read
+the session row, so a session that is revoked, ended, past its maximum age, or without a heartbeat for
+the idle timeout gets `401` (the same answer as a bad token, so the status does not say why).
+Consequence, by design: **a revoked session can still fetch segments until its token expires**
+(10 minutes by default). They are unreadable without the key, and the key endpoint checks the session
+on every fetch.
+
+**Path values** are checked against an allowlist before anything else: the session ID, a rendition
+(`[a-z0-9_]{1,16}`) and a file (`init.mp4` or `seg-<n>.m4s`, no leading zeros). A path under
+`/v1/play/` that has a percent escape, a backslash, an empty segment, `.` or `..` is `404`, and none of
+it reaches the object store. A rendition or segment that does not exist is `404`. A storage outage is
+`503` (`504` on a timeout, `500` for refused storage credentials), never `404`.
+
+**CORS.** Edge answers a browser origin that is, byte for byte, in the tenant's `allowed_origins`: it
+sets `Access-Control-Allow-Origin` to that origin. Every playback response carries `Vary: Origin`. Any
+other origin, and a request without an `Origin`, gets no CORS headers and the usual response, so the
+browser blocks the read. The preflight `OPTIONS` on the three routes needs no token and is always
+`204`; for an allowed origin it adds `Access-Control-Allow-Methods: GET, OPTIONS`,
+`Access-Control-Allow-Headers: Authorization` and `Access-Control-Max-Age: 600`. Credentials are never
+allowed. A `401` carries the CORS headers too, so a player can read it and refresh its token.
+
+**Logging.** The access log records the route pattern, never the URL, so neither the token, the `t`
+parameter nor the session ID is logged. Where a session must be named (an error line), edge logs a
+short one-way fingerprint of it (the first 4 bytes of its SHA-256).
 
 ### What the playback endpoints do not protect against
 
 - A token holder can fetch the playlists and segments of that one session until the token expires.
   Segments already downloaded stay decryptable by anyone who also fetched the key.
+- Revoking a session stops new playlists at once but not segments: a revoked session's token still
+  fetches segments until it expires (see above).
+- Edge caches a tenant's settings and the owner of a session for up to 30 seconds. A tenant that
+  turns `token_in_url` off, or removes an allowed origin, sees it take effect within that time.
+- The preflight answers any well-formed session ID with `204` and looks up its tenant (cached for
+  30 seconds, also for IDs that do not exist). Put a rate limit in front of edge, as for any public
+  endpoint.
+- With `token_in_url` on, the token is in URLs: browser history and the logs of proxies and CDNs you
+  do not control can hold it, until it expires.
 - The concurrency limit counts sessions per `viewer_id`. A caller that gives each of one person's
   tabs a different `viewer_id` defeats it, so derive the ID from your own user, not per page.
 - The limit is not a licensing control: it is checked when a session starts, and heartbeats (later)
