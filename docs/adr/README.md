@@ -38,8 +38,10 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0030](0030-playback-token-transport.md) | Playback token transport | none | Accepted | 2026-11-11 |
 | [0031](0031-browser-session-creation-and-jwt-library.md) | Browser session creation and the JWT library | none | Accepted | 2026-11-11 |
 | [0032](0032-delivery-strategies.md) | Delivery strategies | none | Accepted (flagged for owner review) | 2026-11-11 |
+| [0033](0033-integrity-design.md) | Integrity design | P9 | Accepted (manifest outline flagged for owner review) | 2026-11-12 |
+| [0034](0034-timestamp-authority-recommendations.md) | Timestamp authority recommendations | P10 | Accepted | 2026-11-12 |
 
 ## Open gates
 
-P9 to P14, P16 to P20, P21 (worker). See the build plan's
+P11 to P14, P16 to P20, P21 (worker). See the build plan's
 decision register.
