@@ -54,7 +54,9 @@ func TestValidate(t *testing.T) {
 			i.Video.Width, i.Video.Height, i.Video.DisplayWidth, i.Video.DisplayHeight = 3840, 20, 3840, 20
 		}, "aspect ratio"},
 		{"too wide", func(i *Info) { i.Video.Width, i.Video.DisplayWidth = 4096, 4096 }, "exceeds the limit of 3840x2160"},
-		{"too tall", func(i *Info) { i.Video.Width, i.Video.Height, i.Video.DisplayWidth, i.Video.DisplayHeight = 3840, 2304, 3840, 2304 }, "exceeds the limit"},
+		{"too tall", func(i *Info) {
+			i.Video.Width, i.Video.Height, i.Video.DisplayWidth, i.Video.DisplayHeight = 3840, 2304, 3840, 2304
+		}, "exceeds the limit"},
 		{"square too big for the short side", func(i *Info) {
 			i.Video.Width, i.Video.Height, i.Video.DisplayWidth, i.Video.DisplayHeight = 3840, 3840, 3840, 3840
 		}, "exceeds the limit"},

@@ -55,7 +55,8 @@ var capabilities = []listing{
 	{flag: "-decoders", kind: "decoder", need: []requirement{
 		one("h264"), one("hevc"), one("vp8"), one("vp9"),
 		{anyOf: []string{"libdav1d", "libaom-av1"}},
-		one("aac"), one("opus"), one("mp3"),
+		one("aac"), one("opus"),
+		{anyOf: []string{"mp3float", "mp3"}},
 	}},
 	{flag: "-muxers", kind: "muxer", need: []requirement{one("mp4"), one("hls")}},
 	{flag: "-demuxers", kind: "demuxer", need: []requirement{one("mov"), one("matroska")}},
@@ -160,7 +161,9 @@ func parseListing(out []byte, flag string) map[string]bool {
 			// Encoders and decoders have a flags column like "V....D"; filters like "T.." followed
 			// by the name.
 			if len(fields) >= 2 && isFlagColumn(fields[0]) {
-				names[fields[1]] = true
+				if fields[1] != "=" {
+					names[fields[1]] = true
+				}
 			}
 		}
 	}
