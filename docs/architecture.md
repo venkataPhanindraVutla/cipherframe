@@ -360,8 +360,8 @@ job runs (it was deleted), the job removes what it uploaded and ends.
 
 ## Playback delivery on edge
 
-The edge role serves a playback session's playlists and segments (ADR 0027, 0028, 0030; the key
-endpoint is a later task). The routes and their rules are in
+The edge role serves a playback session's playlists, segments and content key (ADR 0027, 0028, 0030).
+The routes and their rules are in
 [api.md](api.md#playlists-and-segments-on-edge-adr-0027-0030); this section is how they fit together.
 
 ```
@@ -386,8 +386,26 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
 - **Segments are streamed**: `storage.Get` returns a reader and the response is an `io.Copy` of it
   with `Content-Length` from the object's size, so memory use does not depend on segment size, and a
   client that hangs up stops the read and closes the object.
+- **The key endpoint** (`internal/edge/play_key.go`) runs the guard with scope `key`, which always reads
+  the session row (never cached), then checks the asset is `ready`, then the two Postgres-backed
+  bounds, then unwraps the content key through `internal/contentkey`. The per-token bound is one
+  `INSERT ... ON CONFLICT DO UPDATE ... WHERE fetches < limit RETURNING` statement taken *before* the
+  key service is called and given back if no key comes out: counting afterwards could be exceeded by
+  every request already in flight, and a count never given back would let an outage eat a viewer's
+  fetches. The per-minute window is two columns on the session row, updated in one statement. No
+  per-request state is kept in process, so the bounds are exact across replicas. Anomaly events go to
+  `playback_events`; the per-token counter table is swept by a periodic task in the edge role
+  (`playback.RunKeyFetchSweeper`). The key is read into a 16-byte buffer that is cleared after the
+  response is written.
+- **The edge role holds KMS access.** The key endpoint needs the same key service as the worker, so an
+  edge process builds the KMS provider and the content key manager at start-up and refuses to start
+  when its configuration is missing or wrong (the check every role runs). An attacker who compromises
+  an edge process can unwrap the content keys of assets while they are played, and can read the
+  playback token signing keys; this is inherent to AES-128 HLS, where the player must receive the key
+  (I8, see [threat-model.md](threat-model.md)).
 - **Failure mapping** follows the storage port: a missing object is `404`, an outage `503`, a timeout
-  `504`, refused credentials `500` (invariant I11: an outage is never reported as "not found").
+  `504`, refused credentials `500` (invariant I11: an outage is never reported as "not found"). The same holds for the key endpoint:
+  a key service or database outage is `503`, never `401` or `404`.
 
 ## Keys
 

@@ -266,8 +266,8 @@ CORS: the multipart endpoints answer any origin without credentials, because the
 ## Playback sessions and settings (ADR 0028, 0030)
 
 Endpoint names and shapes are flagged for owner review before v1.0.0. This section covers the
-control plane and the edge playlist and segment routes (below). The key endpoint
-(`/v1/play/{session_id}/key`), heartbeat and revoke arrive with later M4 tasks.
+control plane and the edge playlist, segment and key routes (below). Heartbeat and revoke arrive with
+later M4 tasks.
 
 **Start a session.** `POST /v1/playback-sessions` (scope `sessions:write`) with
 `{"asset_id": "ast_…", "viewer_id": "u-8f3a…"}`. The asset must belong to your tenant and be `ready`.
@@ -331,8 +331,8 @@ the defaults, and `updated_at` is absent until the first `PUT`.
 | `idle_timeout_seconds` | 300 | 30 to 3600 | A session without a heartbeat for this long ends. |
 | `session_max_seconds` | 14400 | 300 to 86400 | Maximum session age. |
 | `max_sessions_per_viewer` | 3 | 0 to 100 | Active sessions per viewer; 0 is unlimited. |
-| `key_fetches_per_token` | 20 | 1 to 1000 | Key requests one token may make (enforced by the key endpoint, a later task). |
-| `key_requests_per_minute` | 30 | 1 to 600 | Key requests one session may make per minute (key endpoint, a later task). |
+| `key_fetches_per_token` | 20 | 1 to 1000 | Successful key responses one token may get (key endpoint, below). |
+| `key_requests_per_minute` | 30 | 1 to 600 | Key requests one session may make per minute, rejected ones included (key endpoint, below). |
 | `allowed_origins` | `[]` | at most 20 | Browser origins allowed to play (CORS on edge, see below). |
 | `token_in_url` | `false` | | Put the token in the manifest URL for native HLS players. |
 
@@ -353,7 +353,7 @@ what it logs and sends `Referrer-Policy: no-referrer` (ADR 0030).
 
 ### Playlists and segments on edge (ADR 0027, 0030)
 
-Three `GET` routes on the edge listener serve a session. The player starts at `manifest_url` and
+Four `GET` routes on the edge listener serve a session. The player starts at `manifest_url` and
 follows the URIs in the playlists; it never builds a URL itself.
 
 | Route | Scope | Returns |
@@ -361,12 +361,13 @@ follows the URIs in the playlists; it never builds a URL itself.
 | `/v1/play/{session_id}/master.m3u8` | `manifest` | The master playlist. Each variant URI is `<rendition>/media.m3u8`. |
 | `/v1/play/{session_id}/{rendition}/media.m3u8` | `manifest` | One rendition's media playlist. |
 | `/v1/play/{session_id}/{rendition}/{file}` | `segment` | `init.mp4` (`video/mp4`) or `seg-<n>.m4s` (`video/iso.segment`), streamed from the delivery bucket with `Content-Length`. |
+| `/v1/play/{session_id}/key` | `key` | The 16-byte AES-128 content key, raw (`application/octet-stream`). See below. |
 
 **Rewriting.** The stored playlists are canonical templates with the placeholder `cipherframe-key`
 as the key URI (ADR 0027). Edge rewrites them per request with a strict line rewriter that touches
 only URI lines and `URI="..."` attributes and refuses a stored playlist that holds anything else.
 In a media playlist the key URI becomes the relative `../key`, which resolves to
-`/v1/play/{session_id}/key` (the route is reserved; a later task serves it), and the init and
+`/v1/play/{session_id}/key` (served as described below), and the init and
 segment URIs are file names relative to the rendition. A relative URI works behind any path prefix
 and carries nothing secret. Playlists are `Content-Type: application/vnd.apple.mpegurl`,
 `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Segments are
@@ -384,9 +385,10 @@ token, never from the request.
 scope, session) and streams the object, with no database query on a cache hit. Playlists also read
 the session row, so a session that is revoked, ended, past its maximum age, or without a heartbeat for
 the idle timeout gets `401` (the same answer as a bad token, so the status does not say why).
-Consequence, by design: **a revoked session can still fetch segments until its token expires**
-(10 minutes by default). They are unreadable without the key, and the key endpoint checks the session
-on every fetch.
+The key endpoint reads the session row on every request, uncached, with the same rules as the
+playlists. Consequence, by design: **a revoked session can still fetch segments until its token
+expires** (10 minutes by default). They are unreadable without the key, and the key endpoint checks
+the session on every fetch.
 
 **Path values** are checked against an allowlist before anything else: the session ID, a rendition
 (`[a-z0-9_]{1,16}`) and a file (`init.mp4` or `seg-<n>.m4s`, no leading zeros). A path under
@@ -397,7 +399,7 @@ it reaches the object store. A rendition or segment that does not exist is `404`
 **CORS.** Edge answers a browser origin that is, byte for byte, in the tenant's `allowed_origins`: it
 sets `Access-Control-Allow-Origin` to that origin. Every playback response carries `Vary: Origin`. Any
 other origin, and a request without an `Origin`, gets no CORS headers and the usual response, so the
-browser blocks the read. The preflight `OPTIONS` on the three routes needs no token and is always
+browser blocks the read. The preflight `OPTIONS` on the playback routes needs no token and is always
 `204`; for an allowed origin it adds `Access-Control-Allow-Methods: GET, OPTIONS`,
 `Access-Control-Allow-Headers: Authorization` and `Access-Control-Max-Age: 600`. Credentials are never
 allowed. A `401` carries the CORS headers too, so a player can read it and refresh its token.
@@ -406,12 +408,68 @@ allowed. A `401` carries the CORS headers too, so a player can read it and refre
 parameter nor the session ID is logged. Where a session must be named (an error line), edge logs a
 short one-way fingerprint of it (the first 4 bytes of its SHA-256).
 
+### The key endpoint (ADR 0027, 0028)
+
+`GET /v1/play/{session_id}/key` returns the asset's content key: exactly 16 raw bytes with
+`Content-Type: application/octet-stream`, `Cache-Control: no-store, private`, `Pragma: no-cache`,
+`Referrer-Policy: no-referrer` and `Content-Length: 16`. A media playlist's `EXT-X-KEY` tags point at it
+as `../key`, so a standard HLS player fetches it by itself. It needs a token with the `key` scope
+(tokens from `POST /v1/playback-sessions` carry all three scopes). The `t` parameter and CORS follow
+the other playback routes; the preflight needs no token.
+
+**Checks, in order.**
+
+1. The token, the session in the path and the tenant's settings, as for every playback route.
+2. The session row is read from the database on every request and never cached: it must be `active`,
+   before its maximum age, with a heartbeat within the idle timeout, and for the token's asset. A
+   revoked session gets `401` on its next key request even though its token still verifies.
+3. The asset must still be `ready` and have a content key. An asset that was deleted, or whose key was
+   destroyed, is the same `401`. (Every cause of `401` has one generic detail and
+   `WWW-Authenticate: Bearer`.)
+4. The bounds below, then the key service. If the key service or the database is unavailable the answer
+   is `503 dependency_unavailable`, never `401` or `404` (I11).
+
+**Bounds.** Both are kept in Postgres, so they hold across edge replicas and restarts.
+
+| Bound | Setting | Counted |
+|---|---|---|
+| Per token | `key_fetches_per_token` (20) | Successful key responses only. A token is identified by the SHA-256 of its text; the token is never stored. |
+| Per session | `key_requests_per_minute` (30) | Every key request that passes the session check, rejected ones included, in a fixed one-minute window that starts with the first request. |
+
+Past either bound the answer is `429 rate_limited` with a `Retry-After` header (whole seconds, at
+least 1):
+
+- Per-session bound: `Retry-After` is the time left in the window (at most 60). The window restarts
+  after it, so a player that backs off is served again.
+- Per-token bound: the token will not get the key again, so `Retry-After` is the tenant's
+  `heartbeat_interval_seconds`. A well-behaved player sends its heartbeat, receives a fresh token and
+  tries again with it. A fresh token has its own fetches, subject to the session's per-minute window.
+
+A request rejected for the per-token bound is not a successful key response, so it does not count
+against that bound (and a `429` never carries the key). It does count in the per-minute window, so a
+client that keeps hammering stays rejected. A request that fails because the key service or the
+database is down does not use up one of the token's fetches either.
+
+**Anomaly events.** The first time a token is over its bound, one `key_replay` event is recorded; the
+first request past the per-minute bound in a window records one `key_rate` event. Later rejected
+requests for the same token or window record nothing. An event holds the tenant, the SHA-256 of the
+session ID, the asset ID, the time and the bound; no token and no session ID. (Reading events is a
+later task, M4-9.)
+
+**Cleanup.** The per-token counters live in `playback_key_fetches`, one row per token that asked for a
+key. The edge role deletes the rows of tokens that expired more than five minutes ago, every ten
+minutes (and once at start-up), so the table stays about as large as the tokens of the last
+`token_ttl_seconds` plus a few minutes.
+
 ### What the playback endpoints do not protect against
 
 - A token holder can fetch the playlists and segments of that one session until the token expires.
   Segments already downloaded stay decryptable by anyone who also fetched the key.
-- Revoking a session stops new playlists at once but not segments: a revoked session's token still
-  fetches segments until it expires (see above).
+- Revoking a session stops new playlists and key fetches at once but not segments: a revoked
+  session's token still fetches segments until it expires (see above). A viewer who fetched the key
+  before the revocation can still decrypt the segments they hold; AES-128 HLS is not DRM (I8).
+- The key bounds limit how fast and how often a token can fetch the key. They do not stop an
+  authorized viewer from fetching it once and keeping it.
 - Edge caches a tenant's settings and the owner of a session for up to 30 seconds. A tenant that
   turns `token_in_url` off, or removes an allowed origin, sees it take effect within that time.
 - The preflight answers any well-formed session ID with `204` and looks up its tenant (cached for

@@ -28,7 +28,8 @@
 | Original fetched directly | Source bucket private; source key never returned (I4). |
 | Segments fetched from storage without a session | Segments are AES-128 ciphertext; keys only via the session-checked key endpoint. |
 | Revoked viewer keeps playing | Key endpoint checks session state on every request; revocation is immediate there. |
-| Token replay or sharing | Short TTL, scope-limited tokens, bounded replay at the key endpoint, anomaly events (ADR 0028). |
+| Token replay or sharing | Short TTL, scope-limited tokens, bounded replay at the key endpoint (per-token and per-session limits kept in Postgres), anomaly events `key_replay` and `key_rate` (ADR 0028). |
+| Edge process compromised | The edge role holds KMS access and the token signing keys, so a compromised edge process can unwrap the content keys of assets while they are played and mint tokens. Inherent to AES-128 HLS (I8). Run edge with the narrowest KMS permissions your provider allows and keep it apart from other roles. |
 | Secrets in logs | Redacting logger; automated scan of a full playback run (pitfall 9). |
 | Data survives "deletion" | Storage enumeration, key destruction, re-list, signed record (I5, I6). |
 | Forged deletion or integrity record | Signatures verifiable with public keys only (pitfall 1); optional RFC 3161 timestamps. |
