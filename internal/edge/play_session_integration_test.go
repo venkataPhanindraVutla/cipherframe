@@ -740,9 +740,10 @@ func TestViewerCallbackTimeout(t *testing.T) {
 	rec := &recorder{h: func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-time.After(3 * time.Second):
+			_, _ = w.Write([]byte(allowAnswer))
 		case <-r.Context().Done():
+			// The client gave up: answer nothing, as a tenant that is still busy would.
 		}
-		_, _ = w.Write([]byte(allowAnswer))
 	}}
 	srv := e.tlsServer(rec)
 	e.rotate()
