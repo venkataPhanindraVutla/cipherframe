@@ -106,8 +106,33 @@ func TestPlaybackOperationsMatchSpec(t *testing.T) {
 	call(reader, "POST", "/v1/playback-sessions", sess, 403)
 	call(nil, "POST", "/v1/playback-sessions", sess, 401)
 
-	if !covered["createPlaybackSession"] {
-		t.Fatalf("covered = %v", covered)
+	// Settings: defaults, a full replacement, field errors, and the scope.
+	defaults := call(admin, "GET", "/v1/playback-settings", nil, 200)
+	if _, has := defaults["updated_at"]; has || defaults["max_sessions_per_viewer"] != float64(3) {
+		t.Fatalf("default settings = %v", defaults)
+	}
+	full := map[string]any{
+		"token_ttl_seconds": 900, "heartbeat_interval_seconds": 30, "idle_timeout_seconds": 120,
+		"session_max_seconds": 7200, "max_sessions_per_viewer": 0, "key_fetches_per_token": 10,
+		"key_requests_per_minute": 15, "allowed_origins": []string{"https://app.example.com", "http://localhost:3000"},
+		"token_in_url": true,
+	}
+	put := call(admin, "PUT", "/v1/playback-settings", full, 200)
+	if _, has := put["updated_at"]; !has || put["token_in_url"] != true {
+		t.Fatalf("replaced settings = %v", put)
+	}
+	call(admin, "GET", "/v1/playback-settings", nil, 200)
+	bad("PUT", "/v1/playback-settings", map[string]any{"token_ttl_seconds": 1})
+	full["allowed_origins"] = []string{"https://*.example.com"}
+	bad("PUT", "/v1/playback-settings", full)
+	call(reader, "GET", "/v1/playback-settings", nil, 403)
+	call(reader, "PUT", "/v1/playback-settings", full, 403)
+	call(nil, "GET", "/v1/playback-settings", nil, 401)
+
+	for _, op := range []string{"createPlaybackSession", "getPlaybackSettings", "updatePlaybackSettings"} {
+		if !covered[op] {
+			t.Fatalf("%s was not exercised with a 2xx response; covered = %v", op, covered)
+		}
 	}
 }
 

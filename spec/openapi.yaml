@@ -533,6 +533,69 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/playback-settings:
+    get:
+      operationId: getPlaybackSettings
+      summary: Get the playback settings
+      description: |
+        Returns the tenant's effective playback settings: the stored ones, or the defaults of
+        ADR 0028 when none were ever stored (then `updated_at` is absent). Requires the `admin`
+        scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: The effective settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackSettings"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updatePlaybackSettings
+      summary: Replace the playback settings
+      description: |
+        Replaces every setting of the tenant (a full replacement, not a patch: send all fields).
+        Invalid values are `invalid_request` with an `errors` entry per field and nothing is
+        stored. The new values apply to sessions created afterwards; sessions that already exist
+        keep the limits they were created with, except that the idle timeout and the per-viewer
+        limit are read at each new session creation. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackSettingsInput"
+      responses:
+        "200":
+          description: The settings were replaced.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackSettings"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/uploads/multipart/{asset_id}/parts:
     get:
       operationId: listUploadParts
@@ -1133,6 +1196,111 @@ components:
           description: |
             `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
             to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+    PlaybackSettingsInput:
+      description: |
+        Every playback setting of a tenant (ADR 0028, 0030). This is a full replacement, so every
+        field is required: a missing field is `invalid_request` with an `errors` entry naming it.
+        (The schema does not mark them `required` so that a missing field can be told apart from
+        a zero value, which `max_sessions_per_viewer` and `token_in_url` accept.)
+      type: object
+      additionalProperties: false
+      properties:
+        token_ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          description: How long a playback token works. Default 600.
+        heartbeat_interval_seconds:
+          type: integer
+          minimum: 10
+          maximum: 600
+          description: |
+            How often the player sends a heartbeat. Must be less than `token_ttl_seconds` and less
+            than `idle_timeout_seconds`. Default 60.
+        idle_timeout_seconds:
+          type: integer
+          minimum: 30
+          maximum: 3600
+          description: A session with no heartbeat for this long ends. Default 300.
+        session_max_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          description: A session ends this long after it starts, at the latest. Default 14400 (4 hours).
+        max_sessions_per_viewer:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: |
+            The most active sessions one `viewer_id` may have; a new one beyond it is
+            `409 session_limit`. 0 means unlimited. Default 3.
+        key_fetches_per_token:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: The most key requests one playback token may make. Default 20.
+        key_requests_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 600
+          description: The most key requests one session may make per minute. Default 30.
+        allowed_origins:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: |
+            Browser origins allowed to play (CORS on edge). Each is an exact origin
+            `https://host[:port]`, or `http://localhost[:port]` for development: lower case, no
+            path, no wildcard, and no port that is the scheme's default. Default empty.
+          items:
+            type: string
+            maxLength: 300
+        token_in_url:
+          type: boolean
+          description: |
+            Put the playback token in the manifest URL as `?t=` for native HLS players that cannot
+            set headers (ADR 0030). Off by default: tokens in URLs can end up in browser history
+            and in proxy and CDN logs.
+    PlaybackSettings:
+      description: A tenant's effective playback settings.
+      type: object
+      additionalProperties: false
+      required:
+        - token_ttl_seconds
+        - heartbeat_interval_seconds
+        - idle_timeout_seconds
+        - session_max_seconds
+        - max_sessions_per_viewer
+        - key_fetches_per_token
+        - key_requests_per_minute
+        - allowed_origins
+        - token_in_url
+      properties:
+        token_ttl_seconds:
+          type: integer
+        heartbeat_interval_seconds:
+          type: integer
+        idle_timeout_seconds:
+          type: integer
+        session_max_seconds:
+          type: integer
+        max_sessions_per_viewer:
+          type: integer
+          description: 0 means unlimited.
+        key_fetches_per_token:
+          type: integer
+        key_requests_per_minute:
+          type: integer
+        allowed_origins:
+          type: array
+          items:
+            type: string
+        token_in_url:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          description: When the settings were last replaced. Absent while the defaults are in force.
     UploadPart:
       type: object
       additionalProperties: false

@@ -148,6 +148,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"name":"x","client_id":"cli_` + strings.Repeat("0", 26) + `"}`)
 				case "createAsset":
 					body = []byte(`{"size_bytes":1,"upload_method":"tus"}`)
+				case "updatePlaybackSettings":
+					body = []byte(`{}`)
 				case "createPlaybackSession":
 					body = []byte(`{"asset_id":"` + assetID + `","viewer_id":"viewer"}`)
 				}
@@ -171,8 +173,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 13 {
-		t.Fatalf("exercised %d secured operations, want 13", n)
+	if n != 15 {
+		t.Fatalf("exercised %d secured operations, want 15", n)
 	}
 }
 

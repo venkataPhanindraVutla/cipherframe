@@ -419,6 +419,63 @@ type HealthResponseStatus string
 // Name A human-readable name, 1 to 100 characters, no control characters.
 type Name = string
 
+// PlaybackSettings A tenant's effective playback settings.
+type PlaybackSettings struct {
+	AllowedOrigins           []string `json:"allowed_origins"`
+	HeartbeatIntervalSeconds int      `json:"heartbeat_interval_seconds"`
+	IdleTimeoutSeconds       int      `json:"idle_timeout_seconds"`
+	KeyFetchesPerToken       int      `json:"key_fetches_per_token"`
+	KeyRequestsPerMinute     int      `json:"key_requests_per_minute"`
+
+	// MaxSessionsPerViewer 0 means unlimited.
+	MaxSessionsPerViewer int  `json:"max_sessions_per_viewer"`
+	SessionMaxSeconds    int  `json:"session_max_seconds"`
+	TokenInUrl           bool `json:"token_in_url"`
+	TokenTtlSeconds      int  `json:"token_ttl_seconds"`
+
+	// UpdatedAt When the settings were last replaced. Absent while the defaults are in force.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// PlaybackSettingsInput Every playback setting of a tenant (ADR 0028, 0030). This is a full replacement, so every
+// field is required: a missing field is `invalid_request` with an `errors` entry naming it.
+// (The schema does not mark them `required` so that a missing field can be told apart from
+// a zero value, which `max_sessions_per_viewer` and `token_in_url` accept.)
+type PlaybackSettingsInput struct {
+	// AllowedOrigins Browser origins allowed to play (CORS on edge). Each is an exact origin
+	// `https://host[:port]`, or `http://localhost[:port]` for development: lower case, no
+	// path, no wildcard, and no port that is the scheme's default. Default empty.
+	AllowedOrigins *[]string `json:"allowed_origins,omitempty"`
+
+	// HeartbeatIntervalSeconds How often the player sends a heartbeat. Must be less than `token_ttl_seconds` and less
+	// than `idle_timeout_seconds`. Default 60.
+	HeartbeatIntervalSeconds *int `json:"heartbeat_interval_seconds,omitempty"`
+
+	// IdleTimeoutSeconds A session with no heartbeat for this long ends. Default 300.
+	IdleTimeoutSeconds *int `json:"idle_timeout_seconds,omitempty"`
+
+	// KeyFetchesPerToken The most key requests one playback token may make. Default 20.
+	KeyFetchesPerToken *int `json:"key_fetches_per_token,omitempty"`
+
+	// KeyRequestsPerMinute The most key requests one session may make per minute. Default 30.
+	KeyRequestsPerMinute *int `json:"key_requests_per_minute,omitempty"`
+
+	// MaxSessionsPerViewer The most active sessions one `viewer_id` may have; a new one beyond it is
+	// `409 session_limit`. 0 means unlimited. Default 3.
+	MaxSessionsPerViewer *int `json:"max_sessions_per_viewer,omitempty"`
+
+	// SessionMaxSeconds A session ends this long after it starts, at the latest. Default 14400 (4 hours).
+	SessionMaxSeconds *int `json:"session_max_seconds,omitempty"`
+
+	// TokenInUrl Put the playback token in the manifest URL as `?t=` for native HLS players that cannot
+	// set headers (ADR 0030). Off by default: tokens in URLs can end up in browser history
+	// and in proxy and CDN logs.
+	TokenInUrl *bool `json:"token_in_url,omitempty"`
+
+	// TokenTtlSeconds How long a playback token works. Default 600.
+	TokenTtlSeconds *int `json:"token_ttl_seconds,omitempty"`
+}
+
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Problem struct {
 	// Code Stable identifier to switch on. The closed registry in `internal/errs`.
@@ -557,6 +614,9 @@ type RotateKeyJSONRequestBody = RotateKeyRequest
 // CreatePlaybackSessionJSONRequestBody defines body for CreatePlaybackSession for application/json ContentType.
 type CreatePlaybackSessionJSONRequestBody = CreatePlaybackSessionRequest
 
+// UpdatePlaybackSettingsJSONRequestBody defines body for UpdatePlaybackSettings for application/json ContentType.
+type UpdatePlaybackSettingsJSONRequestBody = PlaybackSettingsInput
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealthz Liveness
@@ -601,6 +661,12 @@ type ServerInterface interface {
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(w http.ResponseWriter, r *http.Request)
+	// GetPlaybackSettings Get the playback settings
+	// (GET /v1/playback-settings)
+	GetPlaybackSettings(w http.ResponseWriter, r *http.Request)
+	// UpdatePlaybackSettings Replace the playback settings
+	// (PUT /v1/playback-settings)
+	UpdatePlaybackSettings(w http.ResponseWriter, r *http.Request)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(w http.ResponseWriter, r *http.Request)
@@ -967,6 +1033,34 @@ func (siw *ServerInterfaceWrapper) CreatePlaybackSession(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// GetPlaybackSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdatePlaybackSettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdatePlaybackSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdatePlaybackSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWhoami operation middleware
 func (siw *ServerInterfaceWrapper) GetWhoami(w http.ResponseWriter, r *http.Request) {
 
@@ -1116,6 +1210,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions", wrapper.CreatePlaybackSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-settings", wrapper.GetPlaybackSettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-settings", wrapper.UpdatePlaybackSettings)
 
 	return m
 }
@@ -2608,6 +2704,203 @@ func (response CreatePlaybackSessiondefaultApplicationProblemPlusJSONResponse) V
 	return err
 }
 
+type GetPlaybackSettingsRequestObject struct {
+}
+
+type GetPlaybackSettingsResponseObject interface {
+	VisitGetPlaybackSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackSettings200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSettings200JSONResponse struct {
+	Body    PlaybackSettings
+	Headers GetPlaybackSettings200ResponseHeaders
+}
+
+func (response GetPlaybackSettings200JSONResponse) VisitGetPlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSettings401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSettings401ApplicationProblemPlusJSONResponse) VisitGetPlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSettings403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSettings403ApplicationProblemPlusJSONResponse) VisitGetPlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSettingsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSettingsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackSettingsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackSettingsdefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackSettingsRequestObject struct {
+	Body *UpdatePlaybackSettingsJSONRequestBody
+}
+
+type UpdatePlaybackSettingsResponseObject interface {
+	VisitUpdatePlaybackSettingsResponse(w http.ResponseWriter) error
+}
+
+type UpdatePlaybackSettings200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePlaybackSettings200JSONResponse struct {
+	Body    PlaybackSettings
+	Headers UpdatePlaybackSettings200ResponseHeaders
+}
+
+func (response UpdatePlaybackSettings200JSONResponse) VisitUpdatePlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackSettings400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdatePlaybackSettings400ApplicationProblemPlusJSONResponse) VisitUpdatePlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackSettings401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdatePlaybackSettings401ApplicationProblemPlusJSONResponse) VisitUpdatePlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackSettings403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePlaybackSettings403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdatePlaybackSettings403ResponseHeaders
+}
+
+func (response UpdatePlaybackSettings403ApplicationProblemPlusJSONResponse) VisitUpdatePlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackSettingsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePlaybackSettingsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdatePlaybackSettingsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdatePlaybackSettingsdefaultApplicationProblemPlusJSONResponse) VisitUpdatePlaybackSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetWhoamiRequestObject struct {
 }
 
@@ -2718,6 +3011,12 @@ type StrictServerInterface interface {
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(ctx context.Context, request CreatePlaybackSessionRequestObject) (CreatePlaybackSessionResponseObject, error)
+	// GetPlaybackSettings Get the playback settings
+	// (GET /v1/playback-settings)
+	GetPlaybackSettings(ctx context.Context, request GetPlaybackSettingsRequestObject) (GetPlaybackSettingsResponseObject, error)
+	// UpdatePlaybackSettings Replace the playback settings
+	// (PUT /v1/playback-settings)
+	UpdatePlaybackSettings(ctx context.Context, request UpdatePlaybackSettingsRequestObject) (UpdatePlaybackSettingsResponseObject, error)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(ctx context.Context, request GetWhoamiRequestObject) (GetWhoamiResponseObject, error)
@@ -3145,6 +3444,61 @@ func (sh *strictHandler) CreatePlaybackSession(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreatePlaybackSessionResponseObject); ok {
 		if err := validResponse.VisitCreatePlaybackSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackSettings operation middleware
+func (sh *strictHandler) GetPlaybackSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetPlaybackSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackSettings(ctx, request.(GetPlaybackSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackSettingsResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdatePlaybackSettings operation middleware
+func (sh *strictHandler) UpdatePlaybackSettings(w http.ResponseWriter, r *http.Request) {
+	var request UpdatePlaybackSettingsRequestObject
+
+	var body UpdatePlaybackSettingsJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdatePlaybackSettings(ctx, request.(UpdatePlaybackSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdatePlaybackSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdatePlaybackSettingsResponseObject); ok {
+		if err := validResponse.VisitUpdatePlaybackSettingsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

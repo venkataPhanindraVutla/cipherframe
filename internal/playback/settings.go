@@ -32,10 +32,12 @@ func ValidateSettings(s db.PlaybackSettings) []errs.FieldError {
 	rng("key_fetches_per_token", s.KeyFetchesPerToken, 1, 1000)
 	rng("key_requests_per_minute", s.KeyRequestsPerMinute, 1, 600)
 	// The relations only make sense when both sides are in range.
-	if s.HeartbeatIntervalSeconds >= 10 && s.TokenTTLSeconds >= 60 && s.HeartbeatIntervalSeconds >= s.TokenTTLSeconds {
+	inRange := func(v, lo, hi int) bool { return v >= lo && v <= hi }
+	hbOK := inRange(s.HeartbeatIntervalSeconds, 10, 600)
+	if hbOK && inRange(s.TokenTTLSeconds, 60, 3600) && s.HeartbeatIntervalSeconds >= s.TokenTTLSeconds {
 		bad("heartbeat_interval_seconds", "must be less than token_ttl_seconds")
 	}
-	if s.HeartbeatIntervalSeconds >= 10 && s.IdleTimeoutSeconds >= 30 && s.HeartbeatIntervalSeconds >= s.IdleTimeoutSeconds {
+	if hbOK && inRange(s.IdleTimeoutSeconds, 30, 3600) && s.HeartbeatIntervalSeconds >= s.IdleTimeoutSeconds {
 		bad("heartbeat_interval_seconds", "must be less than idle_timeout_seconds")
 	}
 	if len(s.AllowedOrigins) > MaxAllowedOrigins {
