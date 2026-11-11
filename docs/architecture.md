@@ -213,6 +213,44 @@ goose migrations and then River's schema (through River's migrator, pinned by th
 - The await job polls on River's scheduling interval (a few seconds), so a result is acted on with
   that much delay.
 
+## Media toolkit
+
+Package `internal/media` is the worker's interface to FFmpeg and FFprobe (ADR 0024, ADR 0025). Both
+run only as separate processes started by `exec.CommandContext` with an argument array: no shell, no
+cgo, no libav (invariant I1). The child gets an empty environment, so the worker's secrets never reach
+it. A source path is handed over as an absolute `file:` URL with `-protocol_whitelist file,pipe`, so a
+hostile file name can be neither an option nor a URL.
+
+- **`Tools.CheckCapabilities`** runs at startup in the worker role only (api and edge need no
+  FFmpeg). It lists the build's encoders, decoders, muxers, demuxers, protocols and filters and fails
+  with one message naming everything missing.
+- **`Tools.Probe`** runs `ffprobe -print_format json -show_format -show_streams` with a timeout and a
+  4 MiB output cap and returns `Info`: container, duration, the first non-cover-art video stream and
+  the first audio stream. The video's *display* size applies the sample aspect ratio and the display
+  matrix rotation (90 and 270 degrees swap width and height; other angles are refused).
+- **`Validate(Info, Limits)`** rejects a missing video stream, unsupported containers and codecs,
+  absurd or zero dimensions, and sources over the duration or resolution limits. Errors are
+  `invalid_request` with a fixed detail that names the problem and the limit, never a path.
+  Resolution limits apply in either orientation to both the stored frame and the display size.
+- **`Ladder(Info)`** picks the renditions: 1080, 720, 480, 360 and 240 by display height, a rung only
+  if the source is at least that tall (nothing is upscaled), at least one rung always (a shorter
+  source keeps its own height rounded down to even), widths from the display aspect ratio rounded to
+  even, CRF 23, maxrate caps of 4500, 2500, 1200, 700 and 350 kbps with a buffer of twice the cap, and
+  AAC 96 kbps when the source has audio. The ladder does not look at the source bitrate.
+
+`internal/media/testmedia` generates fixtures at test time with a test-only FFmpeg that has the lavfi
+sources; the production FFmpeg stays minimal. No binary fixtures are committed.
+
+The worker image (`build/worker.Dockerfile`) is separate from the api and edge image (ADR 0008).
+
+### What the media toolkit does not protect against
+
+- FFmpeg parses untrusted input. Probing and the minimal build reduce what a hostile file can reach
+  but do not make parsing safe; isolate the worker (least privilege, resource limits, no network
+  beyond what it needs).
+- Probe results describe what a file claims. Validation bounds the claims; it cannot bound the work
+  a decoder does on a crafted stream, which is why a transcode timeout exists.
+
 ## Keys
 
 Each asset has one active content key (I7), wrapped by a key-encryption key held in a key management

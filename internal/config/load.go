@@ -105,6 +105,7 @@ func (l *loader) load() *Config {
 	c.Uploads = l.uploads()
 	c.Peppers = l.peppers(prod)
 	c.KMS = l.kms(prod)
+	c.Media = l.media()
 	return c
 }
 

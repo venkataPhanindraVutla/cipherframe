@@ -55,7 +55,7 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
-          args: --build-tags=integration
+          args: --build-tags=integration,media
 
   test:
     name: vet and unit tests (race)
@@ -68,6 +68,7 @@ jobs:
           cache-dependency-path: go.mod
       - run: go vet ./...
       - run: go vet -tags=integration ./...
+      - run: go vet -tags=media ./...
       - run: go test -race -count=1 ./...
       - name: core builds without the cloud KMS SDKs (ADR 0022)
         run: |
@@ -200,3 +201,56 @@ jobs:
       - name: tear down
         if: always()
         run: docker compose down -v
+
+  media:
+    name: media (worker image and FFmpeg tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # FFmpeg, x264 and dav1d compile in cached layers (GitHub Actions cache), so only the first
+      # run, or a change to the pins in build/worker.Dockerfile, pays for the compile.
+      - name: build the worker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: build/worker.Dockerfile
+          load: true
+          tags: cipherframe-worker:ci
+          cache-from: type=gha,scope=worker-image
+          cache-to: type=gha,scope=worker-image,mode=max
+      - name: export the test binaries (including the generator FFmpeg)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: build/worker.Dockerfile
+          target: tools
+          outputs: type=local,dest=out/tools
+          cache-from: type=gha,scope=worker-image
+      - name: image has the minimal FFmpeg, the licences and the source offer
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/ffmpeg cipherframe-worker:ci -hide_banner -buildconf | tee out-buildconf.txt
+          grep -q -- '--disable-everything' out-buildconf.txt
+          grep -q -- '--disable-network' out-buildconf.txt
+          docker image inspect cipherframe-worker:ci --format 'image size: {{.Size}} bytes'
+          id="$(docker create cipherframe-worker:ci)"
+          mkdir -p out/image
+          docker cp "${id}:/usr/local/bin/ffmpeg" out/image/ffmpeg
+          docker cp "${id}:/usr/local/bin/ffprobe" out/image/ffprobe
+          docker cp "${id}:/usr/share/licenses/ffmpeg" out/licenses
+          docker rm "${id}"
+          for f in COPYING.GPLv2 COPYING.GPLv3 SOURCE.md x264-COPYING.GPLv2; do test -s "out/licenses/$f"; done
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      # The binaries copied out of the image are static, so they run on the runner. Probe and
+      # CheckCapabilities are tested against exactly what ships; the fixtures come from the
+      # test-only generator build.
+      - name: internal/media tests against the image's binaries
+        env:
+          CIPHERFRAME_TEST_FFMPEG: ${{ github.workspace }}/out/image/ffmpeg
+          CIPHERFRAME_TEST_FFPROBE: ${{ github.workspace }}/out/image/ffprobe
+          CIPHERFRAME_TEST_FFMPEG_FIXTURES: ${{ github.workspace }}/out/tools/ffmpeg-fixtures
+        run: go test -race -count=1 -tags=media -v ./internal/media/...

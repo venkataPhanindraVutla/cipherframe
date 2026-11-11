@@ -23,3 +23,7 @@ coverage.*
 .idea/
 .vscode/
 .DS_Store
+
+# CI/local media test binaries
+/out/
+/out-buildconf.txt

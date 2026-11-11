@@ -4,6 +4,16 @@ Copyright 2026 The Cipherframe Authors
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 Cipherframe invokes FFmpeg and FFprobe as separate processes and does not link
-against them. FFmpeg is not distributed with the Cipherframe source code. Any
-container image that bundles an FFmpeg build documents that build's licence
-alongside the image.
+against them. FFmpeg is not distributed with the Cipherframe source code.
+
+The worker container image (build/worker.Dockerfile) bundles FFmpeg and x264 as
+separate programs next to the Cipherframe server. They are built from the pinned
+upstream sources listed in the image and are licensed under the GNU General
+Public License (version 2 or later; the FFmpeg binary is GPL because it is built
+with x264). The image also contains dav1d (BSD-2-Clause) and the GNU C Library
+(LGPL-2.1-or-later, linked statically). The licence texts and a written source
+offer with the exact sources, checksums and build configuration are in the image
+under /usr/share/licenses/ffmpeg/. Cipherframe's own code stays under the Apache
+License 2.0. Operators who prefer not to distribute or run a GPL FFmpeg can use
+their own FFmpeg through CIPHERFRAME_FFMPEG_PATH and CIPHERFRAME_FFPROBE_PATH.
+H.264 patent licensing is the operator's responsibility.
