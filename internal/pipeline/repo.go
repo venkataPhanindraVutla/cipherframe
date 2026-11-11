@@ -54,10 +54,19 @@ func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.Asse
 	return out, err
 }
 
+// Key is the part of a content key the pipeline uses. contentkey.ContentKey implements it: Bytes
+// returns a copy the caller must clear, and Zero wipes the key's own buffer.
+type Key interface {
+	Bytes() []byte
+	Zero()
+}
+
 // KeyEnsurer returns the asset's content key, creating it first when the asset has none.
 type KeyEnsurer interface {
-	Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (contentkey.ContentKey, error)
+	Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (Key, error)
 }
+
+var _ Key = contentkey.ContentKey{}
 
 // ContentKeys is the KeyEnsurer over the content key manager.
 type ContentKeys struct {
@@ -70,13 +79,13 @@ type ContentKeys struct {
 // lazily inside per-rendition work, where two renditions could race to create it. The asset row is
 // locked for the length of the creating transaction, so two concurrent attempts serialise and the
 // second one finds the key the first created.
-func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (contentkey.ContentKey, error) {
+func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (Key, error) {
 	k, err := c.Manager.Get(ctx, tenant, asset)
 	if err == nil {
 		return k, nil
 	}
 	if !isCode(err, errs.NotFound) {
-		return contentkey.ContentKey{}, err
+		return nil, err
 	}
 	err = db.Tx(ctx, c.Pool, func(tx *db.Repos) error {
 		if _, err := tx.LockAsset(ctx, tenant, asset); err != nil {
@@ -93,9 +102,13 @@ func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.As
 		return err
 	})
 	if err != nil {
-		return contentkey.ContentKey{}, err
+		return nil, err
 	}
-	return c.Manager.Get(ctx, tenant, asset)
+	k, err = c.Manager.Get(ctx, tenant, asset)
+	if err != nil {
+		return nil, err
+	}
+	return k, nil
 }
 
 func isCode(err error, code errs.Code) bool {

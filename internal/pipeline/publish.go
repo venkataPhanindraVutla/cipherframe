@@ -112,18 +112,20 @@ func (p *Processor) publish(ctx context.Context, asset db.Asset, key []byte, out
 			total += size
 			totalDur += s.Duration
 			// Peak bitrate: bytes * 8 / seconds, kept as a fraction to compare without division.
-			if s.Duration >= bandwidthMinSegment && size*peakDur.Nanoseconds() > peakNum*s.Duration.Nanoseconds() {
+			if s.Duration >= bandwidthMinSegment && (peakDur == 0 || size*peakDur.Nanoseconds() > peakNum*s.Duration.Nanoseconds()) {
 				peakNum, peakDur = size, s.Duration
 			}
-			if size*peakAnyDur.Nanoseconds() > peakAny*s.Duration.Nanoseconds() {
+			if peakAnyDur == 0 || size*peakAnyDur.Nanoseconds() > peakAny*s.Duration.Nanoseconds() {
 				peakAny, peakAnyDur = size, s.Duration
 			}
 		}
 		if peakDur == 0 { // no segment of at least half the target: take the peak of whatever exists
 			peakNum, peakDur = peakAny, peakAnyDur
 		}
-		bandwidth := bitrate(peakNum, peakDur)
 		average := bitrate(total, totalDur)
+		// BANDWIDTH is a peak, so it is never below the average (RFC 8216 4.3.4.2): a short final
+		// segment that was left out of the peak can still pull the average above it.
+		bandwidth := max(bitrate(peakNum, peakDur), average)
 
 		text, err := hls.RenderMedia(pl)
 		if err != nil {

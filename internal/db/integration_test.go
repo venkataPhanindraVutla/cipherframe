@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -417,7 +418,7 @@ func TestRotationPreservesOwnership(t *testing.T) {
 
 	// Assets and audit rows are untouched.
 	after, err := r.GetAsset(ctx, f.tenant.ID, asset.ID)
-	if err != nil || after != asset {
+	if err != nil || !reflect.DeepEqual(after, asset) {
 		t.Fatalf("asset changed by rotation: %+v vs %+v (%v)", after, asset, err)
 	}
 	if after.CreatedByClientID != f.client.ID {
@@ -520,7 +521,7 @@ func TestAssets(t *testing.T) {
 		t.Fatalf("unexpected asset: %+v", a)
 	}
 	got, err := r.GetAsset(ctx, f.tenant.ID, a.ID)
-	if err != nil || got != a {
+	if err != nil || !reflect.DeepEqual(got, a) {
 		t.Fatalf("GetAsset = %+v, %v; want %+v", got, err, a)
 	}
 	_, err = r.GetAsset(ctx, f.tenant.ID, id.New[id.AssetKind]())
