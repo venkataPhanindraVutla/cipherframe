@@ -218,9 +218,9 @@ func (p *Provider) Unwrap(ctx context.Context, w kms.Wrapped, aad []byte) ([]byt
 }
 
 // parseCiphertext splits "vault:vN:<base64>" into N and the payload. It accepts only canonical
-// standard base64: Vault's decoder ignores trailing padding bits, so without this check a
-// single-bit change in the last character would still unwrap, and the ciphertext would be
-// malleable.
+// standard base64. A lenient decoder (Go's default) ignores the unused trailing bits of the last
+// character, so without this check a one-bit change there could still unwrap and the ciphertext
+// would be malleable.
 func parseCiphertext(s string) (version int, payload string, ok bool) {
 	rest, found := strings.CutPrefix(s, "vault:v")
 	if !found {
