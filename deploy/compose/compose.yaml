@@ -89,13 +89,30 @@ services:
   server:
     image: cipherframe-server:dev
     build: *cipherframe-build
-    # The worker role runs here because no job kind needs FFmpeg yet; the separate worker image
-    # arrives with M3.
-    command: ["--role=api,edge,worker"]
+    # api and edge only: the worker role needs FFmpeg and runs from the worker image (below).
+    command: ["--role=api,edge"]
     environment: *cipherframe-env
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+
+  # The worker role with FFmpeg (ADR 0024). In a profile because building FFmpeg takes minutes:
+  #   docker compose --profile worker up --build
+  worker:
+    image: cipherframe-worker:dev
+    build:
+      context: ../..
+      dockerfile: build/worker.Dockerfile
+    profiles: ["worker"]
+    command: ["--role=worker"]
+    environment: *cipherframe-env
     depends_on:
       postgres:
         condition: service_healthy

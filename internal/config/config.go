@@ -68,6 +68,7 @@ type Config struct {
 	S3          S3
 	Peppers     Peppers
 	KMS         KMS
+	Media       Media
 }
 
 // LogValue implements slog.LogValuer. It shows the effective configuration
@@ -101,6 +102,14 @@ func (c *Config) LogValue() slog.Value {
 			slog.String("versions", strings.Join(vs, ",")),
 			slog.Int("current", c.Peppers.current),
 			slog.String("values", Redacted),
+		),
+		slog.Group("media",
+			slog.String("ffmpeg_path", c.Media.FFmpegPath),
+			slog.String("ffprobe_path", c.Media.FFprobePath),
+			slog.Duration("max_source_duration", c.Media.MaxSourceDuration),
+			slog.Int("max_source_width", c.Media.MaxSourceWidth),
+			slog.Int("max_source_height", c.Media.MaxSourceHeight),
+			slog.Duration("transcode_timeout", c.Media.TranscodeTimeout),
 		),
 		slog.Group("kms",
 			slog.String("provider", c.KMS.Provider),

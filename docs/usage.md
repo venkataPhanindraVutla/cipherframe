@@ -28,7 +28,7 @@ cipherframe-server migrate                    # apply database migrations and ex
 cipherframe-server --role=api                 # control plane on CIPHERFRAME_API_LISTEN
 cipherframe-server --role=edge                # data plane on CIPHERFRAME_EDGE_LISTEN
 cipherframe-server --role=worker              # background jobs (kms.rewrap)
-cipherframe-server --role=api,edge,worker --migrate   # everything in one process (development)
+cipherframe-server --role=api,edge,worker --migrate   # everything in one process (needs ffmpeg and ffprobe: use the worker image)
 ```
 
 | Flag or command | Meaning |
@@ -149,7 +149,8 @@ docker compose -f deploy/compose/compose.yaml up --build
 | `seaweedfs` | SeaweedFS 4.53 with its S3 gateway (ADR 0014). One development identity, no anonymous access. | `127.0.0.1:8333` |
 | `storage-init` | One-shot. On every `up` it creates the `cipherframe-source` and `cipherframe-delivery` buckets if missing and checks that an anonymous GET of each is refused (403). It exits non-zero otherwise, which stops `server` from starting. | none |
 | `migrate` | One-shot `cipherframe-server migrate`, run once Postgres is healthy. | none |
-| `server` | `cipherframe-server --role=api,edge,worker`. | api `127.0.0.1:8080`, edge `127.0.0.1:8081` |
+| `server` | `cipherframe-server --role=api,edge`. | api `127.0.0.1:8080`, edge `127.0.0.1:8081` |
+| `worker` | Profile `worker` only. `cipherframe-server --role=worker` from the worker image (FFmpeg inside). | none |
 
 Check it: `curl http://127.0.0.1:8080/readyz` and `curl http://127.0.0.1:8081/readyz` list the
 `database`, `queue`, `storage_source` and `storage_delivery` checks, all `ok`.
@@ -164,10 +165,11 @@ after changing Go code to rebuild the image.
 
 **Images.** `build/Dockerfile` builds the `cipherframe-server` image: a static binary on
 `distroless/static` as a non-root user, with no shell. It serves the api and edge roles and contains
-no FFmpeg (ADR 0008). The separate worker image with FFmpeg arrives with M3 (FFmpeg build and
-licensing is gate P8). Until then no job kind needs FFmpeg, so the Compose `server` service runs the
-worker role from the same image. Build it alone with
-`docker build -f build/Dockerfile --build-arg VERSION=dev -t cipherframe-server .`.
+no FFmpeg (ADR 0008). Build it alone with
+`docker build -f build/Dockerfile --build-arg VERSION=dev -t cipherframe-server .`. The worker role
+needs FFmpeg and runs from the separate worker image, see below; the Compose `worker` service is in
+the `worker` profile so that `up` does not compile FFmpeg (`docker compose --profile worker up
+--build` starts it).
 
 **Secrets.** Every credential in `deploy/compose/` is a public development placeholder (the
 `dev-placeholder-` prefix): the Postgres password, the S3 access key and secret, and the API key
@@ -185,6 +187,76 @@ pepper. The stack sets `CIPHERFRAME_ENV=development`, the only mode that accepts
 - Traffic is plain HTTP, the database connection has TLS off, and the containers have no resource
   limits.
 - There is no authentication on the Cipherframe endpoints yet (API keys arrive with M1-7).
+
+## Media toolchain and your own FFmpeg
+
+The worker role transcodes uploads with FFmpeg and inspects them with FFprobe, each as a **separate
+process** started with an argument array (never a shell, never linked as a library). api and edge
+never run them and start without FFmpeg installed.
+
+**The worker image.** `build/worker.Dockerfile` builds `cipherframe-worker`: the server binary plus a
+minimal, fully static FFmpeg 9.0.2 on `distroless/static` (no libc, no shell), running as non-root.
+
+```sh
+docker build -f build/worker.Dockerfile --build-arg VERSION=dev -t cipherframe-worker .
+docker run --rm --entrypoint /usr/local/bin/ffmpeg cipherframe-worker -hide_banner -buildconf
+```
+
+The FFmpeg in it is configured with `--disable-everything --disable-network --disable-autodetect`
+and only what ADR 0024 lists: `file` and `pipe` protocols; MP4/MOV and Matroska/WebM input; H.264,
+HEVC, VP8, VP9, AV1 (through dav1d, because FFmpeg's own AV1 decoder needs a hardware accelerator),
+AAC, Opus and MP3 decoding; libx264 and AAC encoding; MP4 and HLS (fMP4) output; and the
+`scale`, `format`, `aresample`, `null`, `anull`, `setsar`, `fps`, `transpose`, `hflip` and `vflip`
+filters (the last three apply a rotated phone video's display matrix). Everything is pinned by
+SHA-256 or digest. `/usr/share/licenses/ffmpeg/` holds the licence texts and `SOURCE.md`, the
+written source offer with the exact sources and configure line. The image's `ENV` points
+`CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH` at `/usr/local/bin`.
+
+**Startup check.** A process with the `worker` role runs `ffmpeg -buildconf`, `-encoders`,
+`-decoders`, `-muxers`, `-demuxers`, `-protocols` and `-filters` before connecting to anything and
+refuses to start if a required piece is missing. The error lists everything missing at once, for
+example `missing encoder(s): libx264; missing muxer(s): hls`.
+
+**Using your own FFmpeg.** Set `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH`. Your build
+needs libx264 and the native AAC encoder; the `mp4` and `hls` muxers; the `mov` and `matroska`
+demuxers; the H.264, HEVC, VP8, VP9, AAC, Opus and MP3 decoders and an AV1 decoder (`libdav1d` or
+`libaom-av1`); the `file` and `pipe` protocols; and the filters above. A distribution FFmpeg usually
+has all of them. If something is missing the worker says so at startup. A full-featured FFmpeg is
+a larger attack surface than the worker image's (see below), and H.264 patent licensing is your
+concern, not Cipherframe's.
+
+**Running the tests against real binaries.**
+
+```sh
+docker build -f build/worker.Dockerfile --target tools --output type=local,dest=out/tools .
+CIPHERFRAME_TEST_FFMPEG=$PWD/out/tools/ffmpeg CIPHERFRAME_TEST_FFPROBE=$PWD/out/tools/ffprobe \
+  CIPHERFRAME_TEST_FFMPEG_FIXTURES=$PWD/out/tools/ffmpeg-fixtures \
+  go test -tags media ./internal/media/...
+```
+
+The binaries are Linux binaries: run them on Linux, or cross-build the test binary and run it in a
+container. Fixtures are generated at test time by a test-only FFmpeg (the Dockerfile's `fixtures`
+stage, never shipped); no media files are committed.
+
+### What the media toolchain does not protect against
+
+- **FFmpeg parses untrusted input.** The minimal build removes most demuxers, decoders, filters and
+  network access, which narrows what a hostile file can reach, but H.264, HEVC, VP9, AV1 and
+  Matroska/MP4 parsers remain and parser bugs have been exploited before. Run workers with least
+  privilege: non-root, a read-only root file system, no network beyond object storage and the
+  database, dropped capabilities, a seccomp profile, and CPU, memory, process and disk limits. The
+  worker image is a distroless static image so there is no shell to land in, but that is not a
+  sandbox. Keep FFmpeg updated; the pins are in `build/worker.Dockerfile`.
+- Probe limits stop oversized sources early, but a file can still be expensive to decode. The
+  transcode timeout and your container limits are the backstop.
+- A file's metadata can lie. The duration limit uses what FFprobe reports before encoding; a file
+  that decodes to something longer than it claims is cut off by the transcode timeout, not by the
+  duration limit.
+- The worker's own environment (database URL, key material) is **not** passed to FFmpeg: it runs
+  with an empty environment. The process still runs as the same user, so file system and network
+  access must be restricted outside Cipherframe.
+- The worker image is GPL-licensed software (FFmpeg and x264) next to Apache-2.0 Cipherframe code.
+  See `NOTICE` and the licence texts in the image.
 
 ## Configuration
 
@@ -230,6 +302,12 @@ variable, never its value.
 | `CIPHERFRAME_KMS_GCP_CREDENTIALS_FILE` | unset (Application Default Credentials) | no | no | Path of a credentials JSON file (`service_account`, `authorized_user`, `external_account` or `impersonated_service_account`). It is a path, not a secret; its content is never logged. Unset means Application Default Credentials (workload identity, attached service account, `GOOGLE_APPLICATION_CREDENTIALS`). The identity needs `cloudkms.cryptoKeys.get` and `cloudkms.cryptoKeyVersions.useToEncrypt`/`useToDecrypt` (for example `roles/cloudkms.cryptoOperator` plus `roles/cloudkms.viewer`). |
 | `CIPHERFRAME_KMS_GCP_ENDPOINT` | the Cloud KMS endpoint | no | no | Optional `host:port` that replaces `cloudkms.googleapis.com:443`, for a private endpoint (Private Service Connect). The connection uses TLS. |
 | `CIPHERFRAME_KMS_GCP_TIMEOUT` | `5s` | no | no | Go duration from 1ms to 5m, applied to each Cloud KMS request (including SDK retries). |
+| `CIPHERFRAME_FFMPEG_PATH` | `ffmpeg` (found on `PATH`) | no | no | FFmpeg binary the **worker** role runs: a path or a bare name. Executed directly, never through a shell, with an empty environment. A value starting with `-` or containing control characters is refused. See [Media toolchain](#media-toolchain-and-your-own-ffmpeg). |
+| `CIPHERFRAME_FFPROBE_PATH` | `ffprobe` (found on `PATH`) | no | no | FFprobe binary, same rules. |
+| `CIPHERFRAME_MAX_SOURCE_DURATION` | `4h` | no | no | Longest accepted source, a Go duration above zero and at most `168h`. Checked by the probe step before any encoding (ADR 0025). |
+| `CIPHERFRAME_MAX_SOURCE_WIDTH` | `3840` | no | no | Largest accepted picture width in pixels, 16 to 16384. Applies to the picture a viewer sees and to the stored frame, in either orientation: a `2160x3840` portrait video passes the default `3840x2160` limit. |
+| `CIPHERFRAME_MAX_SOURCE_HEIGHT` | `2160` | no | no | Largest accepted picture height, same rules. |
+| `CIPHERFRAME_TRANSCODE_TIMEOUT` | `6h` | no | no | Longest one transcode may run, a Go duration above zero and at most `168h`. |
 
 Empty values of non-secret variables mean "use the default".
 
