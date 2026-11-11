@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,8 +14,18 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 )
+
+// stubSigner satisfies signing.Signer; the test never signs.
+type stubSigner struct{}
+
+func (stubSigner) Sign(context.Context, []byte) (string, []byte, error) {
+	return "", nil, errors.New("stub signer does not sign")
+}
+
+func (stubSigner) PublicKeys(context.Context) ([]signing.PublicKey, error) { return nil, nil }
 
 // The worker role registers asset.process next to kms.rewrap and creates its private work
 // directory; a worker built without the processing settings (as in the tests that only exercise
@@ -34,7 +45,7 @@ func TestNewWorkerRegistersAssetProcess(t *testing.T) {
 		FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", MaxSourceDuration: time.Hour, MaxSourceWidth: 3840, MaxSourceHeight: 2160,
 		TranscodeTimeout: time.Hour, WorkDir: work, Concurrency: 1,
 	}}
-	w, err := newWorker(pool, managerFor(t, pool, localAt(t, 1)), slog.New(slog.DiscardHandler), &processing{Buckets: buckets, Config: cfg})
+	w, err := newWorker(pool, managerFor(t, pool, localAt(t, 1)), slog.New(slog.DiscardHandler), &processing{Buckets: buckets, Config: cfg, Signer: stubSigner{}})
 	if err != nil {
 		t.Fatal(err)
 	}
