@@ -182,10 +182,16 @@ variable, never its value.
 | `CIPHERFRAME_S3_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see below. |
 | `CIPHERFRAME_API_KEY_PEPPERS` | none | yes | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded pepper is at least 32 bytes (standard base64). |
 | `CIPHERFRAME_API_KEY_PEPPER_CURRENT` | none | yes | no | Positive integer naming a version in the set. |
-| `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. Only `local` is implemented so far (Docker Compose uses it with a `dev-placeholder-` KEK); the others are reserved names that fail at startup until M2-2 (ADR 0019, ADR 0022). |
+| `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. `local` (Docker Compose uses it with a `dev-placeholder-` KEK) and `vault` are implemented; `awskms` and `gcpkms` are reserved names that fail at startup until M2-2 lands them (ADR 0019, ADR 0022). |
 | `CIPHERFRAME_KMS_LOCAL_KEKS` | none | with `local` | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded KEK is **exactly 32 bytes** (standard base64). `_FILE` is supported. Values starting with `dev-placeholder-` are accepted only in development. Ignored unless the provider is `local`. |
 | `CIPHERFRAME_KMS_LOCAL_KEK_CURRENT` | none | with `local` | no | Positive integer naming the version in the set that new wraps use. Older versions stay for unwrapping. |
-| `CIPHERFRAME_KMS_VAULT_*` | | | | **Stub.** Vault Transit settings arrive with M2-2 (ADR 0021). |
+| `CIPHERFRAME_KMS_VAULT_ADDR` | none | with `vault` | no | Server address, an absolute `http(s)` URL without credentials, query or fragment. Production requires `https`. A path prefix (reverse proxy) is allowed. Ignored unless the provider is `vault`. |
+| `CIPHERFRAME_KMS_VAULT_TOKEN` | none | with `vault` | yes | Vault or OpenBao token. `_FILE` is supported. Must not contain whitespace. Values starting with `dev-placeholder-` are accepted only in development. |
+| `CIPHERFRAME_KMS_VAULT_TRANSIT_MOUNT` | `transit` | no | no | Mount path of the Transit secrets engine, without leading or trailing slash (nested paths such as `team/transit` are allowed). |
+| `CIPHERFRAME_KMS_VAULT_KEY_NAME` | none | with `vault` | no | Transit key that wraps content keys: letters, digits, `-`, `_` and `.`. Must be an AEAD type (`aes256-gcm96` recommended); other types are refused on first use. |
+| `CIPHERFRAME_KMS_VAULT_NAMESPACE` | unset | no | no | Sent as `X-Vault-Namespace` (HashiCorp Vault Enterprise and OpenBao namespaces). |
+| `CIPHERFRAME_KMS_VAULT_CA_FILE` | system roots | no | no | Path to a PEM file of CA certificates that **replaces** the system roots for the connection to the server. The file is read and checked at startup. |
+| `CIPHERFRAME_KMS_VAULT_TIMEOUT` | `5s` | no | no | Go duration for one request to the server; greater than zero, at most `5m`. |
 | `CIPHERFRAME_KMS_AWS_*` | | | | **Stub.** AWS KMS settings arrive with M2-2. |
 | `CIPHERFRAME_KMS_GCP_*` | | | | **Stub.** GCP KMS settings arrive with M2-2. |
 

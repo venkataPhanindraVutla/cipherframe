@@ -15,7 +15,7 @@
 | Provider | Status |
 |---|---|
 | AWS KMS | planned (M2-2) |
-| HashiCorp Vault Transit | planned (M2-2) |
+| HashiCorp Vault Transit and OpenBao (`vault`) | implemented (ADR 0021) |
 | GCP KMS | planned (M2-2) |
 | Local development provider (`local`) | implemented; **development only** (ADR 0019) |
 
@@ -92,6 +92,49 @@ therefore **development only**:
 - the process refuses to start with it when `CIPHERFRAME_ENV=production` (the loader and the provider
   both check), and a `dev-placeholder-` KEK is rejected in production;
 - it logs a warning at every start that it is development-only.
+
+## The Vault Transit provider
+
+`vault` wraps content keys with a Transit key held by HashiCorp Vault or OpenBao, so the KEK never
+reaches Cipherframe. It talks to the Transit HTTP API directly (no Vault SDK) and is tested in CI
+against both servers (ADR 0021). Settings are in the `CIPHERFRAME_KMS_VAULT_*` rows of
+[usage.md](usage.md).
+
+- **Key**: create an AEAD Transit key, for example
+  `vault write -f transit/keys/cipherframe type=aes256-gcm96` (`bao` for OpenBao). The
+  content-key binding (asset, slot, provider, KEK id and version) is sent as Transit's
+  `associated_data`, so the key type must authenticate it: `aes256-gcm96`, `aes128-gcm96` or
+  `chacha20-poly1305`. The provider checks the type on first use and refuses any other.
+  Cipherframe never creates the key; it reads the key's metadata and fails with `NotConfigured` if
+  it is missing (Transit would otherwise create it on first encrypt).
+- **Token policy**: grant only what is used.
+
+  ```hcl
+  path "transit/keys/cipherframe"    { capabilities = ["read"] }
+  path "transit/encrypt/cipherframe" { capabilities = ["update"] }
+  path "transit/decrypt/cipherframe" { capabilities = ["update"] }
+  ```
+
+  Use a renewable or periodic token, or an auth method that writes the token to a file read through
+  `CIPHERFRAME_KMS_VAULT_TOKEN_FILE`. The provider does not renew tokens; an expired token shows as
+  `ErrDenied`.
+- **Recorded values**: `Wrapped.KeyID` is the Transit key name and `Wrapped.Version` is the number in
+  Vault's `vault:vN:` ciphertext prefix, so the version recorded is the one Vault actually used.
+  `Current` reads the key's `latest_version`. The ciphertext stored is Vault's ciphertext string.
+- **Rotation**: `vault write -f transit/keys/cipherframe/rotate`. New wraps use the new version at
+  once, with no restart; old ciphertext still unwraps while `min_decryption_version` allows it.
+  Raising `min_decryption_version` above a version still in use makes those keys fail with
+  `ErrNotConfigured`: re-wrap first (M2-4).
+- **Ciphertext format**: the provider accepts only canonical base64 after the `vault:vN:` prefix, so a
+  changed ciphertext fails even where a lenient decoder would ignore the change.
+- **Errors**: connection failures, timeouts, redirects (never followed, so the token cannot be sent
+  elsewhere), HTTP 429 and 5xx (sealed or standby server included) are `ErrUnavailable`; 401 and 403
+  are `ErrDenied`; a failed authentication or malformed ciphertext is `ErrInvalid`; a missing key,
+  mount or key version (404, or Vault's "key not found", "too old", "too new") is `ErrNotConfigured`;
+  anything else is `Other`. An error carries only the operation, the HTTP status and a fixed
+  category, never the server's text, because Vault can echo request input.
+- **TLS**: production requires `https`. `CIPHERFRAME_KMS_VAULT_CA_FILE` replaces the system roots;
+  TLS 1.2 is the minimum.
 
 ## Operations
 
