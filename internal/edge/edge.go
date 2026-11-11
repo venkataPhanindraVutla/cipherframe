@@ -13,6 +13,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 )
 
 // Deps are the collaborators of the edge handlers.
@@ -25,6 +26,9 @@ type Deps struct {
 	// Playback serves the session-scoped playlists and segments (M4-3). Without it those routes
 	// answer 503 dependency_unavailable.
 	Playback *Playback
+	// KeySet serves /.well-known/cipherframe-keys.json (M5-2). Without it the route answers 503
+	// dependency_unavailable.
+	KeySet *signing.KeySet
 }
 
 // Edge is the data-plane HTTP handler.
@@ -40,7 +44,7 @@ func New(d Deps) *Edge {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, up: d.Uploads, play: d.Playback}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, up: d.Uploads, play: d.Playback, keyset: d.KeySet}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: writeAuthError,
 	})

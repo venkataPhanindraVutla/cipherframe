@@ -6,6 +6,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 )
 
 // server implements gen.StrictServerInterface.
@@ -13,6 +14,8 @@ type server struct {
 	ready *health.Runner
 	up    *Uploads
 	play  *Playback
+	// keyset serves the public signing key set (M5-2).
+	keyset *signing.KeySet
 }
 
 func requestID(ctx context.Context) string {

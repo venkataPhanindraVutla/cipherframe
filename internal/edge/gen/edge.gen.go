@@ -120,6 +120,39 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Defines values for PublishedSigningKeyAlg.
+const (
+	Ed25519 PublishedSigningKeyAlg = "ed25519"
+)
+
+// Valid indicates whether the value is a known member of the PublishedSigningKeyAlg enum.
+func (e PublishedSigningKeyAlg) Valid() bool {
+	switch e {
+	case Ed25519:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublishedSigningKeyStatus.
+const (
+	Active  PublishedSigningKeyStatus = "active"
+	Retired PublishedSigningKeyStatus = "retired"
+)
+
+// Valid indicates whether the value is a known member of the PublishedSigningKeyStatus enum.
+func (e PublishedSigningKeyStatus) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	case Retired:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadyCheckStatus.
 const (
 	ReadyCheckStatusOk          ReadyCheckStatus = "ok"
@@ -259,6 +292,28 @@ type Problem struct {
 // ProblemCode Stable identifier to switch on. The closed registry in `internal/errs`.
 type ProblemCode string
 
+// PublishedSigningKey defines model for PublishedSigningKey.
+type PublishedSigningKey struct {
+	Alg       PublishedSigningKeyAlg `json:"alg"`
+	CreatedAt time.Time              `json:"created_at"`
+
+	// Keyid The key ID, as it appears in the `keyid` of a signature.
+	Keyid string `json:"keyid"`
+
+	// PublicKey The raw 32-byte Ed25519 public key in standard base64.
+	PublicKey string `json:"public_key"`
+
+	// RetiredAt Present only on a retired key.
+	RetiredAt *time.Time                `json:"retired_at,omitempty"`
+	Status    PublishedSigningKeyStatus `json:"status"`
+}
+
+// PublishedSigningKeyAlg defines model for PublishedSigningKey.Alg.
+type PublishedSigningKeyAlg string
+
+// PublishedSigningKeyStatus defines model for PublishedSigningKey.Status.
+type PublishedSigningKeyStatus string
+
 // ReadyCheck defines model for ReadyCheck.
 type ReadyCheck struct {
 	// Name Fixed check name, for example `database`.
@@ -280,6 +335,11 @@ type ReadyResponseStatus string
 
 // SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
 type SessionId = string
+
+// SigningKeySet The published public keys, oldest first.
+type SigningKeySet struct {
+	Keys []PublishedSigningKey `json:"keys"`
+}
 
 // UploadPart defines model for UploadPart.
 type UploadPart struct {
@@ -368,6 +428,9 @@ type CreateBrowserPlaybackSessionJSONRequestBody = CreateBrowserPlaybackSessionR
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetSigningKeySet The public signing key set
+	// (GET /.well-known/cipherframe-keys.json)
+	GetSigningKeySet(w http.ResponseWriter, r *http.Request)
 	// GetHealthz Liveness
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -411,6 +474,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetSigningKeySet operation middleware
+func (siw *ServerInterfaceWrapper) GetSigningKeySet(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSigningKeySet(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetHealthz operation middleware
 func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Request) {
@@ -928,6 +1005,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadyz)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/.well-known/cipherframe-keys.json", wrapper.GetSigningKeySet)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/play/tenants/{tenant_id}/sessions", wrapper.CreateBrowserPlaybackSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/master.m3u8", wrapper.GetPlaybackMaster)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/media.m3u8", wrapper.GetPlaybackMedia)
@@ -978,6 +1056,79 @@ type ViewerUnauthenticatedApplicationProblemPlusJSONResponse struct {
 	Body Problem
 
 	Headers ViewerUnauthenticatedResponseHeaders
+}
+
+type GetSigningKeySetRequestObject struct {
+}
+
+type GetSigningKeySetResponseObject interface {
+	VisitGetSigningKeySetResponse(w http.ResponseWriter) error
+}
+
+type GetSigningKeySet200ResponseHeaders struct {
+	AccessControlAllowOrigin string
+	CacheControl             string
+	XRequestId               string
+}
+
+type GetSigningKeySet200JSONResponse struct {
+	Body    SigningKeySet
+	Headers GetSigningKeySet200ResponseHeaders
+}
+
+func (response GetSigningKeySet200JSONResponse) VisitGetSigningKeySetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", fmt.Sprint(response.Headers.AccessControlAllowOrigin))
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSigningKeySet503ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetSigningKeySet503ApplicationProblemPlusJSONResponse) VisitGetSigningKeySetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSigningKeySetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetSigningKeySetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetSigningKeySetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetSigningKeySetdefaultApplicationProblemPlusJSONResponse) VisitGetSigningKeySetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetHealthzRequestObject struct {
@@ -2362,6 +2513,9 @@ func (response PutUploadPartdefaultApplicationProblemPlusJSONResponse) VisitPutU
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// GetSigningKeySet The public signing key set
+	// (GET /.well-known/cipherframe-keys.json)
+	GetSigningKeySet(ctx context.Context, request GetSigningKeySetRequestObject) (GetSigningKeySetResponseObject, error)
 	// GetHealthz Liveness
 	// (GET /healthz)
 	GetHealthz(ctx context.Context, request GetHealthzRequestObject) (GetHealthzResponseObject, error)
@@ -2434,6 +2588,30 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// GetSigningKeySet operation middleware
+func (sh *strictHandler) GetSigningKeySet(w http.ResponseWriter, r *http.Request) {
+	var request GetSigningKeySetRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSigningKeySet(ctx, request.(GetSigningKeySetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSigningKeySet")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSigningKeySetResponseObject); ok {
+		if err := validResponse.VisitGetSigningKeySetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetHealthz operation middleware

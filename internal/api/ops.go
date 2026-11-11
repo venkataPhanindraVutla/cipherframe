@@ -8,6 +8,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
 
@@ -18,6 +19,9 @@ type server struct {
 	assets *uploads.Service
 	// playback creates playback sessions and serves the playback settings (M4-1).
 	playback *playback.Service
+	// signing manages the integrity signing keys (M5-2); keyset serves the public set.
+	signing *signing.Manager
+	keyset  *signing.KeySet
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)
