@@ -1,8 +1,8 @@
 # Encryption
 
-> Status: M2-1 and M2-3 implemented (key-provider interface, envelope encryption, content keys,
-> local development provider). The cloud providers land with M2-2, re-wrap with M2-4 and packaging
-> with M3.
+> Status: M2-1 to M2-5 implemented (key-provider interface, envelope encryption, content keys,
+> local development provider, Vault/OpenBao, AWS KMS and GCP Cloud KMS providers, re-wrap, failure
+> behaviour). Packaging lands with M3.
 
 ## Layers
 
@@ -53,8 +53,58 @@ mixed versions, outage behaviour; ADR 0023).
 KEKs are versioned. The local provider takes `CIPHERFRAME_KMS_LOCAL_KEKS` as `version:base64`
 entries (each exactly 32 bytes) and `CIPHERFRAME_KMS_LOCAL_KEK_CURRENT`, the same pattern as API-key
 peppers (ADR 0016). To rotate, add a new version, point `..._CURRENT` at it and restart: new content
-keys use it and old ones still unwrap under their recorded version. Re-wrapping existing keys onto the
-new version is M2-4. Remove an old version only after no content key refers to it.
+keys use it and old ones still unwrap under their recorded version. Re-wrap existing keys onto the
+new version as described in [Rotation and re-wrap](#rotation-and-re-wrap). Remove an old version only
+after no content key refers to it; the server refuses to start if one does.
+
+## Rotation and re-wrap
+
+Re-wrap moves stored content keys onto the current KEK. It unwraps each key with the provider and KEK
+version recorded in its row, wraps the **same 16 key bytes** under the current provider's current
+KEK, and stores the new ciphertext. The content key never changes, so no media is re-encrypted and
+players are unaffected. The associated data of the new wrap names the new provider, KEK id and KEK
+version, so the old ciphertext is not valid under the new binding and the new one is not valid under
+the old.
+
+**Procedure for a new KEK version (same provider)**
+
+1. Rotate the KEK: for `local`, add a version to `CIPHERFRAME_KMS_LOCAL_KEKS` and move
+   `..._CURRENT`; for Vault, rotate the Transit key; for GCP, add a primary version. (AWS KMS rotates
+   inside the key and needs no re-wrap.) Restart the processes.
+2. `cipherframe-server admin kms-usage` shows how many content keys each version wraps.
+3. `cipherframe-server admin kms-rewrap --wait` (a `worker` must be running).
+4. `admin kms-usage` again: every key is on the current version.
+5. **Disable the old KEK version at the provider** (Vault `min_decryption_version`, KMS key version
+   disable or destroy, remove the local version from configuration). This step is what makes the old
+   ciphertext useless; see the limits below.
+
+**Procedure for moving between providers** (for example `local` to `vault`)
+
+1. Configure the new provider as `CIPHERFRAME_KMS_PROVIDER` and list the old one in
+   `CIPHERFRAME_KMS_UNWRAP_PROVIDERS`. Its settings are loaded and validated like the current
+   provider's. Unwrap-only providers are never asked to wrap.
+2. Restart; run `admin kms-rewrap --wait`; check `admin kms-usage`.
+3. Remove the old provider from `CIPHERFRAME_KMS_UNWRAP_PROVIDERS` and disable its KEK.
+
+**Startup check.** Before serving, every role lists the distinct `(provider, KEK id, KEK version)` in
+`content_keys` and refuses to start when a provider is not configured or, for `local`, a version is
+missing. Remote providers keep their versions server-side, so they are checked for presence only; a
+missing remote version fails on the first request for that key, as `denied` or `not_configured`.
+
+**How the job works.** `kms.rewrap` selects up to `batch_size` rows (default 100, at most 1000) whose
+KEK differs from the current one. Provider calls happen outside the transaction; for each key it
+unwraps, wraps, and unwraps the new ciphertext to check that it reads back the same bytes before the
+old ciphertext is replaced. The updates then commit in one transaction, guarded so each row changes
+only while it still names the old KEK, so concurrent runs cannot overwrite each other. If keys remain,
+the next run is enqueued in the same transaction as the last update, so a crash resumes cleanly. A run
+on an already re-wrapped database changes nothing. Running two chains at once is safe but wasteful.
+
+**Errors in the job.** An unavailable key service gives `dependency_unavailable` and the job retries
+with backoff (15 s doubling to 30 min, five attempts by default). Rows already re-wrapped in the failed
+run stay re-wrapped and the rest are untouched. A key that fails authentication (tampered ciphertext,
+wrong binding) is an integrity failure: the job is cancelled at once and appears in the dead-letter
+list with the code `internal_error` only. It is logged with the content key id, asset id, provider
+and KEK version, never a value. Investigate the row before retrying the job.
 
 ## Envelope and associated data
 
@@ -241,7 +291,9 @@ provides no Cloud KMS emulator, so before each release also run the opt-in test 
 
 ## Operations
 
-- **Re-wrap** (M2-4): re-wraps content keys under a new KEK version without re-encrypting media.
+- **Re-wrap** (M2-4): re-wraps content keys under the current KEK without re-encrypting media
+  (see [Rotation and re-wrap](#rotation-and-re-wrap)). Triggered by `admin kms-rewrap`; an HTTP
+  trigger is out of scope until the operator API is decided.
 - **Re-key** (M10-4, optional): re-encrypts an asset's segments under a new content key and destroys
   the old one.
 - **Crypto-shredding** (M6): destroying the content key row makes every copy of the ciphertext
@@ -252,6 +304,19 @@ provides no Cloud KMS emulator, so before each release also run the opt-in test 
 If the key provider is unavailable, key requests fail closed with a clear error and no key material
 in logs (I11). A provider error never yields a key, and an unknown error is never reported as
 success.
+
+- **Outage.** `Create`, `Get` and the re-wrap fail with `dependency_unavailable` (HTTP 503,
+  retryable). No key is returned, no row is written and no success is reported. A `Create` that
+  fails leaves no row, so the caller's transaction can retry cleanly.
+- **Integrity failure** (tampered ciphertext, wrong associated data, a key of the wrong length): the
+  result is `internal_error`, not retryable for clients, and the log line is the fixed message
+  "content key failed authentication (integrity failure)" with the asset id, content key id,
+  provider, KEK id and KEK version. Provider error text is never logged or stored.
+- **Not configured or denied.** A key whose provider or version is missing, or whose credentials are
+  refused, is `internal_error` and logs "content key provider is not usable" with identifiers only.
+- **Jobs.** River stores only the error code of a failed attempt. A test provider wrapper
+  (`kmstest.Faulty`) injects outages and integrity failures, and a log-scan test asserts that
+  neither content key bytes (raw, hex, base64) nor KEK bytes appear in logs or error strings.
 
 ## What this does not protect against
 
@@ -265,3 +330,12 @@ success.
 - An attacker who can both write to the database and call the provider can still obtain keys the
   provider would unwrap; associated data stops moving or editing records, not a compromised provider.
 - Re-wrapping and re-keying do not help against plaintext already saved.
+- **Re-wrap does not help if a KEK was already compromised and ciphertext was copied.** Old
+  ciphertext stays decryptable with the old KEK until that KEK is destroyed or disabled, so a copy of
+  the database taken before the re-wrap still opens with the old KEK. After a re-wrap, disable the
+  old KEK version at the provider. Re-wrap also does not change the content keys themselves; if a
+  content key may have leaked, re-key the asset (M10-4).
+- While a re-wrap runs, content keys are briefly in process memory (as on every read) and are
+  zeroed after use on a best-effort basis; a memory dump of the worker could still expose them.
+- The startup check cannot see which versions a remote provider holds; a version that was disabled
+  at the provider too early shows up as failed key requests, not as a refusal to start.

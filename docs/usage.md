@@ -27,7 +27,7 @@ export CIPHERFRAME_DATABASE_URL=... CIPHERFRAME_S3_SOURCE_BUCKET=... # see Confi
 cipherframe-server migrate                    # apply database migrations and exit
 cipherframe-server --role=api                 # control plane on CIPHERFRAME_API_LISTEN
 cipherframe-server --role=edge                # data plane on CIPHERFRAME_EDGE_LISTEN
-cipherframe-server --role=worker              # background jobs (idle until the queue lands)
+cipherframe-server --role=worker              # background jobs (kms.rewrap)
 cipherframe-server --role=api,edge,worker --migrate   # everything in one process (development)
 ```
 
@@ -84,13 +84,40 @@ cipherframe-server admin pepper-usage
 # version 2: 5 active keys (current)
 ```
 
+### Key rotation and re-wrap
+
+Content keys are wrapped by a key-encryption key (KEK). After changing the KEK version or the key
+provider, move the stored keys to the current KEK with the `kms.rewrap` job. A `worker` role process
+must be running to do the work; the commands below are the trigger (an HTTP trigger belongs to the
+operator API, which is a later decision):
+
+```sh
+cipherframe-server admin kms-usage
+# provider=local kek_id=local version=1: 120 content keys
+# provider=local kek_id=local version=2: 8 content keys
+
+cipherframe-server admin kms-rewrap --wait            # prints the job id on stdout
+cipherframe-server admin kms-rewrap --batch-size 250  # keys per run: 1-1000, default 100
+```
+
+`kms-rewrap` enqueues the job and prints its id (the only thing on stdout). With `--wait` it polls
+every 2 seconds until no content key is left on a KEK other than the current one, printing counts to
+stderr, and exits with an error if the job lands in the dead-letter list. Interrupting `--wait` does
+not stop the job. `kms-usage` prints counts only, never key material.
+
+At startup every role refuses to run if a stored content key was wrapped by a provider that is not
+configured, or (for `local`) by a KEK version that is no longer in `CIPHERFRAME_KMS_LOCAL_KEKS`. The
+message names the provider and version only. See [encryption.md](encryption.md) for the full
+procedure.
+
 Each HTTP listener has a 10 second header-read timeout, a 30 second read timeout, a 60 second
 write timeout, a 120 second idle timeout and a 32 KiB header limit. Logs are JSON on stderr at
 `CIPHERFRAME_LOG_LEVEL`.
 
 **Shutdown.** `SIGINT` or `SIGTERM` stops accepting connections, lets in-flight requests finish for
 up to 25 seconds, then closes the rest and exits. A second signal terminates immediately. The
-`worker` role currently logs that no job kinds are registered and waits for the signal.
+`worker` role works the `kms.rewrap` job kind; a job that is running when shutdown starts gets 20
+seconds to finish and is otherwise retried later.
 
 **Health.** `GET /healthz` (liveness) and `GET /readyz` (readiness: database, source bucket,
 delivery bucket) are served on both the api and edge listeners. See [api.md](api.md).
@@ -183,6 +210,7 @@ variable, never its value.
 | `CIPHERFRAME_API_KEY_PEPPERS` | none | yes | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded pepper is at least 32 bytes (standard base64). |
 | `CIPHERFRAME_API_KEY_PEPPER_CURRENT` | none | yes | no | Positive integer naming a version in the set. |
 | `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. Docker Compose uses `local` with a `dev-placeholder-` KEK (ADR 0019, ADR 0022). |
+| `CIPHERFRAME_KMS_UNWRAP_PROVIDERS` | unset | no | no | Comma-separated provider names, other than the current one, that may **only unwrap** keys they wrapped earlier (for example `local` while moving to `vault`). Each listed provider's own settings are required and validated exactly like the current provider's, and `local` is refused in production as usual. A name that is unknown, repeated or equal to `CIPHERFRAME_KMS_PROVIDER` is refused. Keep a provider here until `admin kms-usage` shows no content key on it; see [encryption.md](encryption.md#rotation-and-re-wrap). |
 | `CIPHERFRAME_KMS_LOCAL_KEKS` | none | with `local` | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded KEK is **exactly 32 bytes** (standard base64). `_FILE` is supported. Values starting with `dev-placeholder-` are accepted only in development. Ignored unless the provider is `local`. |
 | `CIPHERFRAME_KMS_LOCAL_KEK_CURRENT` | none | with `local` | no | Positive integer naming the version in the set that new wraps use. Older versions stay for unwrapping. |
 | `CIPHERFRAME_KMS_VAULT_ADDR` | none | with `vault` | no | Server address, an absolute `http(s)` URL without credentials, query or fragment. Production requires `https`. A path prefix (reverse proxy) is allowed. Ignored unless the provider is `vault`. |
