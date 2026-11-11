@@ -20,7 +20,9 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
 )
 
 // Token transports reported to the caller (ADR 0030).
@@ -42,6 +44,9 @@ type Deps struct {
 	Keyring *token.Keyring
 	// EdgeURL is the public base URL of the edge listener, without a trailing slash.
 	EdgeURL string
+	// KMS wraps the callback secrets (ADR 0029). Without it RotateCallbackSecret answers
+	// dependency_unavailable; session creation does not need it.
+	KMS *kms.Registry
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -52,6 +57,7 @@ type Service struct {
 	repos   *db.Repos
 	keyring *token.Keyring
 	edge    string
+	secrets *viewerauth.SecretBox // nil without a KMS registry
 	now     func() time.Time
 }
 
@@ -66,14 +72,24 @@ func NewService(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, now: d.Now}, nil
+	svc := &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, now: d.Now}
+	if d.KMS != nil {
+		svc.secrets = viewerauth.NewSecretBox(d.KMS)
+	}
+	return svc, nil
 }
 
 // CreateInput is the input of CreateSession.
 type CreateInput struct {
 	TenantID id.TenantID
+	// ClientID is the API client that makes the session. It is required for db.AuthMethodAPIKey
+	// (the default) and must be the zero ID for db.AuthMethodJWT and db.AuthMethodCallback, where
+	// the viewer's browser started the session (ADR 0031).
 	ClientID id.ClientID
-	AssetID  id.AssetID
+	// AuthMethod is how the session was authorised: one of the db.AuthMethod constants. Empty
+	// means db.AuthMethodAPIKey.
+	AuthMethod string
+	AssetID    id.AssetID
 	// ViewerID is the embedding application's pseudonymous ID for the viewer.
 	ViewerID string
 }
@@ -173,7 +189,7 @@ func (s *Service) CreateSession(ctx context.Context, in CreateInput) (Created, e
 			}
 		}
 		_, err := tx.InsertPlaybackSession(ctx, db.NewPlaybackSession{
-			ID: sid, TenantID: in.TenantID, ClientID: in.ClientID, AssetID: asset.ID,
+			ID: sid, TenantID: in.TenantID, ClientID: in.ClientID, AuthMethod: in.AuthMethod, AssetID: asset.ID,
 			ViewerID: in.ViewerID, Now: now, ExpiresAt: sessionExpires,
 		})
 		if errors.Is(err, db.ErrStateChanged) { // the asset stopped being ready since the check above

@@ -134,6 +134,8 @@ type env struct {
 	log *slog.Logger
 	// keyStore, when set, wraps the database-backed key store the edge uses (fault injection).
 	keyStore func(edge.KeyStore) edge.KeyStore
+	// vx tunes the browser-session route (play_session_integration_test.go); nil means defaults.
+	vx *viewerExtras
 }
 
 func newEnv(t *testing.T) *env {
@@ -276,7 +278,7 @@ func (e *env) start() {
 		ks = e.keyStore(ks)
 	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Now: e.clk.Now,
+		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Viewer: e.viewerDeps(), Now: e.clk.Now,
 	})
 	if err != nil {
 		e.t.Fatal(err)

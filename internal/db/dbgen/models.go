@@ -110,6 +110,23 @@ type ExternalTask struct {
 	CompletedAt *time.Time
 }
 
+type PlaybackAuth struct {
+	TenantID                   pgtype.UUID
+	JwtEnabled                 bool
+	JwtIssuer                  string
+	JwtAudiences               []string
+	JwtJwksUrl                 *string
+	JwtViewerClaim             string
+	CallbackEnabled            bool
+	CallbackUrl                *string
+	CallbackSecretEnvelope     []byte
+	CallbackSecretVersion      int32
+	CallbackSecretPrevEnvelope []byte
+	CallbackSecretPrevVersion  *int32
+	CallbackSecretRotatedAt    *time.Time
+	UpdatedAt                  time.Time
+}
+
 type PlaybackEvent struct {
 	ID          pgtype.UUID
 	TenantID    pgtype.UUID
@@ -118,6 +135,20 @@ type PlaybackEvent struct {
 	Kind        string
 	At          time.Time
 	Detail      []byte
+}
+
+type PlaybackJwtJti struct {
+	TenantID  pgtype.UUID
+	JtiHash   []byte
+	ExpiresAt time.Time
+}
+
+type PlaybackJwtKey struct {
+	TenantID  pgtype.UUID
+	Kid       string
+	Alg       string
+	Jwk       []byte
+	CreatedAt time.Time
 }
 
 type PlaybackKeyFetch struct {
@@ -143,6 +174,7 @@ type PlaybackSession struct {
 	RevokeReason    *string
 	KeyWindowStart  *time.Time
 	KeyWindowCount  int32
+	AuthMethod      string
 }
 
 type PlaybackSetting struct {

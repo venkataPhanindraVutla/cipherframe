@@ -81,6 +81,27 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for PlaybackJwtKeyAlg.
+const (
+	PlaybackJwtKeyAlgES256 PlaybackJwtKeyAlg = "ES256"
+	PlaybackJwtKeyAlgEdDSA PlaybackJwtKeyAlg = "EdDSA"
+	PlaybackJwtKeyAlgRS256 PlaybackJwtKeyAlg = "RS256"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackJwtKeyAlg enum.
+func (e PlaybackJwtKeyAlg) Valid() bool {
+	switch e {
+	case PlaybackJwtKeyAlgES256:
+		return true
+	case PlaybackJwtKeyAlgEdDSA:
+		return true
+	case PlaybackJwtKeyAlgRS256:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlaybackSessionStatusState.
 const (
 	Active  PlaybackSessionStatusState = "active"
@@ -183,6 +204,27 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeTimeout:
 		return true
 	case ProblemCodeUnauthenticated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublicJwkAlg.
+const (
+	PublicJwkAlgES256 PublicJwkAlg = "ES256"
+	PublicJwkAlgEdDSA PublicJwkAlg = "EdDSA"
+	PublicJwkAlgRS256 PublicJwkAlg = "RS256"
+)
+
+// Valid indicates whether the value is a known member of the PublicJwkAlg enum.
+func (e PublicJwkAlg) Valid() bool {
+	switch e {
+	case PublicJwkAlgES256:
+		return true
+	case PublicJwkAlgEdDSA:
+		return true
+	case PublicJwkAlgRS256:
 		return true
 	default:
 		return false
@@ -476,6 +518,71 @@ type HealthResponseStatus string
 // Name A human-readable name, 1 to 100 characters, no control characters.
 type Name = string
 
+// PlaybackAuth A tenant's playback authorization settings. The callback secret is never part of it.
+type PlaybackAuth struct {
+	CallbackEnabled bool `json:"callback_enabled"`
+
+	// CallbackPreviousSecretValidUntil While present, callbacks carry a second signature made with the previous secret.
+	CallbackPreviousSecretValidUntil *time.Time `json:"callback_previous_secret_valid_until,omitempty"`
+
+	// CallbackSecretConfigured True once the secret has been rotated at least once.
+	CallbackSecretConfigured bool       `json:"callback_secret_configured"`
+	CallbackSecretRotatedAt  *time.Time `json:"callback_secret_rotated_at,omitempty"`
+
+	// CallbackSecretVersion 0 until the first rotation, then increases by one per rotation.
+	CallbackSecretVersion int      `json:"callback_secret_version"`
+	CallbackUrl           *string  `json:"callback_url"`
+	JwtAudiences          []string `json:"jwt_audiences"`
+	JwtEnabled            bool     `json:"jwt_enabled"`
+	JwtIssuer             string   `json:"jwt_issuer"`
+	JwtJwksUrl            *string  `json:"jwt_jwks_url"`
+
+	// JwtKeys The uploaded public keys, by `kid`.
+	JwtKeys        []PlaybackJwtKey `json:"jwt_keys"`
+	JwtViewerClaim string           `json:"jwt_viewer_claim"`
+
+	// UpdatedAt When the settings were last replaced. Absent while the defaults are in force.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// PlaybackAuthInput The JWT and callback settings of a tenant (ADR 0029, 0031). A full replacement: a field you
+// leave out goes back to its default (the viewer claim to `sub`, the rest to off or empty).
+// `jwt_enabled` and `callback_enabled` are required: a missing one is `invalid_request` with
+// an `errors` entry naming it. (The schema does not mark them `required` so that a missing
+// flag can be told apart from `false`.)
+type PlaybackAuthInput struct {
+	// CallbackEnabled Needs a callback secret (see `rotatePlaybackCallbackSecret`).
+	CallbackEnabled *bool `json:"callback_enabled,omitempty"`
+
+	// CallbackUrl Your https callback URL. Required when `callback_enabled` is true.
+	CallbackUrl *string `json:"callback_url,omitempty"`
+
+	// JwtAudiences Accepted `aud` values; a token needs to name at least one. Required when `jwt_enabled` is true.
+	JwtAudiences *[]string `json:"jwt_audiences,omitempty"`
+	JwtEnabled   *bool     `json:"jwt_enabled,omitempty"`
+
+	// JwtIssuer The exact `iss` your tokens carry. Required when `jwt_enabled` is true.
+	JwtIssuer *string `json:"jwt_issuer,omitempty"`
+
+	// JwtJwksUrl An https URL of your JWKS document (at most 64 KiB), cached about 10 minutes and
+	// refetched at most every 30 seconds when a token names an unknown `kid`. No redirects;
+	// hosts that resolve to private, loopback or link-local addresses are refused.
+	JwtJwksUrl *string `json:"jwt_jwks_url,omitempty"`
+
+	// JwtViewerClaim The claim that holds the viewer ID. Default `sub`.
+	JwtViewerClaim *string `json:"jwt_viewer_claim,omitempty"`
+}
+
+// PlaybackJwtKey defines model for PlaybackJwtKey.
+type PlaybackJwtKey struct {
+	Alg       PlaybackJwtKeyAlg `json:"alg"`
+	CreatedAt time.Time         `json:"created_at"`
+	Kid       string            `json:"kid"`
+}
+
+// PlaybackJwtKeyAlg defines model for PlaybackJwtKey.Alg.
+type PlaybackJwtKeyAlg string
+
 // PlaybackSessionStatus defines model for PlaybackSessionStatus.
 type PlaybackSessionStatus struct {
 	AssetId   AssetIdValue `json:"asset_id"`
@@ -607,6 +714,26 @@ type Problem struct {
 // ProblemCode Stable identifier to switch on. The closed registry in `internal/errs`.
 type ProblemCode string
 
+// PublicJwk A public JWK (RFC 7517) with an `alg`. `kty` is `OKP` (`crv` `Ed25519`, alg `EdDSA`), `EC`
+// (`crv` `P-256`, alg `ES256`) or `RSA` (at least 2048 bits, alg `RS256`). Members other than
+// those listed are accepted by the schema and judged by the server: a private member such as
+// `d` is refused.
+type PublicJwk struct {
+	Alg                  PublicJwkAlg           `json:"alg"`
+	Crv                  *string                `json:"crv,omitempty"`
+	E                    *string                `json:"e,omitempty"`
+	Kid                  *string                `json:"kid,omitempty"`
+	Kty                  string                 `json:"kty"`
+	N                    *string                `json:"n,omitempty"`
+	Use                  *string                `json:"use,omitempty"`
+	X                    *string                `json:"x,omitempty"`
+	Y                    *string                `json:"y,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// PublicJwkAlg defines model for PublicJwk.Alg.
+type PublicJwkAlg string
+
 // ReadyCheck defines model for ReadyCheck.
 type ReadyCheck struct {
 	// Name Fixed check name, for example `database`.
@@ -656,6 +783,17 @@ type RotateKeyRequest struct {
 	OverlapSeconds *int `json:"overlap_seconds,omitempty"`
 }
 
+// RotatedCallbackSecret defines model for RotatedCallbackSecret.
+type RotatedCallbackSecret struct {
+	// PreviousValidUntil Until when the previous secret also signs callbacks. Absent on the first rotation.
+	PreviousValidUntil *time.Time `json:"previous_valid_until,omitempty"`
+
+	// Secret The callback secret, `whsec_` followed by the standard base64 of 32 random bytes.
+	// Shown only here; store it now.
+	Secret  string `json:"secret"`
+	Version int    `json:"version"`
+}
+
 // Scope An API key scope (ADR 0009).
 type Scope string
 
@@ -699,6 +837,9 @@ type Cursor = string
 
 // KeyId defines model for KeyId.
 type KeyId = string
+
+// KidPath defines model for KidPath.
+type KidPath = string
 
 // Limit defines model for Limit.
 type Limit = int
@@ -748,6 +889,12 @@ type CreateKeyJSONRequestBody = CreateKeyRequest
 // RotateKeyJSONRequestBody defines body for RotateKey for application/json ContentType.
 type RotateKeyJSONRequestBody = RotateKeyRequest
 
+// UpdatePlaybackAuthJSONRequestBody defines body for UpdatePlaybackAuth for application/json ContentType.
+type UpdatePlaybackAuthJSONRequestBody = PlaybackAuthInput
+
+// PutPlaybackJwtKeyJSONRequestBody defines body for PutPlaybackJwtKey for application/json ContentType.
+type PutPlaybackJwtKeyJSONRequestBody = PublicJwk
+
 // CreatePlaybackSessionJSONRequestBody defines body for CreatePlaybackSession for application/json ContentType.
 type CreatePlaybackSessionJSONRequestBody = CreatePlaybackSessionRequest
 
@@ -759,6 +906,190 @@ type RevokePlaybackSessionJSONRequestBody = RevokePlaybackSessionRequest
 
 // UpdatePlaybackSettingsJSONRequestBody defines body for UpdatePlaybackSettings for application/json ContentType.
 type UpdatePlaybackSettingsJSONRequestBody = PlaybackSettingsInput
+
+// Getter for additional properties for PublicJwk. Returns the specified
+// element and whether it was found
+func (a PublicJwk) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for PublicJwk
+func (a *PublicJwk) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for PublicJwk to handle AdditionalProperties
+func (a *PublicJwk) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["alg"]; found {
+		err = json.Unmarshal(raw, &a.Alg)
+		if err != nil {
+			return fmt.Errorf("error reading 'alg': %w", err)
+		}
+		delete(object, "alg")
+	}
+
+	if raw, found := object["crv"]; found {
+		err = json.Unmarshal(raw, &a.Crv)
+		if err != nil {
+			return fmt.Errorf("error reading 'crv': %w", err)
+		}
+		delete(object, "crv")
+	}
+
+	if raw, found := object["e"]; found {
+		err = json.Unmarshal(raw, &a.E)
+		if err != nil {
+			return fmt.Errorf("error reading 'e': %w", err)
+		}
+		delete(object, "e")
+	}
+
+	if raw, found := object["kid"]; found {
+		err = json.Unmarshal(raw, &a.Kid)
+		if err != nil {
+			return fmt.Errorf("error reading 'kid': %w", err)
+		}
+		delete(object, "kid")
+	}
+
+	if raw, found := object["kty"]; found {
+		err = json.Unmarshal(raw, &a.Kty)
+		if err != nil {
+			return fmt.Errorf("error reading 'kty': %w", err)
+		}
+		delete(object, "kty")
+	}
+
+	if raw, found := object["n"]; found {
+		err = json.Unmarshal(raw, &a.N)
+		if err != nil {
+			return fmt.Errorf("error reading 'n': %w", err)
+		}
+		delete(object, "n")
+	}
+
+	if raw, found := object["use"]; found {
+		err = json.Unmarshal(raw, &a.Use)
+		if err != nil {
+			return fmt.Errorf("error reading 'use': %w", err)
+		}
+		delete(object, "use")
+	}
+
+	if raw, found := object["x"]; found {
+		err = json.Unmarshal(raw, &a.X)
+		if err != nil {
+			return fmt.Errorf("error reading 'x': %w", err)
+		}
+		delete(object, "x")
+	}
+
+	if raw, found := object["y"]; found {
+		err = json.Unmarshal(raw, &a.Y)
+		if err != nil {
+			return fmt.Errorf("error reading 'y': %w", err)
+		}
+		delete(object, "y")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for PublicJwk to handle AdditionalProperties
+func (a PublicJwk) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["alg"], err = json.Marshal(a.Alg)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'alg': %w", err)
+	}
+
+	if a.Crv != nil {
+		object["crv"], err = json.Marshal(a.Crv)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'crv': %w", err)
+		}
+	}
+
+	if a.E != nil {
+		object["e"], err = json.Marshal(a.E)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'e': %w", err)
+		}
+	}
+
+	if a.Kid != nil {
+		object["kid"], err = json.Marshal(a.Kid)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'kid': %w", err)
+		}
+	}
+
+	object["kty"], err = json.Marshal(a.Kty)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'kty': %w", err)
+	}
+
+	if a.N != nil {
+		object["n"], err = json.Marshal(a.N)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'n': %w", err)
+		}
+	}
+
+	if a.Use != nil {
+		object["use"], err = json.Marshal(a.Use)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'use': %w", err)
+		}
+	}
+
+	if a.X != nil {
+		object["x"], err = json.Marshal(a.X)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'x': %w", err)
+		}
+	}
+
+	if a.Y != nil {
+		object["y"], err = json.Marshal(a.Y)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'y': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -801,6 +1132,21 @@ type ServerInterface interface {
 	// RotateKey Rotate an API key in place
 	// (POST /v1/keys/{key_id}/rotate)
 	RotateKey(w http.ResponseWriter, r *http.Request, keyId KeyId)
+	// GetPlaybackAuth Get the playback authorization settings
+	// (GET /v1/playback-auth)
+	GetPlaybackAuth(w http.ResponseWriter, r *http.Request)
+	// UpdatePlaybackAuth Replace the playback authorization settings
+	// (PUT /v1/playback-auth)
+	UpdatePlaybackAuth(w http.ResponseWriter, r *http.Request)
+	// RotatePlaybackCallbackSecret Rotate the callback signing secret
+	// (POST /v1/playback-auth/callback-secret/rotate)
+	RotatePlaybackCallbackSecret(w http.ResponseWriter, r *http.Request)
+	// DeletePlaybackJwtKey Delete an uploaded JWT verification key
+	// (DELETE /v1/playback-auth/jwt-keys/{kid})
+	DeletePlaybackJwtKey(w http.ResponseWriter, r *http.Request, kid KidPath)
+	// PutPlaybackJwtKey Upload a public JWT verification key
+	// (PUT /v1/playback-auth/jwt-keys/{kid})
+	PutPlaybackJwtKey(w http.ResponseWriter, r *http.Request, kid KidPath)
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(w http.ResponseWriter, r *http.Request)
@@ -1171,6 +1517,100 @@ func (siw *ServerInterfaceWrapper) RotateKey(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// GetPlaybackAuth operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackAuth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackAuth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdatePlaybackAuth operation middleware
+func (siw *ServerInterfaceWrapper) UpdatePlaybackAuth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdatePlaybackAuth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotatePlaybackCallbackSecret operation middleware
+func (siw *ServerInterfaceWrapper) RotatePlaybackCallbackSecret(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotatePlaybackCallbackSecret(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePlaybackJwtKey operation middleware
+func (siw *ServerInterfaceWrapper) DeletePlaybackJwtKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kid" -------------
+	var kid KidPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kid", r.PathValue("kid"), &kid, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kid", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePlaybackJwtKey(w, r, kid)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPlaybackJwtKey operation middleware
+func (siw *ServerInterfaceWrapper) PutPlaybackJwtKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kid" -------------
+	var kid KidPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kid", r.PathValue("kid"), &kid, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kid", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPlaybackJwtKey(w, r, kid)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePlaybackSession operation middleware
 func (siw *ServerInterfaceWrapper) CreatePlaybackSession(w http.ResponseWriter, r *http.Request) {
 
@@ -1433,6 +1873,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions/{session_id}/revoke", wrapper.RevokePlaybackSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-settings", wrapper.GetPlaybackSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-settings", wrapper.UpdatePlaybackSettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-auth", wrapper.GetPlaybackAuth)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-auth", wrapper.UpdatePlaybackAuth)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/playback-auth/jwt-keys/{kid}", wrapper.DeletePlaybackJwtKey)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-auth/jwt-keys/{kid}", wrapper.PutPlaybackJwtKey)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-auth/callback-secret/rotate", wrapper.RotatePlaybackCallbackSecret)
 
 	return m
 }
@@ -2769,6 +3214,571 @@ func (response RotateKeydefaultApplicationProblemPlusJSONResponse) VisitRotateKe
 	return err
 }
 
+type GetPlaybackAuthRequestObject struct {
+}
+
+type GetPlaybackAuthResponseObject interface {
+	VisitGetPlaybackAuthResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackAuth200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackAuth200JSONResponse struct {
+	Body    PlaybackAuth
+	Headers GetPlaybackAuth200ResponseHeaders
+}
+
+func (response GetPlaybackAuth200JSONResponse) VisitGetPlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackAuth401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackAuth401ApplicationProblemPlusJSONResponse) VisitGetPlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackAuth403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackAuth403ApplicationProblemPlusJSONResponse) VisitGetPlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackAuthdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackAuthdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackAuthdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackAuthdefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackAuthRequestObject struct {
+	Body *UpdatePlaybackAuthJSONRequestBody
+}
+
+type UpdatePlaybackAuthResponseObject interface {
+	VisitUpdatePlaybackAuthResponse(w http.ResponseWriter) error
+}
+
+type UpdatePlaybackAuth200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePlaybackAuth200JSONResponse struct {
+	Body    PlaybackAuth
+	Headers UpdatePlaybackAuth200ResponseHeaders
+}
+
+func (response UpdatePlaybackAuth200JSONResponse) VisitUpdatePlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackAuth400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdatePlaybackAuth400ApplicationProblemPlusJSONResponse) VisitUpdatePlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackAuth401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdatePlaybackAuth401ApplicationProblemPlusJSONResponse) VisitUpdatePlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackAuth403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePlaybackAuth403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdatePlaybackAuth403ResponseHeaders
+}
+
+func (response UpdatePlaybackAuth403ApplicationProblemPlusJSONResponse) VisitUpdatePlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePlaybackAuthdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePlaybackAuthdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdatePlaybackAuthdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdatePlaybackAuthdefaultApplicationProblemPlusJSONResponse) VisitUpdatePlaybackAuthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotatePlaybackCallbackSecretRequestObject struct {
+}
+
+type RotatePlaybackCallbackSecretResponseObject interface {
+	VisitRotatePlaybackCallbackSecretResponse(w http.ResponseWriter) error
+}
+
+type RotatePlaybackCallbackSecret200ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type RotatePlaybackCallbackSecret200JSONResponse struct {
+	Body    RotatedCallbackSecret
+	Headers RotatePlaybackCallbackSecret200ResponseHeaders
+}
+
+func (response RotatePlaybackCallbackSecret200JSONResponse) VisitRotatePlaybackCallbackSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotatePlaybackCallbackSecret401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response RotatePlaybackCallbackSecret401ApplicationProblemPlusJSONResponse) VisitRotatePlaybackCallbackSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotatePlaybackCallbackSecret403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RotatePlaybackCallbackSecret403ApplicationProblemPlusJSONResponse) VisitRotatePlaybackCallbackSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotatePlaybackCallbackSecret409ResponseHeaders struct {
+	XRequestId string
+}
+
+type RotatePlaybackCallbackSecret409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RotatePlaybackCallbackSecret409ResponseHeaders
+}
+
+func (response RotatePlaybackCallbackSecret409ApplicationProblemPlusJSONResponse) VisitRotatePlaybackCallbackSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotatePlaybackCallbackSecret503ResponseHeaders struct {
+	XRequestId string
+}
+
+type RotatePlaybackCallbackSecret503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RotatePlaybackCallbackSecret503ResponseHeaders
+}
+
+func (response RotatePlaybackCallbackSecret503ApplicationProblemPlusJSONResponse) VisitRotatePlaybackCallbackSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotatePlaybackCallbackSecretdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type RotatePlaybackCallbackSecretdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    RotatePlaybackCallbackSecretdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response RotatePlaybackCallbackSecretdefaultApplicationProblemPlusJSONResponse) VisitRotatePlaybackCallbackSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeletePlaybackJwtKeyRequestObject struct {
+	Kid KidPath `json:"kid"`
+}
+
+type DeletePlaybackJwtKeyResponseObject interface {
+	VisitDeletePlaybackJwtKeyResponse(w http.ResponseWriter) error
+}
+
+type DeletePlaybackJwtKey204ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeletePlaybackJwtKey204Response struct {
+	Headers DeletePlaybackJwtKey204ResponseHeaders
+}
+
+func (response DeletePlaybackJwtKey204Response) VisitDeletePlaybackJwtKeyResponse(w http.ResponseWriter) error {
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeletePlaybackJwtKey401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response DeletePlaybackJwtKey401ApplicationProblemPlusJSONResponse) VisitDeletePlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeletePlaybackJwtKey403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response DeletePlaybackJwtKey403ApplicationProblemPlusJSONResponse) VisitDeletePlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeletePlaybackJwtKey404ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeletePlaybackJwtKey404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers DeletePlaybackJwtKey404ResponseHeaders
+}
+
+func (response DeletePlaybackJwtKey404ApplicationProblemPlusJSONResponse) VisitDeletePlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeletePlaybackJwtKeydefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type DeletePlaybackJwtKeydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    DeletePlaybackJwtKeydefaultResponseHeaders
+	StatusCode int
+}
+
+func (response DeletePlaybackJwtKeydefaultApplicationProblemPlusJSONResponse) VisitDeletePlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlaybackJwtKeyRequestObject struct {
+	Kid  KidPath `json:"kid"`
+	Body *PutPlaybackJwtKeyJSONRequestBody
+}
+
+type PutPlaybackJwtKeyResponseObject interface {
+	VisitPutPlaybackJwtKeyResponse(w http.ResponseWriter) error
+}
+
+type PutPlaybackJwtKey200ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutPlaybackJwtKey200JSONResponse struct {
+	Body    PlaybackJwtKey
+	Headers PutPlaybackJwtKey200ResponseHeaders
+}
+
+func (response PutPlaybackJwtKey200JSONResponse) VisitPutPlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlaybackJwtKey400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response PutPlaybackJwtKey400ApplicationProblemPlusJSONResponse) VisitPutPlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlaybackJwtKey401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response PutPlaybackJwtKey401ApplicationProblemPlusJSONResponse) VisitPutPlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlaybackJwtKey403ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutPlaybackJwtKey403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutPlaybackJwtKey403ResponseHeaders
+}
+
+func (response PutPlaybackJwtKey403ApplicationProblemPlusJSONResponse) VisitPutPlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlaybackJwtKey409ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutPlaybackJwtKey409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutPlaybackJwtKey409ResponseHeaders
+}
+
+func (response PutPlaybackJwtKey409ApplicationProblemPlusJSONResponse) VisitPutPlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlaybackJwtKeydefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type PutPlaybackJwtKeydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    PutPlaybackJwtKeydefaultResponseHeaders
+	StatusCode int
+}
+
+func (response PutPlaybackJwtKeydefaultApplicationProblemPlusJSONResponse) VisitPutPlaybackJwtKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreatePlaybackSessionRequestObject struct {
 	Body *CreatePlaybackSessionJSONRequestBody
 }
@@ -3582,6 +4592,21 @@ type StrictServerInterface interface {
 	// RotateKey Rotate an API key in place
 	// (POST /v1/keys/{key_id}/rotate)
 	RotateKey(ctx context.Context, request RotateKeyRequestObject) (RotateKeyResponseObject, error)
+	// GetPlaybackAuth Get the playback authorization settings
+	// (GET /v1/playback-auth)
+	GetPlaybackAuth(ctx context.Context, request GetPlaybackAuthRequestObject) (GetPlaybackAuthResponseObject, error)
+	// UpdatePlaybackAuth Replace the playback authorization settings
+	// (PUT /v1/playback-auth)
+	UpdatePlaybackAuth(ctx context.Context, request UpdatePlaybackAuthRequestObject) (UpdatePlaybackAuthResponseObject, error)
+	// RotatePlaybackCallbackSecret Rotate the callback signing secret
+	// (POST /v1/playback-auth/callback-secret/rotate)
+	RotatePlaybackCallbackSecret(ctx context.Context, request RotatePlaybackCallbackSecretRequestObject) (RotatePlaybackCallbackSecretResponseObject, error)
+	// DeletePlaybackJwtKey Delete an uploaded JWT verification key
+	// (DELETE /v1/playback-auth/jwt-keys/{kid})
+	DeletePlaybackJwtKey(ctx context.Context, request DeletePlaybackJwtKeyRequestObject) (DeletePlaybackJwtKeyResponseObject, error)
+	// PutPlaybackJwtKey Upload a public JWT verification key
+	// (PUT /v1/playback-auth/jwt-keys/{kid})
+	PutPlaybackJwtKey(ctx context.Context, request PutPlaybackJwtKeyRequestObject) (PutPlaybackJwtKeyResponseObject, error)
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(ctx context.Context, request CreatePlaybackSessionRequestObject) (CreatePlaybackSessionResponseObject, error)
@@ -3996,6 +5021,144 @@ func (sh *strictHandler) RotateKey(w http.ResponseWriter, r *http.Request, keyId
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RotateKeyResponseObject); ok {
 		if err := validResponse.VisitRotateKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackAuth operation middleware
+func (sh *strictHandler) GetPlaybackAuth(w http.ResponseWriter, r *http.Request) {
+	var request GetPlaybackAuthRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackAuth(ctx, request.(GetPlaybackAuthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackAuth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackAuthResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackAuthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdatePlaybackAuth operation middleware
+func (sh *strictHandler) UpdatePlaybackAuth(w http.ResponseWriter, r *http.Request) {
+	var request UpdatePlaybackAuthRequestObject
+
+	var body UpdatePlaybackAuthJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdatePlaybackAuth(ctx, request.(UpdatePlaybackAuthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdatePlaybackAuth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdatePlaybackAuthResponseObject); ok {
+		if err := validResponse.VisitUpdatePlaybackAuthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RotatePlaybackCallbackSecret operation middleware
+func (sh *strictHandler) RotatePlaybackCallbackSecret(w http.ResponseWriter, r *http.Request) {
+	var request RotatePlaybackCallbackSecretRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RotatePlaybackCallbackSecret(ctx, request.(RotatePlaybackCallbackSecretRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RotatePlaybackCallbackSecret")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RotatePlaybackCallbackSecretResponseObject); ok {
+		if err := validResponse.VisitRotatePlaybackCallbackSecretResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeletePlaybackJwtKey operation middleware
+func (sh *strictHandler) DeletePlaybackJwtKey(w http.ResponseWriter, r *http.Request, kid KidPath) {
+	var request DeletePlaybackJwtKeyRequestObject
+
+	request.Kid = kid
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeletePlaybackJwtKey(ctx, request.(DeletePlaybackJwtKeyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeletePlaybackJwtKey")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeletePlaybackJwtKeyResponseObject); ok {
+		if err := validResponse.VisitDeletePlaybackJwtKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutPlaybackJwtKey operation middleware
+func (sh *strictHandler) PutPlaybackJwtKey(w http.ResponseWriter, r *http.Request, kid KidPath) {
+	var request PutPlaybackJwtKeyRequestObject
+
+	request.Kid = kid
+
+	var body PutPlaybackJwtKeyJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutPlaybackJwtKey(ctx, request.(PutPlaybackJwtKeyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutPlaybackJwtKey")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutPlaybackJwtKeyResponseObject); ok {
+		if err := validResponse.VisitPutPlaybackJwtKeyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

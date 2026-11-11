@@ -21,12 +21,15 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	kmsregistry "github.com/venkataPhanindraVutla/cipherframe/internal/kms/registry"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/outbound"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/worker"
 )
 
@@ -137,7 +140,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		playbackSvc, err := newPlaybackService(pool, cfg)
+		playbackSvc, err := newPlaybackService(pool, cfg, kmsReg)
 		if err != nil {
 			cleanup()
 			return err
@@ -166,7 +169,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			return err
 		}
 		defer closeUploads()
-		play, err := newEdgePlayback(repos, buckets, contentKeys, cfg)
+		play, err := newEdgePlayback(pool, repos, buckets, contentKeys, kmsReg, cfg, log)
 		if err != nil {
 			cleanup()
 			return err
@@ -224,13 +227,14 @@ func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.C
 
 // newPlaybackService builds the playback service of the api role: it signs playback tokens with
 // the configured keyring (ADR 0028) and tells clients where the edge serves playlists, so it needs
-// the edge's public URL (already required by the asset service).
-func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config) (*playback.Service, error) {
+// the edge's public URL (already required by the asset service). It wraps callback secrets with the
+// key providers (ADR 0029).
+func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Registry) (*playback.Service, error) {
 	keyring, err := token.KeyringFromConfig(cfg.Playback)
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
-	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL})
+	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
@@ -242,7 +246,13 @@ func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config) (*playback.Servi
 // database, streams segments from the delivery bucket and unwraps content keys through the key
 // service. The key service is built for every role before this point, so an edge process with a
 // missing or broken KMS configuration has already refused to start.
-func newEdgePlayback(repos *db.Repos, buckets *storage.Buckets, contentKeys *contentkey.Manager, cfg *config.Config) (*edge.Playback, error) {
+//
+// It also builds the browser-session route (ADR 0031): playback sessions started by a viewer's
+// browser with a JWT or a signed callback. That route makes outbound HTTPS requests, through the
+// SSRF-guarded client of package outbound, to a tenant's JWKS URL or callback URL, and needs the
+// edge's public URL to tell the player where its playlists are. Without the URL the route answers
+// 503 and the process says so at startup.
+func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Buckets, contentKeys *contentkey.Manager, kmsReg *kms.Registry, cfg *config.Config, log *slog.Logger) (*edge.Playback, error) {
 	if contentKeys == nil {
 		return nil, errors.New("playback: the edge role needs the key service")
 	}
@@ -250,13 +260,50 @@ func newEdgePlayback(repos *db.Repos, buckets *storage.Buckets, contentKeys *con
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
+	viewer, err := newEdgeViewerAuth(pool, repos, keyring, kmsReg, cfg, log)
+	if err != nil {
+		return nil, err
+	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys,
+		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys, Viewer: viewer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
 	return p, nil
+}
+
+// jwksFetchTimeout bounds one JWKS fetch.
+const jwksFetchTimeout = 3 * time.Second
+
+// newEdgeViewerAuth builds the collaborators of the browser-session route. It returns nil, with a
+// warning, when the edge's public URL is not configured.
+func newEdgeViewerAuth(pool *pgxpool.Pool, repos *db.Repos, keyring *token.Keyring, kmsReg *kms.Registry, cfg *config.Config, log *slog.Logger) (*edge.ViewerDeps, error) {
+	if cfg.Uploads.EdgePublicURL == "" {
+		log.Warn("browser playback sessions are disabled: " + config.EnvEdgePublicURL + " is not set")
+		return nil, nil
+	}
+	sessions, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg})
+	if err != nil {
+		return nil, fmt.Errorf("playback: %w", err)
+	}
+	verifier, err := viewerauth.NewVerifier(viewerauth.VerifierOptions{
+		Client:         outbound.New(outbound.Options{Timeout: jwksFetchTimeout}),
+		ValidateViewer: playback.ValidateViewerID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("playback: %w", err)
+	}
+	callback, err := viewerauth.NewAuthorizer(viewerauth.AuthorizerOptions{
+		Client:         outbound.New(outbound.Options{Timeout: viewerauth.CallbackTimeout}),
+		ValidateViewer: playback.ValidateViewerID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("playback: %w", err)
+	}
+	return &edge.ViewerDeps{
+		Sessions: sessions, Store: repos, Secrets: viewerauth.NewSecretBox(kmsReg), Verifier: verifier, Callback: callback,
+	}, nil
 }
 
 // newEdgeUploads builds the upload endpoints of the edge role: the token check, the multipart
