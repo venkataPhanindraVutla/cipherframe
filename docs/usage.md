@@ -182,11 +182,16 @@ variable, never its value.
 | `CIPHERFRAME_S3_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see below. |
 | `CIPHERFRAME_API_KEY_PEPPERS` | none | yes | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded pepper is at least 32 bytes (standard base64). |
 | `CIPHERFRAME_API_KEY_PEPPER_CURRENT` | none | yes | no | Positive integer naming a version in the set. |
-| `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. Only `local` is implemented so far (Docker Compose uses it with a `dev-placeholder-` KEK); the others are reserved names that fail at startup until M2-2 (ADR 0019, ADR 0022). |
+| `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. `local` and `awskms` are implemented (Docker Compose uses `local` with a `dev-placeholder-` KEK); `vault` and `gcpkms` are reserved names that fail at startup until their M2-2 tasks land (ADR 0019, ADR 0022). |
 | `CIPHERFRAME_KMS_LOCAL_KEKS` | none | with `local` | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded KEK is **exactly 32 bytes** (standard base64). `_FILE` is supported. Values starting with `dev-placeholder-` are accepted only in development. Ignored unless the provider is `local`. |
 | `CIPHERFRAME_KMS_LOCAL_KEK_CURRENT` | none | with `local` | no | Positive integer naming the version in the set that new wraps use. Older versions stay for unwrapping. |
 | `CIPHERFRAME_KMS_VAULT_*` | | | | **Stub.** Vault Transit settings arrive with M2-2 (ADR 0021). |
-| `CIPHERFRAME_KMS_AWS_*` | | | | **Stub.** AWS KMS settings arrive with M2-2. |
+| `CIPHERFRAME_KMS_AWS_KEY_ID` | none | with `awskms` | no | The KEK: a KMS key ARN, an alias ARN or `alias/name` (a bare key id is refused). Ignored unless the provider is `awskms`. |
+| `CIPHERFRAME_KMS_AWS_REGION` | none | with `awskms` | no | AWS region of the key, for example `eu-west-1`. |
+| `CIPHERFRAME_KMS_AWS_ENDPOINT` | empty (AWS default) | no | no | Absolute `http(s)` URL, for a VPC endpoint or a KMS-compatible server. |
+| `CIPHERFRAME_KMS_AWS_ACCESS_KEY_ID` | unset | production: yes | yes | Credential, same rules as the S3 pair: set = static key pair, empty = the AWS SDK default chain (preferred in production), unset = refused in production and the default chain in development. Both must be in the same state. |
+| `CIPHERFRAME_KMS_AWS_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see above. |
+| `CIPHERFRAME_KMS_AWS_TIMEOUT` | `5s` | no | no | Go duration, above zero and at most `5m`. Bounds every KMS call including SDK retries. |
 | `CIPHERFRAME_KMS_GCP_*` | | | | **Stub.** GCP KMS settings arrive with M2-2. |
 
 Empty values of non-secret variables mean "use the default".
