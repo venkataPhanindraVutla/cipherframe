@@ -34,6 +34,11 @@
 | Data survives "deletion" | Storage enumeration, key destruction, re-list, signed record (I5, I6). |
 | Forged deletion or integrity record | Signatures verifiable with public keys only (pitfall 1); optional RFC 3161 timestamps. |
 | KMS outage reported as success | Fail closed (I11). |
+| SSRF through a tenant-chosen JWKS or callback URL | One outbound client (`internal/outbound`): https only, the dialed address is checked after DNS resolution on every attempt (loopback, private, link-local and cloud metadata, multicast, unspecified, CGNAT, special-purpose ranges, IPv4-mapped, NAT64 and 6to4 forms), no redirects, no environment proxy, bounded responses and time, errors without the URL (ADR 0029, 0031). |
+| Forged or confused JWT (`alg: none`, HMAC with the public key, another key's algorithm) | The parser takes an allowlist (EdDSA, ES256, RS256); a key is used only with its registered algorithm; `iss`, `aud`, `exp` and a single-use `jti` are required (ADR 0029). |
+| One JWT opening every asset of a tenant | An `asset_id` claim equal to the requested asset is required; `exp` is at most 24 hours ahead. |
+| Replay of a JWT | `jti` is claimed in Postgres until `exp` plus the skew; exactly one concurrent use wins. |
+| Signed callback abused or misconfigured | The callback fails closed: only HTTP 200 with a strict `{"allow": true, "viewer_id": "…"}` grants; a timeout (2 s), a redirect, any other status, a malformed or oversized answer or a network error denies; answers are never cached. Requests are signed (Standard Webhooks HMAC-SHA256) with a per-tenant secret kept only as a KMS envelope bound to tenant and version. Cipherframe's own failure to unwrap the secret is a `503`, not a denial (I11). |
 
 ## Out of scope
 
@@ -46,6 +51,14 @@ Cipherframe does **not** protect against:
 - any expectation that video "cannot be downloaded": HLS AES-128 is not DRM.
 
 ## Known hard limits
+
+- The browser-session endpoint (`POST /v1/play/tenants/{tenant_id}/sessions`) is public until the JWT
+  or the callback decides. A request that reaches a configured callback makes Cipherframe call the
+  tenant's endpoint, so anyone who can reach edge can make a tenant's callback run; Cipherframe does not
+  rate-limit callbacks per tenant. Put a rate limit in front of edge. JWKS fetches are limited to one
+  per tenant every 30 seconds.
+- A compromised edge process also holds the means to unwrap callback secrets (it needs them to sign), as
+  it holds the playback token keys and KMS access for content keys.
 
 - While a transcode runs, plaintext segments exist on the worker's local disk in a private 0700
   directory (ADR 0027). Anyone with root on that node can read them; run workers on dedicated nodes

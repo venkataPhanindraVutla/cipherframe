@@ -585,6 +585,209 @@ the row's times, so nothing waits for the sweep).
 - Anything that can call `POST /v1/playback-sessions` with a `sessions:write` key can start sessions
   for any `viewer_id` of its tenant, up to the limit, for any ready asset of the tenant.
 
+## Browser-started sessions: JWT and signed callback (ADR 0029, 0031)
+
+`POST /v1/playback-sessions` is for your server, with your API key. When the viewer's browser should
+start its own session instead, your application authorizes the viewer in one of two ways, and the
+browser calls **edge**:
+
+```
+POST <edge>/v1/play/tenants/<tenant_id>/sessions
+```
+
+The tenant ID (`ten_…`) is in the path because a CORS preflight has no body: edge needs the tenant to
+know which origins to allow. It is an identifier, not a secret. The api role stays server-to-server
+only. Once the viewer is authorized, the session is created by the same code as
+`POST /v1/playback-sessions`: the same asset checks (`404`, `409 asset_not_ready`), the same
+per-viewer limit (`409 session_limit`, and these sessions count toward the same limit as API-key
+sessions), the same settings and the same `201` body (`session_id`, `token`, `manifest_url`, …). The
+response is `Cache-Control: no-store`. The body of the request is
+
+```json
+{ "asset_id": "ast_…", "method": "jwt" }
+{ "asset_id": "ast_…", "method": "callback", "ticket": "<opaque string from your page>" }
+```
+
+A tenant that has configured nothing, a method that is off, a bad token, a callback that refuses, a
+replayed token, an unknown tenant: all are the **same generic `401`** (`unauthenticated`, with
+`WWW-Authenticate: Bearer`), so the answer says nothing about why. A malformed body is `400`. If
+Cipherframe itself fails (the database, or the key provider that wraps the callback secret) the answer
+is `5xx`, never a denial and never a grant (I11).
+
+### Configuring a tenant (admin scope)
+
+| Call | What it does |
+|---|---|
+| `GET /v1/playback-auth` | The settings, the uploaded key IDs and the state of the callback secret. **Never the secret.** |
+| `PUT /v1/playback-auth` | Replaces `jwt_enabled`, `jwt_issuer`, `jwt_audiences`, `jwt_jwks_url`, `jwt_viewer_claim` (default `sub`), `callback_enabled` and `callback_url`. A full replacement: a field left out returns to its default. `jwt_enabled` and `callback_enabled` are required. |
+| `PUT /v1/playback-auth/jwt-keys/{kid}` | Uploads a public JWK. |
+| `DELETE /v1/playback-auth/jwt-keys/{kid}` | Deletes it. |
+| `POST /v1/playback-auth/callback-secret/rotate` | Makes a new callback secret and returns it **once**. |
+
+`callback_enabled` needs a callback secret to exist (rotate one first) and `jwt_enabled` needs a
+`jwt_jwks_url` or at least one uploaded key. URLs must be `https`, at most 2048 characters, without
+credentials or a fragment, and not an IP literal in a blocked range (see the SSRF guard below).
+Every change writes an audit event (`playback_auth.update`, `playback_auth.jwt_key.put`,
+`playback_auth.jwt_key.delete`, `playback_auth.callback_secret.rotate`) with the calling key and the
+request ID, and never a key, URL or secret. Edge reads the JWT settings and uploaded keys through its
+30-second cache (see the playback caveats above); it reads the callback settings and secret for every
+callback, so a rotation or switching the callback off applies at once.
+
+### JWT
+
+The browser sends the token in `Authorization: Bearer <jwt>`:
+
+```js
+const res = await fetch(`${edge}/v1/play/tenants/${tenantId}/sessions`, {
+  method: "POST",
+  headers: { "Authorization": `Bearer ${jwtFromYourServer}`, "Content-Type": "application/json" },
+  body: JSON.stringify({ asset_id: assetId, method: "jwt" }),
+});
+const { token, manifest_url } = await res.json();   // then play as for any session
+```
+
+Sign the token on **your** server, for one viewer and one asset, when the viewer asks to play.
+
+| Requirement | Rule |
+|---|---|
+| Algorithm | `EdDSA` (Ed25519), `ES256` (P-256) or `RS256` (RSA, at least 2048 bits). `none` and every HMAC algorithm are always refused. A key is used only with the algorithm it was uploaded for (or, from a JWKS, the one its type allows), so a token cannot pick a different one. |
+| Key | The header `kid` selects the key: an uploaded key first, then the JWKS. A token without a `kid`, or with an unknown one, is refused. |
+| `iss` | Equal to `jwt_issuer`. |
+| `aud` | A string or a list; at least one entry must be in `jwt_audiences`. |
+| `exp` | Required. At most 60 seconds past it (clock skew). It may be at most 24 hours in the future. |
+| `nbf`, `iat` | Honoured if present, with 60 seconds of skew. |
+| `jti` | Required, at most 128 characters, and **single use**: it creates at most one session (see below). |
+| `asset_id` | Required, equal to the `asset_id` in the request body. |
+| viewer | The claim named by `jwt_viewer_claim` (default `sub`) must be a string that is a valid viewer ID: 1 to 128 printable characters, no control characters, and pseudonymous (never an email address). |
+
+**`asset_id` is an implementation detail of ADR 0029**, not in the ADR's list of required claims. Without
+it a token your server signed for one video would open every asset of the tenant for as long as it
+lives. With it the token is bound to the asset it was signed for. The 24-hour limit on `exp` is the
+other addition: a `jti` is remembered until its token's `exp` (plus the skew), so an unbounded `exp`
+would be an unbounded row.
+
+**Single use.** Edge records the token's `jti` (as a SHA-256, per tenant) in `playback_jwt_jti` until
+`exp` + 60 seconds; the first request wins and a replay, including one that races the first, is the
+generic `401`. The jti is recorded **before** the session is created, so a token that then fails with
+`409 session_limit` or `409 asset_not_ready` is spent: sign a new one. Rows are deleted by the edge
+role's sweeper every ten minutes.
+
+**Keys.** You can upload public keys, give a JWKS URL, or both.
+
+- *Uploaded:* `PUT /v1/playback-auth/jwt-keys/{kid}` with the JWK as the body, `alg` included:
+  `{"kty":"OKP","crv":"Ed25519","x":"…","alg":"EdDSA"}`. Refused with `400`: a private key (any
+  private member such as `d`), an RSA key under 2048 bits, an EC curve other than P-256, any key type
+  other than OKP/Ed25519, EC and RSA (symmetric keys included), an `alg` that is not `EdDSA`,
+  `ES256` or `RS256` or does not match the key, a `use` other than `sig`, and a `kid` member that
+  differs from the path. A tenant may hold 20 keys (`409` beyond that). The error says what is wrong
+  and never quotes the key.
+- *JWKS:* edge fetches `jwt_jwks_url` with a 3-second timeout, caches the document for about 10
+  minutes, and refetches when a token names an unknown `kid`, **at most once every 30 seconds per
+  tenant** (so a stream of bad tokens cannot make Cipherframe hammer your server). The document may
+  be at most 64 KiB; keys that cannot be used (unsupported type, short RSA key, no `kid`, a repeated
+  `kid`, `use: enc`) are skipped. After a failed refresh, the stale document is not used. Publish a
+  new key in the JWKS at least 30 seconds before you sign with it, or upload it.
+
+### Signed callback
+
+With `method: "callback"` the browser sends a `ticket`: an opaque string from your page (1 to 2048
+bytes), for example a short-lived login or order reference that only your callback can resolve.
+Cipherframe never logs it. Edge then **POSTs to your `callback_url`**:
+
+```
+POST /cipherframe/authorize HTTP/1.1
+content-type: application/json
+webhook-id: msg_8c1f…
+webhook-timestamp: 1789000000
+webhook-signature: v1,<base64>[ v1,<base64>]
+
+{"type":"playback.authorize","tenant_id":"ten_…","asset_id":"ast_…","ticket":"…",
+ "request_id":"0195c8a2-…","timestamp":"2026-11-11T15:00:00Z"}
+```
+
+Your endpoint answers **HTTP 200** with
+
+```json
+{ "allow": true, "viewer_id": "viewer-9" }
+```
+
+and that is the only answer that grants. `viewer_id` is validated like any viewer ID. Decoding is
+strict: a missing `allow`, an unknown field, a wrong type, trailing data or a body over 8 KiB is a
+denial. Everything else is the generic `401`: a timeout (the whole call, connect included, has
+**2 seconds**), a network or TLS error, a redirect (never followed), any other status (`202`, `403`,
+`500`, …), `allow: false`, a malformed answer. Answers are not cached: every session creation calls
+you.
+
+**Verifying the signature** follows [Standard Webhooks](https://www.standardwebhooks.com). The signed
+content is `<webhook-id>.<webhook-timestamp>.<raw body>`, the key is the secret's 32 bytes (the base64
+after `whsec_`), and each signature is `v1,` plus the base64 of its HMAC-SHA256. Reject a timestamp
+more than five minutes from your clock, compare in constant time, and accept the request if **any**
+signature in the space-separated header matches. Any Standard Webhooks library does this; in plain
+JavaScript:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+function verify(secret, headers, rawBody) {            // secret = "whsec_…"
+  const id = headers["webhook-id"], ts = headers["webhook-timestamp"];
+  if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
+  const mac = createHmac("sha256", key).update(`${id}.${ts}.${rawBody}`).digest();
+  return headers["webhook-signature"].split(" ").some((s) => {
+    const [v, b64] = s.split(",");
+    const got = Buffer.from(b64 ?? "", "base64");
+    return v === "v1" && got.length === mac.length && timingSafeEqual(got, mac);
+  });
+}
+```
+
+**The secret and its rotation.** `POST /v1/playback-auth/callback-secret/rotate` returns
+`{"secret": "whsec_…", "version": N}` once. Cipherframe stores it wrapped by the key provider, with
+associated data that binds it to your tenant, its purpose and its version, and unwraps it only for the
+length of one callback. Rotating again makes a new secret current. **For 24 hours after a rotation the
+previous secret keeps signing too**: every callback then carries two signatures, so your endpoint can
+accept both secrets while you switch and never refuses a viewer; `GET /v1/playback-auth` shows
+`callback_previous_secret_valid_until` while that lasts. After 24 hours the header carries one
+signature. If Cipherframe cannot unwrap the secret (a key provider outage, a damaged record) it does
+**not** call you and answers `503 dependency_unavailable`: its own outage is never reported as your
+denial.
+
+### The outbound request guard
+
+A JWKS URL and a callback URL are chosen by the tenant, so every outbound request is made by an
+SSRF-guarded client (`internal/outbound`): `https` only; the **dialed** address is checked after DNS
+resolution, on every connection attempt, and loopback, private (RFC 1918 and ULA), link-local
+(including `169.254.169.254`), multicast, unspecified, carrier-grade NAT (`100.64.0.0/10`) and other
+special-purpose ranges are refused, also in IPv4-mapped, NAT64 and 6to4 forms; redirects are never
+followed; environment proxies are ignored; response size is bounded; and errors never carry the URL.
+Your endpoints must be publicly reachable. Edge needs outbound HTTPS only for tenants that use a JWKS
+URL or a callback.
+
+### CORS
+
+The preflight `OPTIONS /v1/play/tenants/{tenant_id}/sessions` needs no credentials and answers `204`
+in every case; `Access-Control-Allow-Origin` (and `Allow-Methods: POST, OPTIONS`,
+`Allow-Headers: Authorization, Content-Type`) are added only for an origin listed in the tenant's
+`allowed_origins`. The same header is added to the real response, including a `401`, so the page can
+read it. Credentials are never allowed.
+
+### What browser-started sessions do not protect against
+
+- A viewer holding a valid JWT (or able to make your callback answer yes) can start sessions for any
+  viewer ID your token or callback names, up to the per-viewer limit. The JWT is a bearer credential
+  for one asset until it expires: keep `exp` short (a minute is plenty), and sign it only after you
+  decided the viewer may watch.
+- The endpoint is public and unauthenticated until the token or callback decides, and a callback
+  request costs you a call to your endpoint. Put a rate limit in front of edge, and make your callback
+  cheap and idempotent. Cipherframe does not rate-limit callbacks per tenant.
+- A session creation waits for your callback, up to 2 seconds.
+- A JWT is spent as soon as its signature, claims and `jti` check out, even when the session then
+  fails with `409`.
+- Deleting an uploaded key, or changing the issuer or audiences, applies within the 30-second cache.
+  A key you remove from a JWKS keeps verifying until the cached document expires (10 minutes).
+- Wrapped callback secrets are not re-wrapped by the KEK rotation job (`kms.rewrap`): a KEK version
+  must stay configured while a secret wrapped under it is current or within its 24-hour overlap, or
+  rotate the callback secret to re-wrap it.
+
 ## Conventions
 
 ### ID formats (ADR 0011)

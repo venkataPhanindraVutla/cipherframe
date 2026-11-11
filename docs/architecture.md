@@ -422,6 +422,63 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
   `504`, refused credentials `500` (invariant I11: an outage is never reported as "not found"). The same holds for the key endpoint:
   a key service or database outage is `503`, never `401` or `404`.
 
+## Browser-started sessions on edge (ADR 0029, 0031)
+
+A viewer's browser can start its own session with a JWT or a signed callback instead of the embedding
+application's API key. The rules and the embedding guide are in
+[api.md](api.md#browser-started-sessions-jwt-and-signed-callback-adr-0029-0031); this section is how
+they fit together.
+
+```
+browser -- POST /v1/play/tenants/<tenant>/sessions -->  guarded (CORS from the tenant's origins, no-store)
+   method jwt:       viewerauth.Verifier  --(uploaded keys | JWKS via internal/outbound)--> claims --> jti claim in Postgres
+   method callback:  SecretBox.Open(KMS) --> viewerauth.Authorizer --(internal/outbound)--> tenant's callback
+                                    |
+                                    v   playback.Service.CreateSession (auth_method = jwt | callback, no client)
+```
+
+- **The route is on edge** because the browser calls it and a CORS preflight has no body: the tenant
+  is in the path (`internal/edge/play_session.go`, `play_guard.go`). The api role stays
+  server-to-server and can live on a private network. Edge gains outbound HTTPS, but only for tenants
+  that configure a JWKS URL or a callback.
+- **`internal/viewerauth`** holds the logic and is independent of HTTP routing: `jwk.go` validates
+  public keys (the same code for an upload and for a JWKS entry), `jwt.go` verifies tokens with
+  go-jose v4, `jwks.go` caches and rate-limits JWKS fetches, `callback.go` calls and signs, `secret.go`
+  wraps the callback secret. `internal/viewerauth/viewerauthtest` has the test keys, deliberately
+  broken tokens and a reference Standard Webhooks verifier written from the spec.
+- **Algorithm confusion is ruled out by the parser**: `jwt.ParseSigned` takes the allowlist
+  `[EdDSA, ES256, RS256]`, so `none` and HMAC tokens fail before a key is chosen; then the header
+  algorithm must equal the one the key is registered for. Only after the signature verifies are the
+  claims read. Every refusal is a `DenyError` with a reason from a closed set that goes to the debug
+  log (method, tenant and reason only); the client always sees the same generic 401.
+- **Single-use `jti`**: one `INSERT ... ON CONFLICT DO NOTHING` into `playback_jwt_jti` (primary key
+  tenant and SHA-256 of the jti). It is exact across replicas, and concurrent uses of one token
+  produce exactly one winner. Rows live until `exp` + skew and are deleted by `playback.RunSweeper`,
+  with the key-fetch counters.
+- **What is cached** (30 seconds, the same bounded cache as the settings): the tenant's JWT
+  configuration with its uploaded keys, and the tenant's CORS origins. The JWKS document is cached
+  separately for about 10 minutes per tenant, with at most one fetch attempt per tenant every 30
+  seconds, fetches serialized per tenant. **Not cached**: the callback configuration, the unwrapped
+  secret and every callback answer.
+- **The callback secret** is 32 random bytes, stored as an envelope (`playback_auth.callback_secret_envelope`:
+  a version byte, then provider, KEK id, KEK version and ciphertext, each length-prefixed) produced by
+  the key provider. The associated data (a version byte, then purpose `playback.callback_secret`,
+  tenant ID, secret version, provider, KEK id and KEK version, each length-prefixed) binds the
+  ciphertext to its tenant and version, like the content-key envelope (ADR 0020). A rotation seals the
+  new secret *before* its transaction (no KMS call holds a connection), then one statement moves the
+  current envelope to "previous" and stores the new one, guarded by `version = old + 1` so racing
+  rotations cannot share a number. The previous envelope signs for 24 hours.
+- **Failures**: tenant or viewer fault is a 401; our own failure is a 5xx. An unreadable secret
+  (outage, missing provider, damaged envelope) is `503` and the tenant's callback is not called; a
+  database error while reading the configuration or claiming the `jti` is also a 5xx.
+- **The outbound client** (`internal/outbound`) is the SSRF guard: the check is in the dialer's
+  `Control` hook, which sees the numeric address of every connection attempt, so a hostname that
+  resolves to a private address, or a DNS answer that changes between two lookups, cannot get through.
+  A test-only constructor field permits loopback for local TLS servers; production code never sets it.
+- **Sessions without a client**: `playback_sessions.client_id` is nullable and `auth_method`
+  (`api_key`, `jwt`, `callback`) is tied to it by a CHECK: a client exactly when the method is
+  `api_key`. The per-viewer limit counts all methods together.
+
 ## Keys
 
 Each asset has one active content key (I7), wrapped by a key-encryption key held in a key management
