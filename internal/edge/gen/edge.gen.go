@@ -211,6 +211,13 @@ type PlaybackUnauthenticated = Problem
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
 
+// GetPlaybackKeyParams defines parameters for GetPlaybackKey.
+type GetPlaybackKeyParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
 // GetPlaybackMasterParams defines parameters for GetPlaybackMaster.
 type GetPlaybackMasterParams struct {
 	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
@@ -240,6 +247,9 @@ type ServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// GetPlaybackKey Content key
+	// (GET /v1/play/{session_id}/key)
+	GetPlaybackKey(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackKeyParams)
 	// GetPlaybackMaster Session master playlist
 	// (GET /v1/play/{session_id}/master.m3u8)
 	GetPlaybackMaster(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackMasterParams)
@@ -285,6 +295,48 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlaybackKey operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackKeyParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackKey(w, r, sessionId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -633,6 +685,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/master.m3u8", wrapper.GetPlaybackMaster)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/media.m3u8", wrapper.GetPlaybackMedia)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/{file}", wrapper.GetPlaybackSegment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/key", wrapper.GetPlaybackKey)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts", wrapper.ListUploadParts)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts/{part_number}", wrapper.PutUploadPart)
 
@@ -774,6 +827,173 @@ type GetReadyzdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetReadyzdefaultApplicationProblemPlusJSONResponse) VisitGetReadyzResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackKeyRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Params    GetPlaybackKeyParams
+}
+
+type GetPlaybackKeyResponseObject interface {
+	VisitGetPlaybackKeyResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackKey200ResponseHeaders struct {
+	CacheControl   string
+	Pragma         string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type GetPlaybackKey200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	Headers       GetPlaybackKey200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackKey200ApplicationoctetStreamResponse) VisitGetPlaybackKeyResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Pragma", fmt.Sprint(response.Headers.Pragma))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackKey400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackKey400ApplicationProblemPlusJSONResponse) VisitGetPlaybackKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackKey401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackKey401ApplicationProblemPlusJSONResponse) VisitGetPlaybackKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackKey404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackKey404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackKey404ResponseHeaders
+}
+
+func (response GetPlaybackKey404ApplicationProblemPlusJSONResponse) VisitGetPlaybackKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackKey429ResponseHeaders struct {
+	RetryAfter int
+	XRequestId string
+}
+
+type GetPlaybackKey429ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackKey429ResponseHeaders
+}
+
+func (response GetPlaybackKey429ApplicationProblemPlusJSONResponse) VisitGetPlaybackKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackKey503ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackKey503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackKey503ResponseHeaders
+}
+
+func (response GetPlaybackKey503ApplicationProblemPlusJSONResponse) VisitGetPlaybackKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackKeydefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackKeydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackKeydefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackKeydefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackKeyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -1444,6 +1664,9 @@ type StrictServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(ctx context.Context, request GetReadyzRequestObject) (GetReadyzResponseObject, error)
+	// GetPlaybackKey Content key
+	// (GET /v1/play/{session_id}/key)
+	GetPlaybackKey(ctx context.Context, request GetPlaybackKeyRequestObject) (GetPlaybackKeyResponseObject, error)
 	// GetPlaybackMaster Session master playlist
 	// (GET /v1/play/{session_id}/master.m3u8)
 	GetPlaybackMaster(ctx context.Context, request GetPlaybackMasterRequestObject) (GetPlaybackMasterResponseObject, error)
@@ -1541,6 +1764,33 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetReadyzResponseObject); ok {
 		if err := validResponse.VisitGetReadyzResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackKey operation middleware
+func (sh *strictHandler) GetPlaybackKey(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackKeyParams) {
+	var request GetPlaybackKeyRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackKey(ctx, request.(GetPlaybackKeyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackKey")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackKeyResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackKeyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

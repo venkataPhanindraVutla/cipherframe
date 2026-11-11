@@ -652,7 +652,7 @@ paths:
       description: |
         The media playlist of one rendition, rewritten for this session: the init segment and
         every media segment are file names relative to the rendition, and the key URI is
-        `../key`, which is `/v1/play/<session_id>/key` (served by a later task). Requires a token
+        `../key`, which is `/v1/play/<session_id>/key` (`getPlaybackKey`). Requires a token
         with the `manifest` scope and the same session check as the master playlist. The same
         `token_in_url` and CORS rules apply.
       tags: [edge]
@@ -732,6 +732,90 @@ paths:
         "401":
           $ref: "#/components/responses/PlaybackUnauthenticated"
         "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/key:
+    get:
+      operationId: getPlaybackKey
+      summary: Content key
+      description: |
+        Returns the 16-byte AES-128 content key of the session's asset, as raw bytes: the URI of
+        the `EXT-X-KEY` tag in every media playlist (`../key`). Requires a token with the `key`
+        scope. Unlike segments, this path **always** reads the session row (never cached): a
+        session that is revoked, ended, past its maximum age or idle past the idle timeout answers
+        `401` on the next request, the same as a bad token. An asset that is no longer `ready`, or
+        whose content key has been destroyed, is the same `401`. If the key service or the database
+        is unavailable the answer is `503 dependency_unavailable`, never `401` or `404` (I11).
+
+        **Bounds** (ADR 0028; the tenant's `key_fetches_per_token` and `key_requests_per_minute`,
+        enforced in the database, so they hold across replicas). Each key request counts toward the
+        session's fixed one-minute window, rejected ones included, so hammering stays capped. At
+        most `key_fetches_per_token` *successful* key responses are given for one token; a failed
+        key lookup does not use one up. Past either bound the answer is `429 rate_limited` with
+        `Retry-After`, and one anomaly event is recorded for the token or the window. After the
+        per-token bound, `Retry-After` is the heartbeat interval: ask for a new token (heartbeat)
+        and try again.
+
+        The response is `no-store, private` with `Pragma: no-cache` and
+        `Referrer-Policy: no-referrer`. **CORS** and the `t` parameter follow the other playback
+        routes (exact `allowed_origins` match; `t` only with `token_in_url`). The preflight needs no
+        token.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The raw 16-byte content key.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              description: "Always `no-store, private`."
+              required: true
+              schema:
+                type: string
+                enum: ["no-store, private"]
+            Pragma:
+              description: Always `no-cache`.
+              required: true
+              schema:
+                type: string
+                enum: [no-cache]
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "429":
+          description: |
+            The token has used its key fetches, or the session has made too many key requests in
+            the current minute. `Retry-After` says when to try again.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Retry-After:
+              description: Seconds to wait, at least 1.
+              required: true
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
@@ -1019,7 +1103,7 @@ components:
       description: |
         The playback token is missing, malformed, invalid, expired, for another session or without
         the scope the request needs; the token was sent in the query while `token_in_url` is off; or
-        (playlists only) the session is no longer active. One generic detail covers every case.
+        (playlists and the key only) the session is no longer active. One generic detail covers every case.
       headers:
         X-Request-Id:
           $ref: "#/components/headers/XRequestId"

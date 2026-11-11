@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
@@ -38,8 +39,8 @@ import (
 //     a second small cache of (session -> tenant). That mapping never changes.
 //   - Playlist requests also read the session row (never cached), so a revoked, ended, expired or
 //     idle session cannot fetch new playlists. A revoked session still fetches segments until its
-//     token expires: the segments are unreadable without the key, and the key endpoint (a later
-//     task) checks the session on every fetch.
+//     token expires: the segments are unreadable without the key, and the key endpoint (play_key.go)
+//     checks the session on every fetch.
 
 const (
 	playbackCacheTTL = 30 * time.Second
@@ -66,11 +67,31 @@ type PlaybackStore interface {
 	PlaybackSessionTenant(ctx context.Context, hash []byte) (id.TenantID, error)
 }
 
+// KeyStore is what the key endpoint needs besides PlaybackStore: the asset state and the
+// database-backed bounds and anomaly events (ADR 0028). *db.Repos implements it.
+type KeyStore interface {
+	GetAsset(ctx context.Context, tenantID id.TenantID, assetID id.AssetID) (db.Asset, error)
+	BumpPlaybackKeyWindow(ctx context.Context, tenantID id.TenantID, sessionHash []byte, now time.Time) (time.Time, int, error)
+	ReservePlaybackKeyFetch(ctx context.Context, tokenHash, sessionHash []byte, expires time.Time, limit int) (bool, error)
+	ReleasePlaybackKeyFetch(ctx context.Context, tokenHash []byte) error
+	RecordKeyReplay(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, tokenHash []byte, limit int, now time.Time) (bool, error)
+	InsertPlaybackEvent(ctx context.Context, in db.NewPlaybackEvent) error
+}
+
+// ContentKeyReader unwraps an asset's content key. *contentkey.Manager implements it.
+type ContentKeyReader interface {
+	Get(ctx context.Context, tenant id.TenantID, asset id.AssetID) (contentkey.ContentKey, error)
+}
+
 // PlaybackDeps are the collaborators of Playback.
 type PlaybackDeps struct {
 	Keyring  *token.Keyring
 	Store    PlaybackStore
 	Delivery storage.Store
+	// KeyStore and ContentKeys serve the key endpoint. Without both it answers 503
+	// dependency_unavailable (the server always provides them for the edge role).
+	KeyStore    KeyStore
+	ContentKeys ContentKeyReader
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -81,6 +102,8 @@ type Playback struct {
 	keyring  *token.Keyring
 	store    PlaybackStore
 	delivery storage.Store
+	keyStore KeyStore
+	keys     ContentKeyReader
 	now      func() time.Time
 
 	settings *ttlCache[string, db.PlaybackSettings]
@@ -104,7 +127,7 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 		d.Now = time.Now
 	}
 	return &Playback{
-		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, now: d.Now,
+		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, now: d.Now,
 		settings: newTTLCache[string, db.PlaybackSettings](settingsCacheMax, playbackCacheTTL, d.Now),
 		sessions: newTTLCache[[sha256.Size]byte, sessionTenant](sessionCacheMax, playbackCacheTTL, d.Now),
 	}, nil
@@ -159,6 +182,12 @@ type grant struct {
 	session id.SessionID
 	// urlToken is the token to put in rewritten URIs: set only when the tenant has token_in_url on.
 	urlToken string
+	// settings are the tenant's settings the guard used (the key bounds come from here).
+	settings db.PlaybackSettings
+	// tokenHash is the SHA-256 of the request's token text and tokenExpiry its expiry: what the
+	// key endpoint counts fetches under. The token itself is not kept.
+	tokenHash   []byte
+	tokenExpiry time.Time
 }
 
 type grantKey struct{}

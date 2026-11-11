@@ -1,6 +1,6 @@
 // Package edge is the browser-facing data-plane listener (ADR 0008): health and readiness, the
-// upload endpoints, and the session-scoped playlists and segments (play.go). The key endpoint
-// arrives with a later task.
+// upload endpoints, and the session-scoped playlists, segments and content key (play.go,
+// play_key.go).
 //
 // This package must not import internal/api or internal/worker (enforced by depguard).
 package edge
@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
@@ -19,8 +18,6 @@ import (
 type Deps struct {
 	Log   *slog.Logger
 	Ready *health.Runner
-	// ContentKeys reads content keys for the key endpoint (M4). No endpoint uses it yet.
-	ContentKeys *contentkey.Manager
 	// Uploads serves the upload endpoints (M3-2). Without it they answer 503
 	// dependency_unavailable.
 	Uploads *Uploads
@@ -44,7 +41,7 @@ func New(d Deps) *Edge {
 	router := httpx.NewRouter()
 	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, up: d.Uploads, play: d.Playback}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
-		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
+		ResponseErrorHandlerFunc: writeAuthError,
 	})
 	gen.HandlerWithOptions(guarded{ServerInterface: strict, up: d.Uploads, play: d.Playback}, gen.StdHTTPServerOptions{
 		BaseRouter:       router,
