@@ -8,6 +8,10 @@ info:
     generated from this file; a contract test fails CI when the running server and this file
     disagree. Paths under /v1/ are added by later tasks.
 
+    Authentication (ADR 0009): `/v1/` operations on the api listener take an API key in
+    `Authorization: Bearer cf_<prefix>_<secret>`. Each operation lists the scopes a key needs.
+    Health and readiness are unauthenticated.
+
     Each operation carries a tag naming the listener that serves it: `api` (control plane) or
     `edge` (browser-facing data plane). An operation served by both lists both tags.
   license:
@@ -76,7 +80,261 @@ paths:
                 $ref: "#/components/schemas/ReadyResponse"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/whoami:
+    get:
+      operationId: getWhoami
+      summary: Identify the calling key
+      description: |
+        Returns the tenant, client, key and scopes behind the presented API key. Any valid key may
+        call it.
+      tags: [api]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's identity.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Whoami"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/clients:
+    post:
+      operationId: createClient
+      summary: Create a client
+      description: |
+        Creates a client in the caller's tenant. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientRequest"
+      responses:
+        "201":
+          description: The client was created.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listClients
+      summary: List clients
+      description: |
+        Lists the caller's tenant's clients, oldest first, with cursor pagination. Requires the
+        `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of clients.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/keys:
+    post:
+      operationId: createKey
+      summary: Create an API key
+      description: |
+        Creates a key for a client of the caller's tenant (another tenant's client is `not_found`).
+        When `scopes` is omitted the key gets every scope except `admin`. The full key is in the
+        response once and is never shown again. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKeyRequest"
+      responses:
+        "201":
+          description: The key was created. `key` holds the full secret, shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedApiKey"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listKeys
+      summary: List API keys
+      description: |
+        Lists the keys of the caller's tenant (revoked ones included), oldest first, with cursor
+        pagination. Metadata only: no secret or hash is ever returned. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of keys.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/keys/{key_id}/rotate:
+    post:
+      operationId: rotateKey
+      summary: Rotate an API key in place
+      description: |
+        Replaces the key's secret on the same key row (same id, prefix, client and scopes). The old
+        secret keeps working for `overlap_seconds` (default 600, 0 to 86400). The new full key is in
+        the response once. A key with the `admin` scope may rotate any key of its tenant; any other
+        key may rotate only itself and gets `forbidden` for another key. A revoked key is `not_found`.
+      tags: [api]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KeyId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateKeyRequest"
+      responses:
+        "200":
+          description: The key was rotated. `key` holds the new full secret, shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedApiKey"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/keys/{key_id}/revoke:
+    post:
+      operationId: revokeKey
+      summary: Revoke an API key
+      description: |
+        Disables the key immediately: its secret, and any still-valid previous secret, stop working
+        on the next request. Idempotent. Audit rows remain. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/KeyId"
+      responses:
+        "200":
+          description: The key is revoked.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKey"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Cipherframe API key (cf_<prefix>_<secret>)
+      description: |
+        An API key (ADR 0009) in `Authorization: Bearer cf_<prefix>_<secret>`. The scheme name is
+        case-insensitive. The scopes listed on an operation are all required.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size, 1 to 100 (default 50).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: The `next_cursor` of the previous page. Treat it as opaque.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+    KeyId:
+      name: key_id
+      in: path
+      required: true
+      description: An API key ID (`key_` followed by 26 characters).
+      schema:
+        type: string
+        maxLength: 64
   headers:
     XRequestId:
       description: |
@@ -86,7 +344,30 @@ components:
       schema:
         type: string
         pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    CacheControlNoStore:
+      description: "Always `no-store`; the body holds a full API key."
+      required: true
+      schema:
+        type: string
+        enum: [no-store]
   responses:
+    Unauthenticated:
+      description: |
+        The API key is missing, malformed, unknown, revoked or expired. One generic detail covers
+        every case.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+        WWW-Authenticate:
+          description: Always `Bearer`.
+          required: true
+          schema:
+            type: string
+            enum: [Bearer]
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
     Problem:
       description: An error, as an RFC 9457 problem details object.
       headers:
@@ -97,6 +378,186 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    Scope:
+      type: string
+      description: An API key scope (ADR 0009).
+      enum: [assets:read, assets:write, sessions:write, webhooks:manage, admin]
+    Name:
+      type: string
+      minLength: 1
+      maxLength: 100
+      description: A human-readable name, 1 to 100 characters, no control characters.
+    ClientId:
+      type: string
+      pattern: "^cli_[0-9a-hjkmnp-tv-z]{26}$"
+    Whoami:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, client_id, key_id, scopes]
+      properties:
+        tenant_id:
+          type: string
+          pattern: "^ten_[0-9a-hjkmnp-tv-z]{26}$"
+        client_id:
+          $ref: "#/components/schemas/ClientId"
+        key_id:
+          type: string
+          pattern: "^key_[0-9a-hjkmnp-tv-z]{26}$"
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scope"
+    CreateClientRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          $ref: "#/components/schemas/Name"
+    Client:
+      type: object
+      additionalProperties: false
+      required: [id, name, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ClientId"
+        name:
+          $ref: "#/components/schemas/Name"
+        created_at:
+          type: string
+          format: date-time
+        disabled_at:
+          type: string
+          format: date-time
+          description: Present only when the client is disabled.
+    ClientList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Client"
+        next_cursor:
+          type: string
+          description: Present when more items follow; pass it as `cursor`.
+    CreateKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [client_id, name]
+      properties:
+        client_id:
+          $ref: "#/components/schemas/ClientId"
+        name:
+          $ref: "#/components/schemas/Name"
+        scopes:
+          type: array
+          description: Defaults to every scope except `admin`. No duplicates.
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Scope"
+    RotateKeyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        overlap_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          default: 600
+          description: How long the previous secret keeps working.
+    ApiKey:
+      type: object
+      additionalProperties: false
+      required: [id, client_id, name, prefix, scopes, created_at]
+      properties:
+        id:
+          type: string
+          pattern: "^key_[0-9a-hjkmnp-tv-z]{26}$"
+        client_id:
+          $ref: "#/components/schemas/ClientId"
+        name:
+          $ref: "#/components/schemas/Name"
+        prefix:
+          type: string
+          pattern: "^[0-9a-hjkmnp-tv-z]{12}$"
+          description: The public part of the key (`cf_<prefix>_...`), safe to show and log.
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scope"
+        created_at:
+          type: string
+          format: date-time
+        rotated_at:
+          type: string
+          format: date-time
+        previous_valid_until:
+          type: string
+          format: date-time
+          description: Until when the secret before the last rotation also works.
+        revoked_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          description: Updated at most once a minute.
+    CreatedApiKey:
+      description: Key metadata plus the full key, returned exactly once.
+      type: object
+      additionalProperties: false
+      required: [id, client_id, name, prefix, scopes, created_at, key]
+      properties:
+        id:
+          type: string
+          pattern: "^key_[0-9a-hjkmnp-tv-z]{26}$"
+        client_id:
+          $ref: "#/components/schemas/ClientId"
+        name:
+          $ref: "#/components/schemas/Name"
+        prefix:
+          type: string
+          pattern: "^[0-9a-hjkmnp-tv-z]{12}$"
+          description: The public part of the key (`cf_<prefix>_...`), safe to show and log.
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scope"
+        created_at:
+          type: string
+          format: date-time
+        rotated_at:
+          type: string
+          format: date-time
+        previous_valid_until:
+          type: string
+          format: date-time
+          description: Until when the secret before the last rotation also works.
+        revoked_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          description: Updated at most once a minute.
+        key:
+          type: string
+          pattern: "^cf_[0-9a-hjkmnp-tv-z]{12}_[A-Za-z0-9_-]{43}$"
+          description: The full API key. Store it now; it is never shown again.
+    ApiKeyList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiKey"
+        next_cursor:
+          type: string
     HealthResponse:
       type: object
       additionalProperties: false

@@ -10,6 +10,7 @@ require (
 	github.com/aws/smithy-go v1.28.8
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/jackc/pgx/v5 v5.12.0
+	github.com/oapi-codegen/runtime v1.8.0
 	github.com/pressly/goose/v3 v3.30.0
 	github.com/riverqueue/river v0.51.2
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.51.2
@@ -23,6 +24,7 @@ require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect
 	github.com/Microsoft/go-winio v0.6.4 // indirect
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.26 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.8 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.11 // indirect

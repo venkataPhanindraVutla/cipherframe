@@ -21,6 +21,10 @@ func WriteProblem(w http.ResponseWriter, r *http.Request, err error) {
 // parameters or bodies). It answers invalid_request with a fixed detail, so framework error text
 // is never sent to the client or logged.
 func RequestErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
+	if isBodyTooLarge(err) {
+		WriteProblem(w, r, errs.New(errs.PayloadTooLarge, "The request body is too large."))
+		return
+	}
 	// The binding error is attached as the cause but not logged: it can quote the offending
 	// parameter value.
 	WriteProblem(w, r, errs.Wrap(errs.InvalidRequest, "The request is malformed.", err))

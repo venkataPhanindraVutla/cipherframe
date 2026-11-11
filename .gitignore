@@ -1,4 +1,6 @@
 # Build output
+/cipherframe-server
+/cipherframe
 /bin/
 /cipherframe-server
 /cipherframe

@@ -138,9 +138,22 @@ type exchange struct {
 
 func do(t *testing.T, base, method, path string, hdr map[string]string) exchange {
 	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), method, base+path, nil)
+	return doBody(t, base, method, path, hdr, nil)
+}
+
+// doBody is do with a JSON request body (nil for none).
+func doBody(t *testing.T, base, method, path string, hdr map[string]string, body []byte) exchange {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), method, base+path, rd)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -150,11 +163,14 @@ func do(t *testing.T, base, method, path string, hdr map[string]string) exchange
 		t.Fatal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
+	out, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return exchange{req, resp, body}
+	if body != nil { // the client consumed the body; the spec validator needs to read it again
+		req.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	return exchange{req, resp, out}
 }
 
 // validate checks the exchange against the spec. When the spec has no operation for the request

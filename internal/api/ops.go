@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 )
@@ -11,6 +12,7 @@ import (
 // server implements gen.StrictServerInterface.
 type server struct {
 	ready *health.Runner
+	mgr   *auth.Manager
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

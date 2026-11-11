@@ -10,15 +10,24 @@ import (
 	"net/http"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 )
 
-// Deps are the collaborators of the API handlers. Later tasks add repositories, the storage port
-// and authentication here.
+// maxBodyBytes caps request bodies on the control plane. Its JSON bodies are a few hundred bytes.
+const maxBodyBytes = 64 << 10
+
+// Deps are the collaborators of the API handlers. Later tasks add the storage port here.
+//
+// Verifier and Manager come together: the verifier authenticates every /v1/ request and the
+// manager serves the management endpoints. Without a Verifier, /v1/ requests that carry a
+// well-formed Authorization header get 503 dependency_unavailable (health endpoints still work).
 type Deps struct {
-	Log   *slog.Logger
-	Ready *health.Runner
+	Log      *slog.Logger
+	Ready    *health.Runner
+	Verifier *auth.Verifier
+	Manager  *auth.Manager
 }
 
 // API is the control-plane HTTP handler.
@@ -28,21 +37,24 @@ type API struct {
 }
 
 // New builds the API: generated routes on a problem-aware router, wrapped in the standard
-// middleware (request ID, access log, panic recovery).
+// middleware (request ID, access log, panic recovery, body size cap). Secured operations
+// authenticate and check scopes before their handler runs (see guard.go).
 func New(d Deps) *API {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})
-	gen.HandlerWithOptions(strict, gen.StdHTTPServerOptions{
+	guard := guarded{ServerInterface: strict, a: &authn{verifier: d.Verifier, log: d.Log}}
+	gen.HandlerWithOptions(guard, gen.StdHTTPServerOptions{
 		BaseRouter:       router,
 		ErrorHandlerFunc: httpx.RequestErrorHandler,
 	})
-	return &API{router: router, handler: httpx.Chain(router, httpx.Standard(d.Log)...)}
+	mw := append(httpx.Standard(d.Log), httpx.LimitBody(maxBodyBytes))
+	return &API{router: router, handler: httpx.Chain(router, mw...)}
 }
 
 // Handler returns the full handler chain, ready for an http.Server.

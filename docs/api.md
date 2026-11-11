@@ -1,6 +1,6 @@
 # API
 
-> Status: skeleton (M1-6). Health and readiness exist; `/v1/` endpoints arrive with later tasks.
+> Status: health and readiness (M1-6); authentication, clients and API keys (M1-7). Asset endpoints arrive with later tasks.
 
 ## Source of truth
 
@@ -48,7 +48,7 @@ Requests the spec does not describe (404 and 405) must still return a valid `Pro
 
 | Surface | Callers | Authentication |
 |---|---|---|
-| Control plane | Embedding application servers | API keys (M1-7); JWT and signed callback (M4-8, pending P7) |
+| Control plane | Embedding application servers | API keys; JWT and signed callback (M4-8, pending P7) |
 | Data plane | Browsers | Short-lived playback tokens (pending P6) |
 | Well-known keys | Anyone | None (public keys only) |
 
@@ -60,6 +60,11 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 |---|---|---|---|
 | `GET /healthz` | yes | yes | none |
 | `GET /readyz` | yes | yes | none |
+| `GET /v1/whoami` | yes | no | any valid API key |
+| `POST /v1/clients`, `GET /v1/clients` | yes | no | `admin` |
+| `POST /v1/keys`, `GET /v1/keys` | yes | no | `admin` |
+| `POST /v1/keys/{key_id}/rotate` | yes | no | `admin`, or the key itself |
+| `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
 
 ### Health and readiness
 
@@ -84,6 +89,97 @@ Both endpoints are **public by design**: orchestrators and load balancers call t
 credentials. `/readyz` therefore reveals only the fixed check names and whether each passed. It
 never includes host names, ports, error text or credentials; failure causes are not logged either,
 only the check name and whether it timed out.
+
+## Authentication and scopes (ADR 0009, 0018)
+
+Control-plane requests carry an API key:
+
+```
+Authorization: Bearer cf_<prefix>_<secret>
+```
+
+The scheme name is case-insensitive. A key is `cf_`, a 12-character prefix (lowercase Crockford
+base32), `_`, and a 43-character base64url secret (32 random bytes). The prefix is public: it
+identifies the key in listings and logs. The secret is shown once, in the response that creates or
+rotates the key (with `Cache-Control: no-store`), and is never stored: the database holds only
+`HMAC-SHA256(pepper, secret)` and the pepper version (ADR 0016).
+
+A missing, malformed, unknown, revoked or expired key, a wrong secret and a disabled client or
+tenant all get the same answer: `401 unauthenticated` with a generic detail and
+`WWW-Authenticate: Bearer`. A valid key without the needed scope gets `403 forbidden`. Health
+endpoints need no key.
+
+| Scope | Allows |
+|---|---|
+| `assets:read` | Read assets, status, deletion records |
+| `assets:write` | Create, upload, process and delete assets |
+| `sessions:write` | Create and revoke playback sessions |
+| `webhooks:manage` | Configure webhooks and replay deliveries |
+| `admin` | Manage clients and keys for the tenant |
+
+Each operation lists its scopes in `spec/openapi.yaml` (`security`); the server enforces them from a
+table that a test compares with the spec.
+
+### Clients and keys
+
+Tenant > client > keys. Everything is scoped to the caller's tenant: another tenant's client or key
+is `404 not_found`.
+
+- `GET /v1/whoami` returns `tenant_id`, `client_id`, `key_id` and `scopes` of the calling key.
+- `POST /v1/clients` with `{"name": "..."}` creates a client. `GET /v1/clients` lists them.
+- `POST /v1/keys` with `{"client_id": "cli_...", "name": "...", "scopes": [...]}` creates a key.
+  `scopes` defaults to every scope except `admin`; it must not be empty or contain duplicates.
+  The response is the key metadata plus `key`, the full secret, **once**.
+- `GET /v1/keys` lists the tenant's keys (revoked ones included) with metadata only: id, client,
+  name, prefix, scopes, `created_at`, `rotated_at`, `previous_valid_until`, `revoked_at` and
+  `last_used_at`. Never a secret or a hash.
+- `POST /v1/keys/{key_id}/revoke` disables a key at once, including any still-valid previous
+  secret. It is idempotent.
+
+Names are 1 to 100 characters without control characters. Lists take `limit` (1 to 100, default
+50) and `cursor`, and return `next_cursor` while more items follow; treat the cursor as opaque.
+Every create, rotate and revoke writes an audit row with the action, the target ID, the request ID
+and the acting client and key.
+
+`last_used_at` is updated at most once a minute per key, so it can be up to a minute stale.
+
+### Rotation with overlap
+
+`POST /v1/keys/{key_id}/rotate` with an optional `{"overlap_seconds": N}` (0 to 86400, default 600)
+replaces the key's secret **in place**: same key ID, prefix, client and scopes, so assets, sessions
+and audit rows keep the same owner. The response carries the new full key once. The old secret
+keeps working until `previous_valid_until`, so a deployment can roll the new key out without
+downtime; with `overlap_seconds: 0` it stops at once.
+
+A key with the `admin` scope may rotate any key of its tenant. Any other key may rotate **only
+itself**; rotating another key is `403 forbidden`. Rotating a revoked key is `404 not_found`. A
+second rotation inside the overlap replaces the previous secret again, so the secret before it
+stops working.
+
+### Bootstrap
+
+The first admin key is created with the CLI, not the API:
+`cipherframe-server admin bootstrap --tenant-name NAME --client-name NAME` (see
+[usage.md](usage.md)). It prints only the key on stdout.
+
+### What authentication does not protect against
+
+- **A leaked key works until it is revoked**, or, after a rotation, until the overlap ends. Rotate
+  on a schedule and revoke at once on suspicion. Nothing detects a stolen key being used from
+  another place; `last_used_at` is a coarse hint.
+- **Keys in client environments are the operator's responsibility**: environment variables, CI
+  secrets, backups and logs of the embedding application. Cipherframe cannot see them.
+- **HMAC with a pepper does not help against an attacker who holds both the database and the
+  peppers.** Such an attacker still cannot read secrets back, but can test guesses offline. The
+  secrets are 256 random bits, so guessing is not practical, but treat the pepper set as a secret
+  of the same standing as the database credentials and back it up with them.
+- A database without the peppers does not reveal usable keys. Losing the peppers invalidates every
+  key (the server refuses to start while an active key references a missing version).
+- There is no rate limiting or lockout on failed authentication yet; do not expose the api
+  listener to the internet.
+- A key's scopes cannot be changed after creation; revoke it and create another.
+- There is no endpoint to disable a client or tenant. Authentication honours the database markers,
+  but they can be set only with SQL for now.
 
 ## Conventions
 
@@ -184,5 +280,5 @@ that matches no route logs the route as `unmatched`.
   retrying a non-idempotent request can still cause duplicates unless an idempotency mechanism
   says otherwise.
 
-- A leaked API key grants its client's full control-plane access until it is rotated.
+- A leaked API key grants its scopes' control-plane access until it is revoked or its rotation overlap ends.
 - The control plane does not decide who may watch what; the embedding application does.
