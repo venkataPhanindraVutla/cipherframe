@@ -41,6 +41,11 @@ var operationScopes = map[string][]db.Scope{
 	"GetPlaybackSettings":    {db.ScopeAdmin},
 	"UpdatePlaybackSettings": {db.ScopeAdmin},
 
+	"GetAssetAccessLog":           {db.ScopeAssetsRead},
+	"GetPlaybackSessionAccessLog": {db.ScopeAssetsRead},
+	"GetPrivacySettings":          {db.ScopeAdmin},
+	"UpdatePrivacySettings":       {db.ScopeAdmin},
+
 	"GetPlaybackAuth":              {db.ScopeAdmin},
 	"UpdatePlaybackAuth":           {db.ScopeAdmin},
 	"PutPlaybackJwtKey":            {db.ScopeAdmin},
@@ -221,4 +226,22 @@ func (g guarded) CommitAsset(w http.ResponseWriter, r *http.Request, assetID gen
 
 func (g guarded) AbortAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
 	g.a.run("AbortAsset", w, r, func(r *http.Request) { g.ServerInterface.AbortAsset(w, r, assetID) })
+}
+
+func (g guarded) GetAssetAccessLog(w http.ResponseWriter, r *http.Request, assetID gen.AssetId, params gen.GetAssetAccessLogParams) {
+	g.a.run("GetAssetAccessLog", w, r, func(r *http.Request) { g.ServerInterface.GetAssetAccessLog(w, r, assetID, params) })
+}
+
+func (g guarded) GetPlaybackSessionAccessLog(w http.ResponseWriter, r *http.Request, sessionID gen.SessionIdPath, params gen.GetPlaybackSessionAccessLogParams) {
+	g.a.run("GetPlaybackSessionAccessLog", w, r, func(r *http.Request) {
+		g.ServerInterface.GetPlaybackSessionAccessLog(w, r, sessionID, params)
+	})
+}
+
+func (g guarded) GetPrivacySettings(w http.ResponseWriter, r *http.Request) {
+	g.a.run("GetPrivacySettings", w, r, func(r *http.Request) { g.ServerInterface.GetPrivacySettings(w, r) })
+}
+
+func (g guarded) UpdatePrivacySettings(w http.ResponseWriter, r *http.Request) {
+	g.a.run("UpdatePrivacySettings", w, r, func(r *http.Request) { g.ServerInterface.UpdatePrivacySettings(w, r) })
 }

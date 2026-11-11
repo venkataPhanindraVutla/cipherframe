@@ -443,6 +443,9 @@ func (e *upEnv) assertEveryUploadOperationExercised() {
 			if !strings.HasPrefix(path, "/v1/assets") && !strings.HasPrefix(path, "/v1/uploads/") {
 				continue
 			}
+			if strings.HasSuffix(path, "/access-log") {
+				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
+			}
 			tus := false
 			for _, tag := range op.Tags {
 				tus = tus || tag == "tus"

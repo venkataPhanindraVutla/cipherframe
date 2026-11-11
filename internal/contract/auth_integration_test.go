@@ -125,7 +125,10 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 				continue // exercised, with storage, by TestUploadLifecycleAndSourceIsNeverAddressable
 			}
 			if strings.HasPrefix(path, "/v1/playback-") {
-				continue // exercised by TestPlaybackOperationsMatchSpec
+				continue // exercised by TestPlaybackOperationsMatchSpec and, for access-log, below
+			}
+			if strings.HasPrefix(path, "/v1/privacy-") {
+				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
 			}
 			if strings.HasPrefix(path, "/v1/play/") {
 				continue // exercised by TestEdgePlaybackOperationsMatchSpec

@@ -18,6 +18,69 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AccessLogEntryAuthMethod.
+const (
+	AccessLogEntryAuthMethodApiKey   AccessLogEntryAuthMethod = "api_key"
+	AccessLogEntryAuthMethodCallback AccessLogEntryAuthMethod = "callback"
+	AccessLogEntryAuthMethodJwt      AccessLogEntryAuthMethod = "jwt"
+)
+
+// Valid indicates whether the value is a known member of the AccessLogEntryAuthMethod enum.
+func (e AccessLogEntryAuthMethod) Valid() bool {
+	switch e {
+	case AccessLogEntryAuthMethodApiKey:
+		return true
+	case AccessLogEntryAuthMethodCallback:
+		return true
+	case AccessLogEntryAuthMethodJwt:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AccessLogEvent.
+const (
+	AccessLogEventEnd            AccessLogEvent = "end"
+	AccessLogEventExpired        AccessLogEvent = "expired"
+	AccessLogEventHeartbeat      AccessLogEvent = "heartbeat"
+	AccessLogEventKey            AccessLogEvent = "key"
+	AccessLogEventKeyDenied      AccessLogEvent = "key_denied"
+	AccessLogEventPlaylist       AccessLogEvent = "playlist"
+	AccessLogEventRevoked        AccessLogEvent = "revoked"
+	AccessLogEventSegments       AccessLogEvent = "segments"
+	AccessLogEventSessionCreated AccessLogEvent = "session_created"
+	AccessLogEventSessionDenied  AccessLogEvent = "session_denied"
+)
+
+// Valid indicates whether the value is a known member of the AccessLogEvent enum.
+func (e AccessLogEvent) Valid() bool {
+	switch e {
+	case AccessLogEventEnd:
+		return true
+	case AccessLogEventExpired:
+		return true
+	case AccessLogEventHeartbeat:
+		return true
+	case AccessLogEventKey:
+		return true
+	case AccessLogEventKeyDenied:
+		return true
+	case AccessLogEventPlaylist:
+		return true
+	case AccessLogEventRevoked:
+		return true
+	case AccessLogEventSegments:
+		return true
+	case AccessLogEventSessionCreated:
+		return true
+	case AccessLogEventSessionDenied:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AssetState.
 const (
 	Committed  AssetState = "committed"
@@ -104,19 +167,19 @@ func (e PlaybackJwtKeyAlg) Valid() bool {
 
 // Defines values for PlaybackSessionStatusState.
 const (
-	Active  PlaybackSessionStatusState = "active"
-	Ended   PlaybackSessionStatusState = "ended"
-	Revoked PlaybackSessionStatusState = "revoked"
+	PlaybackSessionStatusStateActive  PlaybackSessionStatusState = "active"
+	PlaybackSessionStatusStateEnded   PlaybackSessionStatusState = "ended"
+	PlaybackSessionStatusStateRevoked PlaybackSessionStatusState = "revoked"
 )
 
 // Valid indicates whether the value is a known member of the PlaybackSessionStatusState enum.
 func (e PlaybackSessionStatusState) Valid() bool {
 	switch e {
-	case Active:
+	case PlaybackSessionStatusStateActive:
 		return true
-	case Ended:
+	case PlaybackSessionStatusStateEnded:
 		return true
-	case Revoked:
+	case PlaybackSessionStatusStateRevoked:
 		return true
 	default:
 		return false
@@ -310,6 +373,99 @@ func (e UploadMethod) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// AccessLogEntry defines model for AccessLogEntry.
+type AccessLogEntry struct {
+	// AssetId The asset the event concerns.
+	AssetId    *string                   `json:"asset_id,omitempty"`
+	At         time.Time                 `json:"at"`
+	AuthMethod *AccessLogEntryAuthMethod `json:"auth_method,omitempty"`
+
+	// Event What happened:
+	//
+	// - `session_created`: a session was started (by API key, JWT or callback).
+	// - `session_denied`: a session could not be started: the viewer's limit was reached, the
+	//   asset was not ready, or a JWT or callback authorization failed (no `viewer_id` then,
+	//   because nothing vouches for one). Refused authorizations are rate limited, so a flood
+	//   of bad requests does not fill the trail.
+	// - `playlist`: the session fetched the master playlist. Media playlists are not logged.
+	// - `key`: the session fetched the content key.
+	// - `key_denied`: the key was refused for a session that exists (revoked, ended, expired,
+	//   or a rate limit). At most one row per session per minute per edge replica.
+	// - `heartbeat`: a heartbeat was accepted. At most one row per session per 5 minutes per
+	//   edge replica.
+	// - `end`: the player ended the session.
+	// - `revoked`: the session was revoked through the API (each session of a bulk revoke gets
+	//   a row).
+	// - `expired`: the background sweep ended the session (past its maximum age or idle). `at`
+	//   is when the sweep recorded it, up to about 10 minutes after the session stopped being
+	//   usable.
+	// - `segments`: how many segment requests the session made in a flush interval (about 30
+	//   seconds); `segments_served` is that count. Only counts are kept, never which segment,
+	//   rendition or position was fetched (invariant I10). In `presigned` delivery the player
+	//   fetches segments from storage directly, so there are no `segments` rows.
+	Event AccessLogEvent `json:"event"`
+
+	// Ip The address of the connecting peer, only if the tenant's `store_ip` setting was on when
+	// the row was written. Behind a reverse proxy this is the proxy's address
+	// (Cipherframe does not read `X-Forwarded-For`). Never present on rows that were not
+	// caused by the viewer's own request (API-key session creation, revocation, expiry).
+	Ip *string `json:"ip,omitempty"`
+
+	// RequestId The `X-Request-Id` of the request that caused the event, when there was one.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// SegmentsServed Only on `segments` rows.
+	SegmentsServed *int `json:"segments_served,omitempty"`
+
+	// Session An 8-character fingerprint of the session: the first 4 bytes, in hex, of
+	// SHA-256(SHA-256(session ID) followed by the tenant ID bytes). It groups the rows of one
+	// session and cannot be turned into the session ID. Absent when the row has no session
+	// (a refused creation).
+	Session *string `json:"session,omitempty"`
+
+	// UserAgent The `User-Agent` header, cut to 256 characters, only if `store_user_agent` was on.
+	UserAgent *string `json:"user_agent,omitempty"`
+
+	// ViewerId The viewer ID your application chose. Absent when it is not known.
+	ViewerId *string `json:"viewer_id,omitempty"`
+}
+
+// AccessLogEntryAuthMethod defines model for AccessLogEntry.AuthMethod.
+type AccessLogEntryAuthMethod string
+
+// AccessLogEvent What happened:
+//
+//   - `session_created`: a session was started (by API key, JWT or callback).
+//   - `session_denied`: a session could not be started: the viewer's limit was reached, the
+//     asset was not ready, or a JWT or callback authorization failed (no `viewer_id` then,
+//     because nothing vouches for one). Refused authorizations are rate limited, so a flood
+//     of bad requests does not fill the trail.
+//   - `playlist`: the session fetched the master playlist. Media playlists are not logged.
+//   - `key`: the session fetched the content key.
+//   - `key_denied`: the key was refused for a session that exists (revoked, ended, expired,
+//     or a rate limit). At most one row per session per minute per edge replica.
+//   - `heartbeat`: a heartbeat was accepted. At most one row per session per 5 minutes per
+//     edge replica.
+//   - `end`: the player ended the session.
+//   - `revoked`: the session was revoked through the API (each session of a bulk revoke gets
+//     a row).
+//   - `expired`: the background sweep ended the session (past its maximum age or idle). `at`
+//     is when the sweep recorded it, up to about 10 minutes after the session stopped being
+//     usable.
+//   - `segments`: how many segment requests the session made in a flush interval (about 30
+//     seconds); `segments_served` is that count. Only counts are kept, never which segment,
+//     rendition or position was fetched (invariant I10). In `presigned` delivery the player
+//     fetches segments from storage directly, so there are no `segments` rows.
+type AccessLogEvent string
+
+// AccessLogList defines model for AccessLogList.
+type AccessLogList struct {
+	Items []AccessLogEntry `json:"items"`
+
+	// NextCursor Present when there are older rows. Pass it as `cursor`.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ApiKey defines model for ApiKey.
@@ -693,6 +849,25 @@ type PlaybackSettingsInput struct {
 // the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
 type PlaybackSettingsInputDelivery string
 
+// PrivacySettings A tenant's effective privacy settings. Gate P11 sets the final defaults and adds fields.
+type PrivacySettings struct {
+	// StoreIp Keep the connecting peer's IP address in the access trail. Default `false`.
+	StoreIp bool `json:"store_ip"`
+
+	// StoreUserAgent Keep the viewer's `User-Agent` (cut to 256 characters) in the access trail. Default `false`.
+	StoreUserAgent bool `json:"store_user_agent"`
+
+	// UpdatedAt When the settings were last replaced. Absent while the defaults are in force.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// PrivacySettingsInput Every privacy setting. The schema does not mark the fields `required` so that a missing one
+// can be told apart from `false`: it is `invalid_request` with an `errors` entry naming it.
+type PrivacySettingsInput struct {
+	StoreIp        *bool `json:"store_ip,omitempty"`
+	StoreUserAgent *bool `json:"store_user_agent,omitempty"`
+}
+
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Problem struct {
 	// Code Stable identifier to switch on. The closed registry in `internal/errs`.
@@ -829,6 +1004,18 @@ type Whoami struct {
 	TenantId string   `json:"tenant_id"`
 }
 
+// AccessLogCursor defines model for AccessLogCursor.
+type AccessLogCursor = string
+
+// AccessLogFrom defines model for AccessLogFrom.
+type AccessLogFrom = time.Time
+
+// AccessLogLimit defines model for AccessLogLimit.
+type AccessLogLimit = int
+
+// AccessLogTo defines model for AccessLogTo.
+type AccessLogTo = time.Time
+
 // AssetId defines model for AssetId.
 type AssetId = string
 
@@ -859,6 +1046,24 @@ type ListAssetsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetAssetAccessLogParams defines parameters for GetAssetAccessLog.
+type GetAssetAccessLogParams struct {
+	// From Only events at or after this time (RFC 3339).
+	From *AccessLogFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only events before this time (RFC 3339). Must be after `from`.
+	To *AccessLogTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// Event Only events of this kind.
+	Event *AccessLogEvent `form:"event,omitempty" json:"event,omitempty"`
+
+	// Limit Page size, 1 to 500 (default 100).
+	Limit *AccessLogLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Treat it as opaque.
+	Cursor *AccessLogCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListClientsParams defines parameters for ListClients.
 type ListClientsParams struct {
 	// Limit Page size, 1 to 100 (default 50).
@@ -875,6 +1080,24 @@ type ListKeysParams struct {
 
 	// Cursor The `next_cursor` of the previous page. Treat it as opaque.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// GetPlaybackSessionAccessLogParams defines parameters for GetPlaybackSessionAccessLog.
+type GetPlaybackSessionAccessLogParams struct {
+	// From Only events at or after this time (RFC 3339).
+	From *AccessLogFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only events before this time (RFC 3339). Must be after `from`.
+	To *AccessLogTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// Event Only events of this kind.
+	Event *AccessLogEvent `form:"event,omitempty" json:"event,omitempty"`
+
+	// Limit Page size, 1 to 500 (default 100).
+	Limit *AccessLogLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Treat it as opaque.
+	Cursor *AccessLogCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // CreateAssetJSONRequestBody defines body for CreateAsset for application/json ContentType.
@@ -906,6 +1129,9 @@ type RevokePlaybackSessionJSONRequestBody = RevokePlaybackSessionRequest
 
 // UpdatePlaybackSettingsJSONRequestBody defines body for UpdatePlaybackSettings for application/json ContentType.
 type UpdatePlaybackSettingsJSONRequestBody = PlaybackSettingsInput
+
+// UpdatePrivacySettingsJSONRequestBody defines body for UpdatePrivacySettings for application/json ContentType.
+type UpdatePrivacySettingsJSONRequestBody = PrivacySettingsInput
 
 // Getter for additional properties for PublicJwk. Returns the specified
 // element and whether it was found
@@ -1111,6 +1337,9 @@ type ServerInterface interface {
 	// AbortAsset Abort an upload
 	// (POST /v1/assets/{asset_id}/abort)
 	AbortAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// GetAssetAccessLog Read an asset's access trail
+	// (GET /v1/assets/{asset_id}/access-log)
+	GetAssetAccessLog(w http.ResponseWriter, r *http.Request, assetId AssetId, params GetAssetAccessLogParams)
 	// CommitAsset Finish the upload and start processing
 	// (POST /v1/assets/{asset_id}/commit)
 	CommitAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
@@ -1156,6 +1385,9 @@ type ServerInterface interface {
 	// GetPlaybackSession Get a playback session
 	// (GET /v1/playback-sessions/{session_id})
 	GetPlaybackSession(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath)
+	// GetPlaybackSessionAccessLog Read a playback session's access trail
+	// (GET /v1/playback-sessions/{session_id}/access-log)
+	GetPlaybackSessionAccessLog(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath, params GetPlaybackSessionAccessLogParams)
 	// RevokePlaybackSession Revoke a playback session
 	// (POST /v1/playback-sessions/{session_id}/revoke)
 	RevokePlaybackSession(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath)
@@ -1165,6 +1397,12 @@ type ServerInterface interface {
 	// UpdatePlaybackSettings Replace the playback settings
 	// (PUT /v1/playback-settings)
 	UpdatePlaybackSettings(w http.ResponseWriter, r *http.Request)
+	// GetPrivacySettings Get the privacy settings
+	// (GET /v1/privacy-settings)
+	GetPrivacySettings(w http.ResponseWriter, r *http.Request)
+	// UpdatePrivacySettings Replace the privacy settings
+	// (PUT /v1/privacy-settings)
+	UpdatePrivacySettings(w http.ResponseWriter, r *http.Request)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(w http.ResponseWriter, r *http.Request)
@@ -1310,6 +1548,100 @@ func (siw *ServerInterfaceWrapper) AbortAsset(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AbortAsset(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetAccessLog operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetAccessLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAssetAccessLogParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "event" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "event", r.URL.Query(), &params.Event, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "event"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "event", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetAccessLog(w, r, assetId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1665,6 +1997,100 @@ func (siw *ServerInterfaceWrapper) GetPlaybackSession(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// GetPlaybackSessionAccessLog operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackSessionAccessLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId SessionIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackSessionAccessLogParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "event" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "event", r.URL.Query(), &params.Event, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "event"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "event", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackSessionAccessLog(w, r, sessionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RevokePlaybackSession operation middleware
 func (siw *ServerInterfaceWrapper) RevokePlaybackSession(w http.ResponseWriter, r *http.Request) {
 
@@ -1710,6 +2136,34 @@ func (siw *ServerInterfaceWrapper) UpdatePlaybackSettings(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdatePlaybackSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPrivacySettings operation middleware
+func (siw *ServerInterfaceWrapper) GetPrivacySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPrivacySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdatePrivacySettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdatePrivacySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdatePrivacySettings(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1867,12 +2321,16 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.GetAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/access-log", wrapper.GetAssetAccessLog)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions", wrapper.CreatePlaybackSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions/revoke", wrapper.RevokePlaybackSessions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-sessions/{session_id}", wrapper.GetPlaybackSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions/{session_id}/revoke", wrapper.RevokePlaybackSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-sessions/{session_id}/access-log", wrapper.GetPlaybackSessionAccessLog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-settings", wrapper.GetPlaybackSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-settings", wrapper.UpdatePlaybackSettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/privacy-settings", wrapper.GetPrivacySettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/privacy-settings", wrapper.UpdatePrivacySettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-auth", wrapper.GetPlaybackAuth)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-auth", wrapper.UpdatePlaybackAuth)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/playback-auth/jwt-keys/{kid}", wrapper.DeletePlaybackJwtKey)
@@ -2449,6 +2907,141 @@ type AbortAssetdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response AbortAssetdefaultApplicationProblemPlusJSONResponse) VisitAbortAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetAccessLogRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+	Params  GetAssetAccessLogParams
+}
+
+type GetAssetAccessLogResponseObject interface {
+	VisitGetAssetAccessLogResponse(w http.ResponseWriter) error
+}
+
+type GetAssetAccessLog200ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type GetAssetAccessLog200JSONResponse struct {
+	Body    AccessLogList
+	Headers GetAssetAccessLog200ResponseHeaders
+}
+
+func (response GetAssetAccessLog200JSONResponse) VisitGetAssetAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetAccessLog400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetAccessLog400ApplicationProblemPlusJSONResponse) VisitGetAssetAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetAccessLog401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetAccessLog401ApplicationProblemPlusJSONResponse) VisitGetAssetAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetAccessLog403ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetAccessLog403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetAccessLog403ResponseHeaders
+}
+
+func (response GetAssetAccessLog403ApplicationProblemPlusJSONResponse) VisitGetAssetAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetAccessLog404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetAccessLog404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetAccessLog404ResponseHeaders
+}
+
+func (response GetAssetAccessLog404ApplicationProblemPlusJSONResponse) VisitGetAssetAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetAccessLogdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetAccessLogdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetAssetAccessLogdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetAssetAccessLogdefaultApplicationProblemPlusJSONResponse) VisitGetAssetAccessLogResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -4155,6 +4748,141 @@ func (response GetPlaybackSessiondefaultApplicationProblemPlusJSONResponse) Visi
 	return err
 }
 
+type GetPlaybackSessionAccessLogRequestObject struct {
+	SessionId SessionIdPath `json:"session_id"`
+	Params    GetPlaybackSessionAccessLogParams
+}
+
+type GetPlaybackSessionAccessLogResponseObject interface {
+	VisitGetPlaybackSessionAccessLogResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackSessionAccessLog200ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type GetPlaybackSessionAccessLog200JSONResponse struct {
+	Body    AccessLogList
+	Headers GetPlaybackSessionAccessLog200ResponseHeaders
+}
+
+func (response GetPlaybackSessionAccessLog200JSONResponse) VisitGetPlaybackSessionAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSessionAccessLog400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSessionAccessLog400ApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSessionAccessLog401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSessionAccessLog401ApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSessionAccessLog403ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSessionAccessLog403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackSessionAccessLog403ResponseHeaders
+}
+
+func (response GetPlaybackSessionAccessLog403ApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSessionAccessLog404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSessionAccessLog404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackSessionAccessLog404ResponseHeaders
+}
+
+func (response GetPlaybackSessionAccessLog404ApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSessionAccessLogdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSessionAccessLogdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackSessionAccessLogdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackSessionAccessLogdefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackSessionAccessLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RevokePlaybackSessionRequestObject struct {
 	SessionId SessionIdPath `json:"session_id"`
 	Body      *RevokePlaybackSessionJSONRequestBody
@@ -4485,6 +5213,203 @@ func (response UpdatePlaybackSettingsdefaultApplicationProblemPlusJSONResponse) 
 	return err
 }
 
+type GetPrivacySettingsRequestObject struct {
+}
+
+type GetPrivacySettingsResponseObject interface {
+	VisitGetPrivacySettingsResponse(w http.ResponseWriter) error
+}
+
+type GetPrivacySettings200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPrivacySettings200JSONResponse struct {
+	Body    PrivacySettings
+	Headers GetPrivacySettings200ResponseHeaders
+}
+
+func (response GetPrivacySettings200JSONResponse) VisitGetPrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPrivacySettings401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPrivacySettings401ApplicationProblemPlusJSONResponse) VisitGetPrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPrivacySettings403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPrivacySettings403ApplicationProblemPlusJSONResponse) VisitGetPrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPrivacySettingsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPrivacySettingsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPrivacySettingsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPrivacySettingsdefaultApplicationProblemPlusJSONResponse) VisitGetPrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePrivacySettingsRequestObject struct {
+	Body *UpdatePrivacySettingsJSONRequestBody
+}
+
+type UpdatePrivacySettingsResponseObject interface {
+	VisitUpdatePrivacySettingsResponse(w http.ResponseWriter) error
+}
+
+type UpdatePrivacySettings200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePrivacySettings200JSONResponse struct {
+	Body    PrivacySettings
+	Headers UpdatePrivacySettings200ResponseHeaders
+}
+
+func (response UpdatePrivacySettings200JSONResponse) VisitUpdatePrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePrivacySettings400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdatePrivacySettings400ApplicationProblemPlusJSONResponse) VisitUpdatePrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePrivacySettings401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdatePrivacySettings401ApplicationProblemPlusJSONResponse) VisitUpdatePrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePrivacySettings403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePrivacySettings403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdatePrivacySettings403ResponseHeaders
+}
+
+func (response UpdatePrivacySettings403ApplicationProblemPlusJSONResponse) VisitUpdatePrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePrivacySettingsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdatePrivacySettingsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdatePrivacySettingsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdatePrivacySettingsdefaultApplicationProblemPlusJSONResponse) VisitUpdatePrivacySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetWhoamiRequestObject struct {
 }
 
@@ -4571,6 +5496,9 @@ type StrictServerInterface interface {
 	// AbortAsset Abort an upload
 	// (POST /v1/assets/{asset_id}/abort)
 	AbortAsset(ctx context.Context, request AbortAssetRequestObject) (AbortAssetResponseObject, error)
+	// GetAssetAccessLog Read an asset's access trail
+	// (GET /v1/assets/{asset_id}/access-log)
+	GetAssetAccessLog(ctx context.Context, request GetAssetAccessLogRequestObject) (GetAssetAccessLogResponseObject, error)
 	// CommitAsset Finish the upload and start processing
 	// (POST /v1/assets/{asset_id}/commit)
 	CommitAsset(ctx context.Context, request CommitAssetRequestObject) (CommitAssetResponseObject, error)
@@ -4616,6 +5544,9 @@ type StrictServerInterface interface {
 	// GetPlaybackSession Get a playback session
 	// (GET /v1/playback-sessions/{session_id})
 	GetPlaybackSession(ctx context.Context, request GetPlaybackSessionRequestObject) (GetPlaybackSessionResponseObject, error)
+	// GetPlaybackSessionAccessLog Read a playback session's access trail
+	// (GET /v1/playback-sessions/{session_id}/access-log)
+	GetPlaybackSessionAccessLog(ctx context.Context, request GetPlaybackSessionAccessLogRequestObject) (GetPlaybackSessionAccessLogResponseObject, error)
 	// RevokePlaybackSession Revoke a playback session
 	// (POST /v1/playback-sessions/{session_id}/revoke)
 	RevokePlaybackSession(ctx context.Context, request RevokePlaybackSessionRequestObject) (RevokePlaybackSessionResponseObject, error)
@@ -4625,6 +5556,12 @@ type StrictServerInterface interface {
 	// UpdatePlaybackSettings Replace the playback settings
 	// (PUT /v1/playback-settings)
 	UpdatePlaybackSettings(ctx context.Context, request UpdatePlaybackSettingsRequestObject) (UpdatePlaybackSettingsResponseObject, error)
+	// GetPrivacySettings Get the privacy settings
+	// (GET /v1/privacy-settings)
+	GetPrivacySettings(ctx context.Context, request GetPrivacySettingsRequestObject) (GetPrivacySettingsResponseObject, error)
+	// UpdatePrivacySettings Replace the privacy settings
+	// (PUT /v1/privacy-settings)
+	UpdatePrivacySettings(ctx context.Context, request UpdatePrivacySettingsRequestObject) (UpdatePrivacySettingsResponseObject, error)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(ctx context.Context, request GetWhoamiRequestObject) (GetWhoamiResponseObject, error)
@@ -4819,6 +5756,33 @@ func (sh *strictHandler) AbortAsset(w http.ResponseWriter, r *http.Request, asse
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(AbortAssetResponseObject); ok {
 		if err := validResponse.VisitAbortAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetAccessLog operation middleware
+func (sh *strictHandler) GetAssetAccessLog(w http.ResponseWriter, r *http.Request, assetId AssetId, params GetAssetAccessLogParams) {
+	var request GetAssetAccessLogRequestObject
+
+	request.AssetId = assetId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetAccessLog(ctx, request.(GetAssetAccessLogRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetAccessLog")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetAccessLogResponseObject); ok {
+		if err := validResponse.VisitGetAssetAccessLogResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -5254,6 +6218,33 @@ func (sh *strictHandler) GetPlaybackSession(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// GetPlaybackSessionAccessLog operation middleware
+func (sh *strictHandler) GetPlaybackSessionAccessLog(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath, params GetPlaybackSessionAccessLogParams) {
+	var request GetPlaybackSessionAccessLogRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackSessionAccessLog(ctx, request.(GetPlaybackSessionAccessLogRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackSessionAccessLog")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackSessionAccessLogResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackSessionAccessLogResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // RevokePlaybackSession operation middleware
 func (sh *strictHandler) RevokePlaybackSession(w http.ResponseWriter, r *http.Request, sessionId SessionIdPath) {
 	var request RevokePlaybackSessionRequestObject
@@ -5338,6 +6329,61 @@ func (sh *strictHandler) UpdatePlaybackSettings(w http.ResponseWriter, r *http.R
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdatePlaybackSettingsResponseObject); ok {
 		if err := validResponse.VisitUpdatePlaybackSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPrivacySettings operation middleware
+func (sh *strictHandler) GetPrivacySettings(w http.ResponseWriter, r *http.Request) {
+	var request GetPrivacySettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPrivacySettings(ctx, request.(GetPrivacySettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPrivacySettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPrivacySettingsResponseObject); ok {
+		if err := validResponse.VisitGetPrivacySettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdatePrivacySettings operation middleware
+func (sh *strictHandler) UpdatePrivacySettings(w http.ResponseWriter, r *http.Request) {
+	var request UpdatePrivacySettingsRequestObject
+
+	var body UpdatePrivacySettingsJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdatePrivacySettings(ctx, request.(UpdatePrivacySettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdatePrivacySettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdatePrivacySettingsResponseObject); ok {
+		if err := validResponse.VisitUpdatePrivacySettingsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -474,6 +474,53 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/access-log:
+    get:
+      operationId: getAssetAccessLog
+      summary: Read an asset's access trail
+      description: |
+        Returns the access trail of one asset of the caller's tenant, newest first, with optional
+        `from` and `to` (a half-open range on the event time), an `event` filter and cursor
+        pagination (`limit` up to 500, default 100). An asset of another tenant, a deleted one and
+        an unknown one are all `404`. Requires the `assets:read` scope.
+
+        The trail is **best effort**: under overload or a database outage events are dropped
+        rather than slowing playback, so it is an audit aid and not a billing ledger. Rows never
+        contain a session ID, a token or the hash of a session ID: `session` is a short
+        fingerprint that only lets you group the rows of one session. See `AccessLogEntry` for
+        what each event means and what is never recorded.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - $ref: "#/components/parameters/AccessLogFrom"
+        - $ref: "#/components/parameters/AccessLogTo"
+        - $ref: "#/components/parameters/AccessLogEvent"
+        - $ref: "#/components/parameters/AccessLogLimit"
+        - $ref: "#/components/parameters/AccessLogCursor"
+      responses:
+        "200":
+          description: One page of the access trail, newest first.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessLogList"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/playback-sessions:
     post:
       operationId: createPlaybackSession
@@ -660,6 +707,46 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/playback-sessions/{session_id}/access-log:
+    get:
+      operationId: getPlaybackSessionAccessLog
+      summary: Read a playback session's access trail
+      description: |
+        Returns the access trail of one session of the caller's tenant: the same rows and filters
+        as `getAssetAccessLog`, for one session. A session of another tenant is `404`, the same as
+        an unknown one. Requires the `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+        - $ref: "#/components/parameters/AccessLogFrom"
+        - $ref: "#/components/parameters/AccessLogTo"
+        - $ref: "#/components/parameters/AccessLogEvent"
+        - $ref: "#/components/parameters/AccessLogLimit"
+        - $ref: "#/components/parameters/AccessLogCursor"
+      responses:
+        "200":
+          description: One page of the access trail, newest first.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessLogList"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/playback-settings:
     get:
       operationId: getPlaybackSettings
@@ -715,6 +802,70 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlaybackSettings"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/privacy-settings:
+    get:
+      operationId: getPrivacySettings
+      summary: Get the privacy settings
+      description: |
+        Returns the tenant's effective privacy settings: the stored ones, or the defaults when
+        none were ever stored (then `updated_at` is absent). The defaults are the most private
+        choice: nothing about the viewer's connection is stored. Gate P11 will set the final
+        defaults and add fields (retention, original file names). Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: The effective settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacySettings"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updatePrivacySettings
+      summary: Replace the privacy settings
+      description: |
+        Replaces every privacy setting of the tenant (a full replacement: send all fields; a
+        missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+        in the audit log and applies to access-trail rows written afterwards (each edge replica
+        caches the settings for up to 30 seconds). Rows already written are not rewritten.
+        Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacySettingsInput"
+      responses:
+        "200":
+          description: The settings were replaced.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacySettings"
         "400":
           $ref: "#/components/responses/Problem"
         "401":
@@ -1492,6 +1643,48 @@ components:
         type: string
         minLength: 1
         maxLength: 64
+    AccessLogFrom:
+      name: from
+      in: query
+      required: false
+      description: Only events at or after this time (RFC 3339).
+      schema:
+        type: string
+        format: date-time
+    AccessLogTo:
+      name: to
+      in: query
+      required: false
+      description: Only events before this time (RFC 3339). Must be after `from`.
+      schema:
+        type: string
+        format: date-time
+    AccessLogEvent:
+      name: event
+      in: query
+      required: false
+      description: Only events of this kind.
+      schema:
+        $ref: "#/components/schemas/AccessLogEvent"
+    AccessLogLimit:
+      name: limit
+      in: query
+      required: false
+      description: Page size, 1 to 500 (default 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    AccessLogCursor:
+      name: cursor
+      in: query
+      required: false
+      description: The `next_cursor` of the previous page. Treat it as opaque.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
     AssetId:
       name: asset_id
       in: path
@@ -1944,6 +2137,116 @@ components:
             $ref: "#/components/schemas/Asset"
         next_cursor:
           type: string
+    AccessLogEvent:
+      type: string
+      enum: [session_created, session_denied, playlist, key, key_denied, heartbeat, end, revoked, expired, segments]
+      description: |
+        What happened:
+
+        - `session_created`: a session was started (by API key, JWT or callback).
+        - `session_denied`: a session could not be started: the viewer's limit was reached, the
+          asset was not ready, or a JWT or callback authorization failed (no `viewer_id` then,
+          because nothing vouches for one). Refused authorizations are rate limited, so a flood
+          of bad requests does not fill the trail.
+        - `playlist`: the session fetched the master playlist. Media playlists are not logged.
+        - `key`: the session fetched the content key.
+        - `key_denied`: the key was refused for a session that exists (revoked, ended, expired,
+          or a rate limit). At most one row per session per minute per edge replica.
+        - `heartbeat`: a heartbeat was accepted. At most one row per session per 5 minutes per
+          edge replica.
+        - `end`: the player ended the session.
+        - `revoked`: the session was revoked through the API (each session of a bulk revoke gets
+          a row).
+        - `expired`: the background sweep ended the session (past its maximum age or idle). `at`
+          is when the sweep recorded it, up to about 10 minutes after the session stopped being
+          usable.
+        - `segments`: how many segment requests the session made in a flush interval (about 30
+          seconds); `segments_served` is that count. Only counts are kept, never which segment,
+          rendition or position was fetched (invariant I10). In `presigned` delivery the player
+          fetches segments from storage directly, so there are no `segments` rows.
+    AccessLogEntry:
+      type: object
+      additionalProperties: false
+      required: [event, at]
+      properties:
+        event:
+          $ref: "#/components/schemas/AccessLogEvent"
+        at:
+          type: string
+          format: date-time
+        asset_id:
+          type: string
+          description: The asset the event concerns.
+        session:
+          type: string
+          description: |
+            An 8-character fingerprint of the session: the first 4 bytes, in hex, of
+            SHA-256(SHA-256(session ID) followed by the tenant ID bytes). It groups the rows of one
+            session and cannot be turned into the session ID. Absent when the row has no session
+            (a refused creation).
+        viewer_id:
+          type: string
+          description: The viewer ID your application chose. Absent when it is not known.
+        auth_method:
+          type: string
+          enum: [api_key, jwt, callback]
+        segments_served:
+          type: integer
+          description: Only on `segments` rows.
+        ip:
+          type: string
+          description: |
+            The address of the connecting peer, only if the tenant's `store_ip` setting was on when
+            the row was written. Behind a reverse proxy this is the proxy's address
+            (Cipherframe does not read `X-Forwarded-For`). Never present on rows that were not
+            caused by the viewer's own request (API-key session creation, revocation, expiry).
+        user_agent:
+          type: string
+          description: The `User-Agent` header, cut to 256 characters, only if `store_user_agent` was on.
+        request_id:
+          type: string
+          description: The `X-Request-Id` of the request that caused the event, when there was one.
+    AccessLogList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessLogEntry"
+        next_cursor:
+          type: string
+          description: Present when there are older rows. Pass it as `cursor`.
+    PrivacySettings:
+      description: |
+        A tenant's effective privacy settings. Gate P11 sets the final defaults and adds fields.
+      type: object
+      additionalProperties: false
+      required: [store_ip, store_user_agent]
+      properties:
+        store_ip:
+          type: boolean
+          description: |
+            Keep the connecting peer's IP address in the access trail. Default `false`.
+        store_user_agent:
+          type: boolean
+          description: Keep the viewer's `User-Agent` (cut to 256 characters) in the access trail. Default `false`.
+        updated_at:
+          type: string
+          format: date-time
+          description: When the settings were last replaced. Absent while the defaults are in force.
+    PrivacySettingsInput:
+      description: |
+        Every privacy setting. The schema does not mark the fields `required` so that a missing one
+        can be told apart from `false`: it is `invalid_request` with an `errors` entry naming it.
+      type: object
+      additionalProperties: false
+      properties:
+        store_ip:
+          type: boolean
+        store_user_agent:
+          type: boolean
     SessionId:
       type: string
       pattern: "^ses_[0-9a-hjkmnp-tv-z]{52}$"
