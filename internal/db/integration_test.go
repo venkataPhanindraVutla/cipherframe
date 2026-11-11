@@ -155,7 +155,7 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 			t.Fatalf("migrate run %d: %v", i+1, err)
 		}
 	}
-	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "content_keys", "external_tasks", "upload_tokens", "upload_parts", "asset_artifacts", "playback_settings", "playback_sessions", "playback_key_fetches", "playback_events", "playback_auth", "playback_jwt_keys", "playback_jwt_jti", "river_job", "river_migration"} {
+	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "content_keys", "external_tasks", "upload_tokens", "upload_parts", "asset_artifacts", "asset_manifests", "playback_settings", "playback_sessions", "playback_key_fetches", "playback_events", "playback_auth", "playback_jwt_keys", "playback_jwt_jti", "river_job", "river_migration"} {
 		var n int
 		err := pool.QueryRow(ctx,
 			"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
