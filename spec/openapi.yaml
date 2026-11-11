@@ -13,7 +13,8 @@ info:
     Health and readiness are unauthenticated.
 
     Each operation carries a tag naming the listener that serves it: `api` (control plane) or
-    `edge` (browser-facing data plane). An operation served by both lists both tags.
+    `edge` (browser-facing data plane). An operation served by both lists both tags. Upload
+    operations on the edge authenticate with an upload token, not an API key (ADR 0025).
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -29,6 +30,10 @@ tags:
     description: Served by the edge listener (data plane).
   - name: ops
     description: Health and readiness, served on every listener.
+  - name: tus
+    description: |
+      The tus protocol endpoints that the edge listener mounts from the tusd library. Documented
+      here but not generated and not part of route coverage.
 security: []
 paths:
   /healthz:
@@ -298,6 +303,321 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets:
+    post:
+      operationId: createAsset
+      summary: Create an asset and start an upload
+      description: |
+        Creates an asset in state `created` and returns where and how to upload its source: the edge
+        base URL, a short-lived **upload token** bound to this one asset (shown only in this
+        response) and, for `multipart`, the part size. The declared `size_bytes` may not exceed the
+        configured maximum source size (default 10 GiB; `payload_too_large` otherwise). No original
+        file name is accepted or stored. Requires the `assets:write` scope. Endpoint names and
+        shapes are flagged for owner review before v1.0.0 (ADR 0026).
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssetRequest"
+      responses:
+        "201":
+          description: The asset was created. `upload.token` is shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedAsset"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listAssets
+      summary: List assets
+      description: |
+        Lists the caller's tenant's assets (deleted ones excluded), oldest first, with cursor
+        pagination. Requires the `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of assets.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}:
+    get:
+      operationId: getAsset
+      summary: Get an asset
+      description: |
+        Returns one asset. An asset of another tenant, or a deleted one, is `not_found`. Requires
+        the `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: The asset.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/commit:
+    post:
+      operationId: commitAsset
+      summary: Finish the upload and start processing
+      description: |
+        Ends the upload: a multipart upload is completed from the parts edge received, then the
+        source object is checked to exist with exactly the declared size. The asset becomes
+        `committed`, its upload token stops working and processing is queued, all in one
+        transaction. With tus, the upload must have finished (`conflict` otherwise). Committing an
+        asset that is already committed or further along returns it unchanged and queues nothing.
+        Requires the `assets:write` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: The asset is committed.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/abort:
+    post:
+      operationId: abortAsset
+      summary: Abort an upload
+      description: |
+        Stops an upload that has not been committed. The asset becomes `failed` with
+        `failure_code` `upload_aborted`, its upload token stops working, an unfinished multipart
+        upload is aborted and every partial object is deleted. Repeating the call repeats the
+        cleanup. A committed asset cannot be aborted (`conflict`). Requires the `assets:write`
+        scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: The upload was aborted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/uploads/multipart/{asset_id}/parts:
+    get:
+      operationId: listUploadParts
+      summary: List received parts
+      description: |
+        Lists the parts edge has stored for this upload, so an interrupted client can send only
+        the missing ones. Authenticated with the upload token, never an API key.
+      tags: [edge]
+      security:
+        - uploadToken: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: The received parts, in ascending order.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadPartList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/uploads/multipart/{asset_id}/parts/{part_number}:
+    put:
+      operationId: putUploadPart
+      summary: Upload one part
+      description: |
+        Streams one part of a multipart upload through edge into the object store. `Content-Length`
+        is required and may not exceed the part size from the create response. Every part but the
+        last must be at least 5 MiB. Sending a part again replaces it. Authenticated with the
+        upload token, never an API key.
+      tags: [edge]
+      security:
+        - uploadToken: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - name: part_number
+          in: path
+          required: true
+          description: The part number, 1 to 10000.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: The part was stored.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadPart"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/uploads/tus/:
+    post:
+      operationId: createTusUpload
+      summary: Start the tus upload (tus protocol, mounted)
+      description: |
+        The tus 1.0.0 creation request, served by the tusd library mounted on the edge listener
+        and **not generated from this file**: it has the `tus` tag, so it is documented here but
+        excluded from the generated server and from route coverage. `Upload-Length` must equal the
+        asset's `size_bytes`; `Upload-Metadata` is ignored (no file name is kept). One upload per
+        asset: a second creation is `409`. Authenticated with the upload token. The `Location`
+        header carries the asset ID, never an object key. Termination, concatenation and deferred
+        length are disabled; abort through the API.
+      tags: [tus]
+      security:
+        - uploadToken: []
+      responses:
+        "201":
+          description: The upload was created. `Location` is the upload URL.
+        "400":
+          description: Missing or wrong `Upload-Length`.
+        "401":
+          description: The upload token is missing, invalid or expired.
+        "409":
+          description: An upload was already started for this asset, or the asset is not a tus asset.
+  /v1/uploads/tus/{asset_id}:
+    head:
+      operationId: headTusUpload
+      summary: Read the tus upload offset (tus protocol, mounted)
+      description: |
+        The tus offset request, served by tusd (not generated). Returns `Upload-Offset` so an
+        interrupted client resumes there. Authenticated with the upload token.
+      tags: [tus]
+      security:
+        - uploadToken: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: The current offset in `Upload-Offset`.
+        "401":
+          description: The upload token is missing, invalid or expired.
+        "404":
+          description: No such upload.
+    patch:
+      operationId: patchTusUpload
+      summary: Send a chunk (tus protocol, mounted)
+      description: |
+        The tus chunk request (`Content-Type: application/offset+octet-stream`), served by tusd
+        (not generated). Authenticated with the upload token.
+      tags: [tus]
+      security:
+        - uploadToken: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "204":
+          description: The chunk was stored; the new offset is in `Upload-Offset`.
+        "401":
+          description: The upload token is missing, invalid or expired.
+        "404":
+          description: No such upload.
+        "409":
+          description: The offset does not match the server's.
 components:
   securitySchemes:
     bearerAuth:
@@ -307,6 +627,15 @@ components:
       description: |
         An API key (ADR 0009) in `Authorization: Bearer cf_<prefix>_<secret>`. The scheme name is
         case-insensitive. The scopes listed on an operation are all required.
+    uploadToken:
+      type: http
+      scheme: bearer
+      bearerFormat: Cipherframe upload token (cfu_<43 characters>)
+      description: |
+        A short-lived upload token (ADR 0025) in `Authorization: Bearer cfu_...`, issued by
+        `createAsset`. It is bound to one asset, stored hashed, checked against the database on
+        every request and refused after its expiry, after commit and after abort. API keys are never
+        accepted on upload endpoints.
   parameters:
     Limit:
       name: limit
@@ -327,6 +656,14 @@ components:
         type: string
         minLength: 1
         maxLength: 64
+    AssetId:
+      name: asset_id
+      in: path
+      required: true
+      description: An asset ID (`ast_` followed by 26 characters).
+      schema:
+        type: string
+        maxLength: 64
     KeyId:
       name: key_id
       in: path
@@ -345,7 +682,7 @@ components:
         type: string
         pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     CacheControlNoStore:
-      description: "Always `no-store`; the body holds a full API key."
+      description: "Always `no-store`; the body holds a full API key or an upload token."
       required: true
       schema:
         type: string
@@ -558,6 +895,148 @@ components:
             $ref: "#/components/schemas/ApiKey"
         next_cursor:
           type: string
+    AssetState:
+      type: string
+      description: |
+        The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`
+        (`deleted` assets are not returned).
+      enum: [created, uploading, committed, processing, ready, failed]
+    UploadMethod:
+      type: string
+      enum: [tus, multipart]
+    CreateAssetRequest:
+      type: object
+      additionalProperties: false
+      required: [size_bytes, upload_method]
+      properties:
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The exact size of the source in bytes. Edge and commit both enforce it.
+        content_type:
+          type: string
+          maxLength: 255
+          description: Optional lower-case media type such as `video/mp4`. Stored as object metadata only.
+        upload_method:
+          $ref: "#/components/schemas/UploadMethod"
+    Asset:
+      type: object
+      additionalProperties: false
+      required: [id, state, size_bytes, upload_method, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/AssetIdValue"
+        state:
+          $ref: "#/components/schemas/AssetState"
+        size_bytes:
+          type: integer
+          format: int64
+        content_type:
+          type: string
+        upload_method:
+          $ref: "#/components/schemas/UploadMethod"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        upload_expires_at:
+          type: string
+          format: date-time
+          description: When the upload token expires.
+        committed_at:
+          type: string
+          format: date-time
+        processing_started_at:
+          type: string
+          format: date-time
+        ready_at:
+          type: string
+          format: date-time
+        failed_at:
+          type: string
+          format: date-time
+        failure_code:
+          type: string
+          description: Why the asset failed, for example `upload_aborted`. A stable lower_snake_case code.
+    AssetIdValue:
+      type: string
+      pattern: "^ast_[0-9a-hjkmnp-tv-z]{26}$"
+    UploadInstructions:
+      type: object
+      additionalProperties: false
+      required: [method, url, token, expires_at]
+      properties:
+        method:
+          $ref: "#/components/schemas/UploadMethod"
+        url:
+          type: string
+          format: uri
+          description: |
+            For `tus`, the tus creation endpoint on edge. For `multipart`, the base URL of the
+            parts: PUT `<url><part_number>` for each part, GET `<url>` to list them.
+        token:
+          type: string
+          pattern: "^cfu_[A-Za-z0-9_-]{43}$"
+          description: |
+            The upload token, sent as `Authorization: Bearer <token>` to edge only. It is shown
+            here once, works for this asset only and stops working at `expires_at`, on commit and
+            on abort.
+        expires_at:
+          type: string
+          format: date-time
+        part_size_bytes:
+          type: integer
+          format: int64
+          description: Multipart only. Send parts of exactly this size (the last may be smaller).
+    CreatedAsset:
+      type: object
+      additionalProperties: false
+      required: [asset, upload]
+      properties:
+        asset:
+          $ref: "#/components/schemas/Asset"
+        upload:
+          $ref: "#/components/schemas/UploadInstructions"
+    AssetList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        next_cursor:
+          type: string
+    UploadPart:
+      type: object
+      additionalProperties: false
+      required: [part_number, size_bytes, etag]
+      properties:
+        part_number:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        size_bytes:
+          type: integer
+          format: int64
+        etag:
+          type: string
+    UploadPartList:
+      type: object
+      additionalProperties: false
+      required: [part_size_bytes, items]
+      properties:
+        part_size_bytes:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UploadPart"
     HealthResponse:
       type: object
       additionalProperties: false

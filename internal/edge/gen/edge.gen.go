@@ -10,7 +10,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+
+	"github.com/oapi-codegen/runtime"
 )
 
 // Defines values for HealthResponseStatus.
@@ -30,43 +33,43 @@ func (e HealthResponseStatus) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	Conflict              ProblemCode = "conflict"
-	DependencyUnavailable ProblemCode = "dependency_unavailable"
-	Forbidden             ProblemCode = "forbidden"
-	InternalError         ProblemCode = "internal_error"
-	InvalidRequest        ProblemCode = "invalid_request"
-	MethodNotAllowed      ProblemCode = "method_not_allowed"
-	NotFound              ProblemCode = "not_found"
-	PayloadTooLarge       ProblemCode = "payload_too_large"
-	RateLimited           ProblemCode = "rate_limited"
-	Timeout               ProblemCode = "timeout"
-	Unauthenticated       ProblemCode = "unauthenticated"
+	ProblemCodeConflict              ProblemCode = "conflict"
+	ProblemCodeDependencyUnavailable ProblemCode = "dependency_unavailable"
+	ProblemCodeForbidden             ProblemCode = "forbidden"
+	ProblemCodeInternalError         ProblemCode = "internal_error"
+	ProblemCodeInvalidRequest        ProblemCode = "invalid_request"
+	ProblemCodeMethodNotAllowed      ProblemCode = "method_not_allowed"
+	ProblemCodeNotFound              ProblemCode = "not_found"
+	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
+	ProblemCodeRateLimited           ProblemCode = "rate_limited"
+	ProblemCodeTimeout               ProblemCode = "timeout"
+	ProblemCodeUnauthenticated       ProblemCode = "unauthenticated"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
-	case Conflict:
+	case ProblemCodeConflict:
 		return true
-	case DependencyUnavailable:
+	case ProblemCodeDependencyUnavailable:
 		return true
-	case Forbidden:
+	case ProblemCodeForbidden:
 		return true
-	case InternalError:
+	case ProblemCodeInternalError:
 		return true
-	case InvalidRequest:
+	case ProblemCodeInvalidRequest:
 		return true
-	case MethodNotAllowed:
+	case ProblemCodeMethodNotAllowed:
 		return true
-	case NotFound:
+	case ProblemCodeNotFound:
 		return true
-	case PayloadTooLarge:
+	case ProblemCodePayloadTooLarge:
 		return true
-	case RateLimited:
+	case ProblemCodeRateLimited:
 		return true
-	case Timeout:
+	case ProblemCodeTimeout:
 		return true
-	case Unauthenticated:
+	case ProblemCodeUnauthenticated:
 		return true
 	default:
 		return false
@@ -153,6 +156,25 @@ type ReadyResponse struct {
 // ReadyResponseStatus defines model for ReadyResponse.Status.
 type ReadyResponseStatus string
 
+// UploadPart defines model for UploadPart.
+type UploadPart struct {
+	Etag       string `json:"etag"`
+	PartNumber int    `json:"part_number"`
+	SizeBytes  int64  `json:"size_bytes"`
+}
+
+// UploadPartList defines model for UploadPartList.
+type UploadPartList struct {
+	Items         []UploadPart `json:"items"`
+	PartSizeBytes int64        `json:"part_size_bytes"`
+}
+
+// AssetId defines model for AssetId.
+type AssetId = string
+
+// Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
+type Unauthenticated = Problem
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealthz Liveness
@@ -161,6 +183,12 @@ type ServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// ListUploadParts List received parts
+	// (GET /v1/uploads/multipart/{asset_id}/parts)
+	ListUploadParts(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// PutUploadPart Upload one part
+	// (PUT /v1/uploads/multipart/{asset_id}/parts/{part_number})
+	PutUploadPart(w http.ResponseWriter, r *http.Request, assetId AssetId, partNumber int)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -191,6 +219,67 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListUploadParts operation middleware
+func (siw *ServerInterfaceWrapper) ListUploadParts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListUploadParts(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUploadPart operation middleware
+func (siw *ServerInterfaceWrapper) PutUploadPart(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "part_number" -------------
+	var partNumber int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "part_number", r.PathValue("part_number"), &partNumber, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "part_number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUploadPart(w, r, assetId, partNumber)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -322,6 +411,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadyz)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts", wrapper.ListUploadParts)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/uploads/multipart/{asset_id}/parts/{part_number}", wrapper.PutUploadPart)
 
 	return m
 }
@@ -333,6 +424,16 @@ type ProblemApplicationProblemPlusJSONResponse struct {
 	Body Problem
 
 	Headers ProblemResponseHeaders
+}
+
+type UnauthenticatedResponseHeaders struct {
+	WWWAuthenticate string
+	XRequestId      string
+}
+type UnauthenticatedApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers UnauthenticatedResponseHeaders
 }
 
 type GetHealthzRequestObject struct {
@@ -453,6 +554,272 @@ func (response GetReadyzdefaultApplicationProblemPlusJSONResponse) VisitGetReady
 	return err
 }
 
+type ListUploadPartsRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type ListUploadPartsResponseObject interface {
+	VisitListUploadPartsResponse(w http.ResponseWriter) error
+}
+
+type ListUploadParts200ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListUploadParts200JSONResponse struct {
+	Body    UploadPartList
+	Headers ListUploadParts200ResponseHeaders
+}
+
+func (response ListUploadParts200JSONResponse) VisitListUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListUploadParts401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListUploadParts401ApplicationProblemPlusJSONResponse) VisitListUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListUploadParts404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListUploadParts404ApplicationProblemPlusJSONResponse) VisitListUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListUploadParts409ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListUploadParts409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ListUploadParts409ResponseHeaders
+}
+
+func (response ListUploadParts409ApplicationProblemPlusJSONResponse) VisitListUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListUploadPartsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListUploadPartsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListUploadPartsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListUploadPartsdefaultApplicationProblemPlusJSONResponse) VisitListUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPartRequestObject struct {
+	AssetId    AssetId `json:"asset_id"`
+	PartNumber int     `json:"part_number"`
+	Body       io.Reader
+}
+
+type PutUploadPartResponseObject interface {
+	VisitPutUploadPartResponse(w http.ResponseWriter) error
+}
+
+type PutUploadPart200ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutUploadPart200JSONResponse struct {
+	Body    UploadPart
+	Headers PutUploadPart200ResponseHeaders
+}
+
+func (response PutUploadPart200JSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response PutUploadPart400ApplicationProblemPlusJSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response PutUploadPart401ApplicationProblemPlusJSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart404ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutUploadPart404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutUploadPart404ResponseHeaders
+}
+
+func (response PutUploadPart404ApplicationProblemPlusJSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart409ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutUploadPart409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutUploadPart409ResponseHeaders
+}
+
+func (response PutUploadPart409ApplicationProblemPlusJSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart413ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutUploadPart413ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutUploadPart413ResponseHeaders
+}
+
+func (response PutUploadPart413ApplicationProblemPlusJSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPartdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type PutUploadPartdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    PutUploadPartdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response PutUploadPartdefaultApplicationProblemPlusJSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetHealthz Liveness
@@ -461,6 +828,12 @@ type StrictServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(ctx context.Context, request GetReadyzRequestObject) (GetReadyzResponseObject, error)
+	// ListUploadParts List received parts
+	// (GET /v1/uploads/multipart/{asset_id}/parts)
+	ListUploadParts(ctx context.Context, request ListUploadPartsRequestObject) (ListUploadPartsResponseObject, error)
+	// PutUploadPart Upload one part
+	// (PUT /v1/uploads/multipart/{asset_id}/parts/{part_number})
+	PutUploadPart(ctx context.Context, request PutUploadPartRequestObject) (PutUploadPartResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -543,6 +916,61 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetReadyzResponseObject); ok {
 		if err := validResponse.VisitGetReadyzResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListUploadParts operation middleware
+func (sh *strictHandler) ListUploadParts(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request ListUploadPartsRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListUploadParts(ctx, request.(ListUploadPartsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListUploadParts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListUploadPartsResponseObject); ok {
+		if err := validResponse.VisitListUploadPartsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutUploadPart operation middleware
+func (sh *strictHandler) PutUploadPart(w http.ResponseWriter, r *http.Request, assetId AssetId, partNumber int) {
+	var request PutUploadPartRequestObject
+
+	request.AssetId = assetId
+	request.PartNumber = partNumber
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutUploadPart(ctx, request.(PutUploadPartRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutUploadPart")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutUploadPartResponseObject); ok {
+		if err := validResponse.VisitPutUploadPartResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

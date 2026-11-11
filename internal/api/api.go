@@ -14,6 +14,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
 
 // maxBodyBytes caps request bodies on the control plane. Its JSON bodies are a few hundred bytes.
@@ -31,6 +32,8 @@ type Deps struct {
 	Manager  *auth.Manager
 	// ContentKeys creates, reads and destroys content keys (M2-1). No endpoint uses it yet.
 	ContentKeys *contentkey.Manager
+	// Assets serves the asset endpoints (M3-1). Without it they answer 503 dependency_unavailable.
+	Assets *uploads.Service
 }
 
 // API is the control-plane HTTP handler.
@@ -47,7 +50,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})
