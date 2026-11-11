@@ -1,0 +1,17 @@
+# Keep the build context small and free of local state and secrets.
+.git
+.github
+.claude
+.env
+.env.*
+*.pem
+*.key
+bin
+dist
+docs
+spec
+deploy
+cipherframe-server
+*.test
+*.out
+coverage.*

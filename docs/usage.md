@@ -5,7 +5,7 @@
 
 ## Planned flow
 
-1. Start the stack locally with Docker Compose and MinIO (M1-8). No cloud account is needed.
+1. Start the stack locally with Docker Compose and SeaweedFS (M1-8, ADR 0014). No cloud account is needed.
 2. Create an API key for your application.
 3. Upload a source video (S3 multipart or tus) and commit it.
 4. Wait for the asset to become `ready`.
@@ -104,6 +104,60 @@ delivery bucket) are served on both the api and edge listeners. See [api.md](api
   a TLS-terminating proxy in front of both listeners.
 - Running every role in one process (`--role=api,edge,worker`) removes failure isolation between
   them. It is meant for development; deploy roles separately in production (ADR 0008).
+
+## Run locally with Docker Compose
+
+This starts everything the server needs on your machine, with no cloud account.
+
+**Prerequisites:** Docker with Compose v2 (`docker compose version`), and free ports 8080, 8081 and
+8333 on `127.0.0.1`.
+
+```sh
+docker compose -f deploy/compose/compose.yaml up --build
+```
+
+| Service | What it does | Host port |
+| --- | --- | --- |
+| `postgres` | PostgreSQL 18.6 (ADR 0017) with a named volume. | none |
+| `seaweedfs` | SeaweedFS 4.53 with its S3 gateway (ADR 0014). One development identity, no anonymous access. | `127.0.0.1:8333` |
+| `storage-init` | One-shot. On every `up` it creates the `cipherframe-source` and `cipherframe-delivery` buckets if missing and checks that an anonymous GET of each is refused (403). It exits non-zero otherwise, which stops `server` from starting. | none |
+| `migrate` | One-shot `cipherframe-server migrate`, run once Postgres is healthy. | none |
+| `server` | `cipherframe-server --role=api,edge,worker`. | api `127.0.0.1:8080`, edge `127.0.0.1:8081` |
+
+Check it: `curl http://127.0.0.1:8080/readyz` and `curl http://127.0.0.1:8081/readyz` list the
+`database`, `queue`, `storage_source` and `storage_delivery` checks, all `ok`.
+
+SeaweedFS is published on the host because presigned URLs are signed for
+`CIPHERFRAME_S3_PUBLIC_ENDPOINT` (`http://localhost:8333`) and must be usable from your browser, while
+the server itself talks to `http://seaweedfs:8333` inside the Compose network.
+
+**Reset.** `docker compose -f deploy/compose/compose.yaml down` stops the stack and keeps the data;
+adding `-v` also deletes the Postgres and SeaweedFS volumes. Run `up` again afterwards. Use `--build`
+after changing Go code to rebuild the image.
+
+**Images.** `build/Dockerfile` builds the `cipherframe-server` image: a static binary on
+`distroless/static` as a non-root user, with no shell. It serves the api and edge roles and contains
+no FFmpeg (ADR 0008). The separate worker image with FFmpeg arrives with M3 (FFmpeg build and
+licensing is gate P8). Until then no job kind needs FFmpeg, so the Compose `server` service runs the
+worker role from the same image. Build it alone with
+`docker build -f build/Dockerfile --build-arg VERSION=dev -t cipherframe-server .`.
+
+**Secrets.** Every credential in `deploy/compose/` is a public development placeholder (the
+`dev-placeholder-` prefix): the Postgres password, the S3 access key and secret, and the API key
+pepper. The stack sets `CIPHERFRAME_ENV=development`, the only mode that accepts them; with
+`production` the server refuses to start on any of them (ADR 0013).
+
+### What this setup does not protect against
+
+- It is for development only and is not hardened. Do not use it, its credentials or its volumes for
+  real data or on a shared or public host.
+- The credentials are public: anyone who can reach the published ports can use them. The ports are
+  bound to `127.0.0.1` so only your machine can, and that stops being true if you edit the bindings.
+- The buckets are private only in that SeaweedFS refuses unsigned requests. Anyone with the
+  placeholder S3 credentials can read and write them.
+- Traffic is plain HTTP, the database connection has TLS off, and the containers have no resource
+  limits.
+- There is no authentication on the Cipherframe endpoints yet (API keys arrive with M1-7).
 
 ## Configuration
 
