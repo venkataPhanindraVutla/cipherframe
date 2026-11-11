@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,9 +40,15 @@ const (
 
 // seaweed is the one SeaweedFS container shared by every integration test in the package.
 type seaweed struct {
-	port      string
-	accessKey string
-	secretKey string
+	// internalHost and publicHost are two different spellings of the container's address, so the
+	// test can tell the internal endpoint from the public one. On a plain Docker host they are
+	// 127.0.0.1 and localhost; when the tests run inside a container (TESTCONTAINERS_HOST_OVERRIDE,
+	// build/test-media.sh) they are the IP address of that host name and the name itself.
+	internalHost string
+	publicHost   string
+	port         string
+	accessKey    string
+	secretKey    string
 }
 
 var sw *seaweed
@@ -99,7 +106,18 @@ func startSeaweed(ctx context.Context) (*seaweed, testcontainers.Container, erro
 	if err != nil {
 		return nil, c, fmt.Errorf("mapped port: %w", err)
 	}
-	s := &seaweed{port: port.Port(), accessKey: access, secretKey: secret}
+	host, err := c.Host(ctx)
+	if err != nil {
+		return nil, c, fmt.Errorf("container host: %w", err)
+	}
+	s := &seaweed{internalHost: "127.0.0.1", publicHost: "localhost", port: port.Port(), accessKey: access, secretKey: secret}
+	if host != "localhost" && host != "127.0.0.1" {
+		addrs, err := net.LookupIP(host)
+		if err != nil || len(addrs) == 0 {
+			return nil, c, fmt.Errorf("resolve %s: %w", host, err)
+		}
+		s.internalHost, s.publicHost = addrs[0].String(), host
+	}
 	if err := s.createBuckets(ctx, sourceBucket, deliveryBucket); err != nil {
 		return nil, c, err
 	}
@@ -131,8 +149,8 @@ func (s *seaweed) createBuckets(ctx context.Context, names ...string) error {
 	return nil
 }
 
-func (s *seaweed) internalURL() string { return "http://127.0.0.1:" + s.port }
-func (s *seaweed) publicURL() string   { return "http://localhost:" + s.port }
+func (s *seaweed) internalURL() string { return "http://" + s.internalHost + ":" + s.port }
+func (s *seaweed) publicURL() string   { return "http://" + s.publicHost + ":" + s.port }
 
 // cfg returns a configuration whose internal and public endpoints use different host forms.
 func (s *seaweed) cfg() config.S3 {
@@ -197,15 +215,15 @@ func TestPresignedURLUsesPublicEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Host != "localhost:"+sw.port {
-		t.Fatalf("presigned host = %q, want the public endpoint localhost:%s", u.Host, sw.port)
+	if u.Host != sw.publicHost+":"+sw.port {
+		t.Fatalf("presigned host = %q, want the public endpoint %s:%s", u.Host, sw.publicHost, sw.port)
 	}
 	if body := fetch(t, req.URL); body != "public" {
 		t.Fatalf("GET through the public host returned %q", body)
 	}
 
 	// The signature covers the host: the same URL aimed at the internal host must be refused.
-	u.Host = "127.0.0.1:" + sw.port
+	u.Host = sw.internalHost + ":" + sw.port
 	resp := do(t, u.String())
 	if resp != http.StatusForbidden {
 		t.Fatalf("URL re-aimed at the internal host: status %d, want 403 (signature covers the host)", resp)

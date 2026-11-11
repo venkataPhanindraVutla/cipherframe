@@ -34,6 +34,7 @@ const (
 // Seaweed is a SeaweedFS container with its S3 gateway and the two buckets, shared by every test
 // of a test binary. Start it lazily with Shared so a package pays for it only when a test needs it.
 type Seaweed struct {
+	host      string
 	port      string
 	accessKey string
 	secretKey string
@@ -99,7 +100,18 @@ func start(ctx context.Context) (*Seaweed, error) {
 		_ = c.Terminate(ctx)
 		return nil, fmt.Errorf("mapped port: %w", err)
 	}
-	s := &Seaweed{port: port.Port(), accessKey: access, secretKey: secret, container: c}
+	// The container's host is "localhost" on a plain Docker host, and whatever
+	// TESTCONTAINERS_HOST_OVERRIDE names when the tests themselves run inside a container
+	// (host.docker.internal; see CONTRIBUTING.md, "Media and pipeline tests").
+	host, err := c.Host(ctx)
+	if err != nil {
+		_ = c.Terminate(ctx)
+		return nil, fmt.Errorf("container host: %w", err)
+	}
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	s := &Seaweed{host: host, port: port.Port(), accessKey: access, secretKey: secret, container: c}
 	if err := s.createBuckets(ctx, SourceBucket, DeliveryBucket); err != nil {
 		_ = c.Terminate(ctx)
 		return nil, err
@@ -130,7 +142,7 @@ func (s *Seaweed) createBuckets(ctx context.Context, names ...string) error {
 func (s *Seaweed) Client() *s3.Client {
 	return s3.New(s3.Options{
 		Region:                     "us-east-1",
-		BaseEndpoint:               aws.String("http://127.0.0.1:" + s.port),
+		BaseEndpoint:               aws.String("http://" + s.host + ":" + s.port),
 		UsePathStyle:               true,
 		Credentials:                credentials.NewStaticCredentialsProvider(s.accessKey, s.secretKey, ""),
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
@@ -141,8 +153,8 @@ func (s *Seaweed) Client() *s3.Client {
 // Config returns the storage configuration for the container's two buckets.
 func (s *Seaweed) Config() config.S3 {
 	return config.S3{
-		Endpoint:        "http://127.0.0.1:" + s.port,
-		PublicEndpoint:  "http://localhost:" + s.port,
+		Endpoint:        "http://" + s.host + ":" + s.port,
+		PublicEndpoint:  "http://" + s.host + ":" + s.port,
 		Region:          "us-east-1",
 		ForcePathStyle:  true,
 		SourceBucket:    SourceBucket,
