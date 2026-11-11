@@ -112,6 +112,20 @@ func (p *Provider) Current(ctx context.Context) (kms.KeyRef, error) {
 	return kms.KeyRef{KeyID: KeyID, Version: strconv.Itoa(p.current)}, nil
 }
 
+// HasKEK implements kms.KEKChecker: it reports whether ref names a KEK this provider holds, so the
+// server can refuse to start when a stored key needs a version that is no longer configured.
+func (p *Provider) HasKEK(ref kms.KeyRef) bool {
+	if ref.KeyID != KeyID {
+		return false
+	}
+	v, err := strconv.Atoi(ref.Version)
+	if err != nil {
+		return false
+	}
+	_, ok := p.aeads[v]
+	return ok
+}
+
 // bind prefixes the caller's associated data with the format byte, so the format version is
 // authenticated too.
 func bind(aad []byte) []byte {
@@ -198,4 +212,7 @@ func (*Provider) MarshalJSON() ([]byte, error) { return []byte(`"` + config.Reda
 // LogValue implements slog.LogValuer.
 func (p *Provider) LogValue() slog.Value { return slog.StringValue(p.String()) }
 
-var _ kms.Provider = (*Provider)(nil)
+var (
+	_ kms.Provider   = (*Provider)(nil)
+	_ kms.KEKChecker = (*Provider)(nil)
+)

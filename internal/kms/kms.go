@@ -50,6 +50,14 @@ type Provider interface {
 	Unwrap(ctx context.Context, w Wrapped, aad []byte) ([]byte, error)
 }
 
+// KEKChecker is implemented by a provider that knows locally which KEK versions it holds (the
+// local provider). Providers whose versions live in a remote service do not implement it; they can
+// only be checked for presence.
+type KEKChecker interface {
+	// HasKEK reports whether ref names a KEK the provider can unwrap with.
+	HasKEK(ref KeyRef) bool
+}
+
 // Registry holds the provider that wraps new keys and every configured provider that can unwrap,
 // looked up by Wrapped.Provider. It is immutable after NewRegistry.
 type Registry struct {
