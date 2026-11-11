@@ -124,6 +124,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 			if strings.HasPrefix(path, "/v1/assets") || strings.HasPrefix(path, "/v1/uploads/") {
 				continue // exercised, with storage, by TestUploadLifecycleAndSourceIsNeverAddressable
 			}
+			if strings.HasPrefix(path, "/v1/playback-") {
+				continue // exercised by TestPlaybackOperationsMatchSpec
+			}
 			if op.Security != nil && len(*op.Security) > 0 && !covered[op.OperationID] {
 				t.Errorf("%s %s (%s) was not exercised with a 2xx response", method, path, op.OperationID)
 			}

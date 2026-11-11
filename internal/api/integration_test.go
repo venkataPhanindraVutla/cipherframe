@@ -25,6 +25,8 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 )
 
 func TestMain(m *testing.M) { os.Exit(dbtest.Run(m)) }
@@ -64,7 +66,12 @@ type harness struct {
 	mgr   *auth.Manager
 	logs  *syncBuf
 	keys  []string // every full key issued, to prove none reaches the log
+
+	keyring *token.Keyring // verifies the playback tokens the API signs
 }
+
+// testEdgeURL is the edge public URL the playback service is built with.
+const testEdgeURL = "https://media.example.com"
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
@@ -78,10 +85,18 @@ func newHarness(t *testing.T) *harness {
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	repos := db.New(pool)
 	mgr := auth.NewManager(pool, peppers, clk.Now)
-	a := api.New(api.Deps{Log: log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr})
+	keyring, err := token.NewKeyring(map[int][]byte{1: []byte("test-fixture-playback-token-key-0123456789")}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: testEdgeURL, Now: clk.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := api.New(api.Deps{Log: log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr, Playback: pb})
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)
-	return &harness{t: t, pool: pool, repos: repos, srv: srv, clk: clk, mgr: mgr, logs: logs}
+	return &harness{t: t, pool: pool, repos: repos, srv: srv, clk: clk, mgr: mgr, logs: logs, keyring: keyring}
 }
 
 // bootstrap creates a tenant with an admin key and returns the full key.

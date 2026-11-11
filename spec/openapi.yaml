@@ -474,6 +474,65 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/playback-sessions:
+    post:
+      operationId: createPlaybackSession
+      summary: Start a playback session
+      description: |
+        Starts a playback session for one viewer on one `ready` asset of the caller's tenant and
+        returns what the viewer's player needs: the session ID, a short-lived **playback token**
+        (shown only in this response), the heartbeat interval and the master playlist URL on edge
+        (ADR 0028, 0030). Requires the `sessions:write` scope.
+
+        An asset of another tenant is `not_found`, the same as one that does not exist. An asset
+        that is not `ready` is `409 asset_not_ready`. A viewer that already has the tenant's
+        maximum number of active sessions (default 3, `max_sessions_per_viewer` in the playback
+        settings; 0 means unlimited) gets `409 session_limit`, and existing sessions are left
+        alone. A session counts as active until it is revoked or ended, until it has had no
+        heartbeat for the idle timeout, or until it reaches its maximum age.
+
+        `viewer_id` is yours to choose. Use a pseudonymous identifier that only your application
+        can link to a person. Never send an email address, a name or another direct identifier: it
+        is stored with the session and counts against the viewer's session limit.
+
+        The player sends the token as `Authorization: Bearer <token>` on every request to edge
+        (`token_transport` is `header`). When the tenant has set `token_in_url`, `manifest_url`
+        carries the token as the query parameter `t` and `token_transport` is `url`; that mode is
+        for native HLS players that cannot set headers, and the token can then appear in browser
+        history and in logs of proxies the operator does not control (ADR 0030).
+      tags: [api]
+      security:
+        - bearerAuth: [sessions:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlaybackSessionRequest"
+      responses:
+        "201":
+          description: The session was created. `token` and a `manifest_url` carrying it are shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedPlaybackSession"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/uploads/multipart/{asset_id}/parts:
     get:
       operationId: listUploadParts
@@ -682,7 +741,7 @@ components:
         type: string
         pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     CacheControlNoStore:
-      description: "Always `no-store`; the body holds a full API key or an upload token."
+      description: "Always `no-store`; the body holds a full API key, an upload token or a playback token."
       required: true
       schema:
         type: string
@@ -1011,6 +1070,69 @@ components:
             $ref: "#/components/schemas/Asset"
         next_cursor:
           type: string
+    SessionId:
+      type: string
+      pattern: "^ses_[0-9a-hjkmnp-tv-z]{52}$"
+      description: A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+    CreatePlaybackSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [asset_id, viewer_id]
+      properties:
+        asset_id:
+          $ref: "#/components/schemas/AssetIdValue"
+        viewer_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: |
+            Your pseudonymous ID for the viewer: 1 to 128 printable characters, no control
+            characters. Use an ID only your application can link to a person, never an email
+            address.
+    CreatedPlaybackSession:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - token
+        - token_expires_at
+        - heartbeat_interval_seconds
+        - session_expires_at
+        - manifest_url
+        - token_transport
+      properties:
+        session_id:
+          $ref: "#/components/schemas/SessionId"
+        token:
+          type: string
+          maxLength: 1024
+          description: |
+            The playback token (`v1.<payload>.<kid>.<mac>`), shown only here. It allows the
+            manifest, key and segment requests of this session and asset until `token_expires_at`.
+            Each heartbeat returns a fresh one.
+        token_expires_at:
+          type: string
+          format: date-time
+          description: When the token stops working. Never later than `session_expires_at`.
+        heartbeat_interval_seconds:
+          type: integer
+          description: How often the player should send a heartbeat.
+        session_expires_at:
+          type: string
+          format: date-time
+          description: The session ends at this time at the latest, heartbeats or not.
+        manifest_url:
+          type: string
+          format: uri
+          description: |
+            The master playlist on edge, `<edge URL>/v1/play/<session_id>/master.m3u8`. It ends
+            with `?t=<token>` only when `token_transport` is `url`.
+        token_transport:
+          type: string
+          enum: [header, url]
+          description: |
+            `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
+            to tokens in URLs (ADR 0030), and `manifest_url` carries it.
     UploadPart:
       type: object
       additionalProperties: false

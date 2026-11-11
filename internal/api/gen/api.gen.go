@@ -48,6 +48,24 @@ func (e AssetState) Valid() bool {
 	}
 }
 
+// Defines values for CreatedPlaybackSessionTokenTransport.
+const (
+	Header CreatedPlaybackSessionTokenTransport = "header"
+	Url    CreatedPlaybackSessionTokenTransport = "url"
+)
+
+// Valid indicates whether the value is a known member of the CreatedPlaybackSessionTokenTransport enum.
+func (e CreatedPlaybackSessionTokenTransport) Valid() bool {
+	switch e {
+	case Header:
+		return true
+	case Url:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
@@ -310,6 +328,16 @@ type CreateKeyRequest struct {
 	Scopes *[]Scope `json:"scopes,omitempty"`
 }
 
+// CreatePlaybackSessionRequest defines model for CreatePlaybackSessionRequest.
+type CreatePlaybackSessionRequest struct {
+	AssetId AssetIdValue `json:"asset_id"`
+
+	// ViewerId Your pseudonymous ID for the viewer: 1 to 128 printable characters, no control
+	// characters. Use an ID only your application can link to a person, never an email
+	// address.
+	ViewerId string `json:"viewer_id"`
+}
+
 // CreatedApiKey Key metadata plus the full key, returned exactly once.
 type CreatedApiKey struct {
 	ClientId  ClientId  `json:"client_id"`
@@ -340,6 +368,38 @@ type CreatedAsset struct {
 	Asset  Asset              `json:"asset"`
 	Upload UploadInstructions `json:"upload"`
 }
+
+// CreatedPlaybackSession defines model for CreatedPlaybackSession.
+type CreatedPlaybackSession struct {
+	// HeartbeatIntervalSeconds How often the player should send a heartbeat.
+	HeartbeatIntervalSeconds int `json:"heartbeat_interval_seconds"`
+
+	// ManifestUrl The master playlist on edge, `<edge URL>/v1/play/<session_id>/master.m3u8`. It ends
+	// with `?t=<token>` only when `token_transport` is `url`.
+	ManifestUrl string `json:"manifest_url"`
+
+	// SessionExpiresAt The session ends at this time at the latest, heartbeats or not.
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+
+	// SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+	SessionId SessionId `json:"session_id"`
+
+	// Token The playback token (`v1.<payload>.<kid>.<mac>`), shown only here. It allows the
+	// manifest, key and segment requests of this session and asset until `token_expires_at`.
+	// Each heartbeat returns a fresh one.
+	Token string `json:"token"`
+
+	// TokenExpiresAt When the token stops working. Never later than `session_expires_at`.
+	TokenExpiresAt time.Time `json:"token_expires_at"`
+
+	// TokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
+	// to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+	TokenTransport CreatedPlaybackSessionTokenTransport `json:"token_transport"`
+}
+
+// CreatedPlaybackSessionTokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
+// to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+type CreatedPlaybackSessionTokenTransport string
 
 // FieldError defines model for FieldError.
 type FieldError struct {
@@ -407,6 +467,9 @@ type RotateKeyRequest struct {
 
 // Scope An API key scope (ADR 0009).
 type Scope string
+
+// SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+type SessionId = string
 
 // UploadInstructions defines model for UploadInstructions.
 type UploadInstructions struct {
@@ -491,6 +554,9 @@ type CreateKeyJSONRequestBody = CreateKeyRequest
 // RotateKeyJSONRequestBody defines body for RotateKey for application/json ContentType.
 type RotateKeyJSONRequestBody = RotateKeyRequest
 
+// CreatePlaybackSessionJSONRequestBody defines body for CreatePlaybackSession for application/json ContentType.
+type CreatePlaybackSessionJSONRequestBody = CreatePlaybackSessionRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealthz Liveness
@@ -532,6 +598,9 @@ type ServerInterface interface {
 	// RotateKey Rotate an API key in place
 	// (POST /v1/keys/{key_id}/rotate)
 	RotateKey(w http.ResponseWriter, r *http.Request, keyId KeyId)
+	// CreatePlaybackSession Start a playback session
+	// (POST /v1/playback-sessions)
+	CreatePlaybackSession(w http.ResponseWriter, r *http.Request)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(w http.ResponseWriter, r *http.Request)
@@ -884,6 +953,20 @@ func (siw *ServerInterfaceWrapper) RotateKey(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// CreatePlaybackSession operation middleware
+func (siw *ServerInterfaceWrapper) CreatePlaybackSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePlaybackSession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWhoami operation middleware
 func (siw *ServerInterfaceWrapper) GetWhoami(w http.ResponseWriter, r *http.Request) {
 
@@ -1032,6 +1115,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.GetAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions", wrapper.CreatePlaybackSession)
 
 	return m
 }
@@ -2368,6 +2452,162 @@ func (response RotateKeydefaultApplicationProblemPlusJSONResponse) VisitRotateKe
 	return err
 }
 
+type CreatePlaybackSessionRequestObject struct {
+	Body *CreatePlaybackSessionJSONRequestBody
+}
+
+type CreatePlaybackSessionResponseObject interface {
+	VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error
+}
+
+type CreatePlaybackSession201ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type CreatePlaybackSession201JSONResponse struct {
+	Body    CreatedPlaybackSession
+	Headers CreatePlaybackSession201ResponseHeaders
+}
+
+func (response CreatePlaybackSession201JSONResponse) VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePlaybackSession400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreatePlaybackSession400ApplicationProblemPlusJSONResponse) VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePlaybackSession401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response CreatePlaybackSession401ApplicationProblemPlusJSONResponse) VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePlaybackSession403ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreatePlaybackSession403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreatePlaybackSession403ResponseHeaders
+}
+
+func (response CreatePlaybackSession403ApplicationProblemPlusJSONResponse) VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePlaybackSession404ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreatePlaybackSession404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreatePlaybackSession404ResponseHeaders
+}
+
+func (response CreatePlaybackSession404ApplicationProblemPlusJSONResponse) VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePlaybackSession409ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreatePlaybackSession409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreatePlaybackSession409ResponseHeaders
+}
+
+func (response CreatePlaybackSession409ApplicationProblemPlusJSONResponse) VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePlaybackSessiondefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type CreatePlaybackSessiondefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    CreatePlaybackSessiondefaultResponseHeaders
+	StatusCode int
+}
+
+func (response CreatePlaybackSessiondefaultApplicationProblemPlusJSONResponse) VisitCreatePlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetWhoamiRequestObject struct {
 }
 
@@ -2475,6 +2715,9 @@ type StrictServerInterface interface {
 	// RotateKey Rotate an API key in place
 	// (POST /v1/keys/{key_id}/rotate)
 	RotateKey(ctx context.Context, request RotateKeyRequestObject) (RotateKeyResponseObject, error)
+	// CreatePlaybackSession Start a playback session
+	// (POST /v1/playback-sessions)
+	CreatePlaybackSession(ctx context.Context, request CreatePlaybackSessionRequestObject) (CreatePlaybackSessionResponseObject, error)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(ctx context.Context, request GetWhoamiRequestObject) (GetWhoamiResponseObject, error)
@@ -2871,6 +3114,37 @@ func (sh *strictHandler) RotateKey(w http.ResponseWriter, r *http.Request, keyId
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RotateKeyResponseObject); ok {
 		if err := validResponse.VisitRotateKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreatePlaybackSession operation middleware
+func (sh *strictHandler) CreatePlaybackSession(w http.ResponseWriter, r *http.Request) {
+	var request CreatePlaybackSessionRequestObject
+
+	var body CreatePlaybackSessionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreatePlaybackSession(ctx, request.(CreatePlaybackSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreatePlaybackSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreatePlaybackSessionResponseObject); ok {
+		if err := validResponse.VisitCreatePlaybackSessionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
