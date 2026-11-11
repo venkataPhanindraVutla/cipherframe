@@ -30,6 +30,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0022](0022-key-provider-packaging.md) | Key provider packaging | none | Accepted | 2026-11-11 |
 | [0023](0023-kms-provider-test-strategy.md) | KMS provider test strategy | none | Accepted | 2026-11-11 |
 | [0024](0024-encoding-defaults-and-ffmpeg-build.md) | Encoding defaults and FFmpeg build | P8 | Accepted | 2026-11-11 |
+| [0025](0025-resumable-uploads-and-media-limits.md) | Resumable uploads and media limits | none | Accepted | 2026-11-11 |
 
 ## Open gates
 
