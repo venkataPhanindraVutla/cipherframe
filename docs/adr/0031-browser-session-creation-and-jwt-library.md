@@ -18,8 +18,10 @@ That browser-facing endpoint needs a home, and JWT and JWKS handling needs a lib
 
 ## Decision
 
-- **`POST /v1/play/sessions` on the edge role.** The api role stays server-to-server only and can
-  live on a private network. Edge reads each tenant's provider configuration (cached like the
+- **`POST /v1/play/tenants/{tenant_id}/sessions` on the edge role.** The tenant is in the path
+  because a CORS preflight has no body, and edge needs the tenant to know which origins it allows.
+  A tenant ID is an identifier, not a secret. The api role stays server-to-server only and can live
+  on a private network. Edge reads each tenant's provider configuration (cached like the
   playback settings) and makes the outbound JWKS and callback requests, with the SSRF guards in
   ADR 0029. The tenant is managed through the api role's admin endpoints.
 - **`github.com/go-jose/go-jose/v4`** (Apache-2.0) verifies JWTs and parses JWKS. Its parse
