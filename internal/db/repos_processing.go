@@ -165,13 +165,14 @@ func (r *Repos) ListArtifacts(ctx context.Context, assetID id.AssetID) ([]Artifa
 	return out, nil
 }
 
-// DeleteArtifacts removes the asset's artifact rows and returns how many there were. The objects
-// themselves are the caller's to delete.
-func (r *Repos) DeleteArtifacts(ctx context.Context, assetID id.AssetID) (int64, error) {
+// DeleteHLSArtifacts removes the asset's playlist, init segment and media segment rows (what the
+// processing job produces again on a retry; a poster is kept) and returns how many there were. The
+// objects themselves are the caller's to delete.
+func (r *Repos) DeleteHLSArtifacts(ctx context.Context, assetID id.AssetID) (int64, error) {
 	aid, err := requirePG(assetID)
 	if err != nil {
 		return 0, err
 	}
-	n, err := r.q.DeleteAssetArtifacts(ctx, aid)
+	n, err := r.q.DeleteAssetHLSArtifacts(ctx, aid)
 	return n, mapError(err)
 }

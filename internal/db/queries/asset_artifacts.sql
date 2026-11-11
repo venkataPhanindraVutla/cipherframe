@@ -14,5 +14,7 @@ WHERE asset_artifacts.asset_id = EXCLUDED.asset_id;
 -- name: ListAssetArtifacts :many
 SELECT * FROM asset_artifacts WHERE asset_id = $1 ORDER BY bucket, object_key;
 
--- name: DeleteAssetArtifacts :execrows
-DELETE FROM asset_artifacts WHERE asset_id = $1;
+-- name: DeleteAssetHLSArtifacts :execrows
+-- The playlists, init segments and media segments of an asset (everything the processing job makes
+-- again on a retry). A poster is not one of them.
+DELETE FROM asset_artifacts WHERE asset_id = $1 AND kind IN ('master', 'playlist', 'init', 'segment');

@@ -158,7 +158,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s)
 	}
 	if Has(opts.Roles, RoleWorker) {
-		w, err := newWorker(pool, contentKeys, log)
+		w, err := newWorker(pool, contentKeys, log, &processing{Buckets: buckets, Config: cfg})
 		if err != nil {
 			cleanup()
 			return err
@@ -227,9 +227,17 @@ func newEdgeUploads(ctx context.Context, pool *pgxpool.Pool, buckets *storage.Bu
 // workerConcurrency is how many jobs one worker process runs at once.
 const workerConcurrency = 10
 
+// processing is what the asset.process job needs besides the database: the two buckets and the
+// configuration (FFmpeg paths, limits, work directory, timeout).
+type processing struct {
+	Buckets *storage.Buckets
+	Config  *config.Config
+}
+
 // newWorker builds the job registry and, when it has kinds, a working queue. Milestones register
-// their job kinds here (for example transcoding in M3). The first real kind is kms.rewrap (M2-4).
-func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Logger) (*worker.Worker, error) {
+// their job kinds here: kms.rewrap (M2-4) and asset.process (M3). proc may be nil, which leaves
+// asset.process unregistered (tests that exercise only the other kinds).
+func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Logger, proc *processing) (*worker.Worker, error) {
 	reg := jobs.NewRegistry()
 	// A handler that chains the next run needs a queue to insert with. This one has no workers and
 	// shares the registry, so it only inserts.
@@ -239,6 +247,11 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 	}
 	if err := contentkey.RegisterRewrapJob(reg, contentKeys, inserter, jobs.KindConfig{}); err != nil {
 		return nil, fmt.Errorf("worker: %w", err)
+	}
+	if proc != nil {
+		if err := registerProcessing(reg, pool, contentKeys, proc, log); err != nil {
+			return nil, fmt.Errorf("worker: %w", err)
+		}
 	}
 	kinds := reg.Kinds()
 	if len(kinds) == 0 {

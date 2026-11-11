@@ -11,12 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const deleteAssetArtifacts = `-- name: DeleteAssetArtifacts :execrows
-DELETE FROM asset_artifacts WHERE asset_id = $1
+const deleteAssetHLSArtifacts = `-- name: DeleteAssetHLSArtifacts :execrows
+DELETE FROM asset_artifacts WHERE asset_id = $1 AND kind IN ('master', 'playlist', 'init', 'segment')
 `
 
-func (q *Queries) DeleteAssetArtifacts(ctx context.Context, assetID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAssetArtifacts, assetID)
+// The playlists, init segments and media segments of an asset (everything the processing job makes
+// again on a retry). A poster is not one of them.
+func (q *Queries) DeleteAssetHLSArtifacts(ctx context.Context, assetID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAssetHLSArtifacts, assetID)
 	if err != nil {
 		return 0, err
 	}
