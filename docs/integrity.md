@@ -1,7 +1,8 @@
 # Integrity and verifiable deletion
 
-> Status: the primitives described under "Construction" are implemented (M5-1a, ADR 0033, gate
-> P9). The manifest fields, signing-key storage and endpoints follow in M5-1 to M5-3. Timestamp
+> Status: the primitives described under "Construction" and the signed manifest written by the
+> pipeline (see "Manifest format") are implemented (ADR 0033, gate P9). The endpoints that serve
+> manifests and proofs follow in M5-3. Timestamp
 > authority recommendations remain pending gate P10.
 
 ## Integrity manifests
@@ -9,6 +10,81 @@
 For each asset Cipherframe hashes every artifact it produced, builds a Merkle tree, and signs a
 manifest that records the pipeline version, encoder settings and branding. Signing keys have key ids
 and rotate; verification keys are published at `/.well-known/cipherframe-keys.json`.
+
+## Manifest format
+
+The asset pipeline builds one manifest per asset after it has stored every object and before it
+marks the asset ready (package `internal/integrity/manifest`). The manifest is encoded as canonical
+JSON (see "Canonical JSON"), signed as a DSSE envelope with payload type
+`application/vnd.cipherframe.manifest+json`, and stored in the `asset_manifests` table in the same
+transaction that moves the asset to `ready`. A retry removes the previous manifest before it builds
+a new one. The envelope is kept in the database only; it is not an object in the delivery bucket.
+A later release serves it through the API.
+
+Rules: member names are lower_snake_case; there are no floating-point numbers (bandwidth and sizes
+are integers, the frame rate is a rational string such as `"30000/1001"`); hashes are lowercase
+hex; times are RFC 3339 in UTC with second precision. Every `path` is relative to the asset's HLS
+prefix, the same form as the variant URIs in the master playlist. The manifest never holds a bucket
+name or an object key, and it never names the source object: the source appears only as the SHA-256
+and size recorded at ingest. A segment's hash covers the bytes as stored, so for a media segment it
+is the hash of the ciphertext.
+
+| Member | Content |
+| --- | --- |
+| `schema` | `cipherframe.manifest/v1` |
+| `asset_id`, `tenant_id` | The prefixed ids of the asset and its tenant. |
+| `created_at` | When the manifest was made. |
+| `pipeline_version` | The Cipherframe version that ran the pipeline. |
+| `encoder` | `ffmpeg` (first line of `ffmpeg -version`), `video_codec`, `preset`, `frame_rate`, `segment_seconds`, `keyframe_seconds`, `encryption` (`AES-128`), and `rungs`: per rendition `name`, `crf`, `maxrate_kbps`, `bufsize_kbps`, `audio_kbps`. |
+| `renditions` | In ladder order: `name`, `width`, `height`, `bandwidth`, `segment_count`, `init` and `segments` (each `path`, `sha256`, `size`, segments in playlist order), and `merkle_root`. |
+| `artifacts` | The master playlist (`kind` `master`) and each media playlist (`kind` `playlist`, with its `rendition`): `kind`, `path`, `sha256`, `size`. |
+| `top_level` | `order`, the leaf labels of the top-level tree, and `root`. |
+| `source` | `sha256` and `size` of the uploaded original. |
+
+Trees. Rendition `merkle_root`: leaves are the init segment and then the media segments in
+playlist order, each leaf's data being the artifact's 32-byte SHA-256. Top-level `root`: leaves in
+this fixed order, each rendition's 32-byte `merkle_root` in ladder order, then the SHA-256 of the
+master playlist, then the SHA-256 of each media playlist in ladder order; `order` lists their labels
+(`rendition:<name>`, `master`, `playlist:<name>`).
+
+An example, with obviously fake hashes and one rendition of two segments (shown indented; the
+signed bytes are the canonical form without whitespace):
+
+```json
+{
+  "schema": "cipherframe.manifest/v1",
+  "asset_id": "ast_00000000000000000000000001",
+  "tenant_id": "ten_00000000000000000000000001",
+  "created_at": "2026-11-12T10:30:15Z",
+  "pipeline_version": "v1.2.3",
+  "encoder": {
+    "ffmpeg": "ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers",
+    "video_codec": "libx264", "preset": "medium", "frame_rate": "30000/1001",
+    "segment_seconds": 6, "keyframe_seconds": 2, "encryption": "AES-128",
+    "rungs": [{"name": "720p", "crf": 23, "maxrate_kbps": 3000, "bufsize_kbps": 6000, "audio_kbps": 128}]
+  },
+  "renditions": [{
+    "name": "720p", "width": 1280, "height": 720, "bandwidth": 2500000, "segment_count": 2,
+    "init": {"path": "720p/init.mp4", "sha256": "aa00...aa", "size": 812},
+    "segments": [
+      {"path": "720p/seg-0.m4s", "sha256": "bb00...bb", "size": 1048592},
+      {"path": "720p/seg-1.m4s", "sha256": "cc00...cc", "size": 524304}
+    ],
+    "merkle_root": "dd00...dd"
+  }],
+  "artifacts": [
+    {"kind": "master", "path": "master.m3u8", "sha256": "ee00...ee", "size": 310},
+    {"kind": "playlist", "rendition": "720p", "path": "720p/playlist.m3u8", "sha256": "ff00...ff", "size": 280}
+  ],
+  "top_level": {"order": ["rendition:720p", "master", "playlist:720p"], "root": "1100...11"},
+  "source": {"sha256": "2200...22", "size": 52428800}
+}
+```
+
+The `asset_manifests` row also records the `key_id` of the signer, the SHA-256 of the payload and
+the top-level root as separate columns, so a lookup does not need to parse the envelope. A signer
+failure while processing is a retried failure like any other; the asset does not become ready
+without a manifest.
 
 ## Construction
 
@@ -35,8 +111,7 @@ All hashes are SHA-256 (32 bytes).
 Per ADR 0033, there is one tree per rendition. Its leaves are the init segment and then the media
 segments in playlist order, and each leaf's data is that artifact's 32-byte SHA-256 (so the leaf
 hash is `SHA-256(0x00 || sha256(artifact))`). A top-level tree combines the rendition roots and the
-hashes of the other artifacts in the order the manifest records. The manifest fields are fixed in
-M5-1.
+hashes of the other artifacts in the order the manifest records (see "Manifest format").
 
 Inclusion proof (audit path), RFC 9162 sections 2.1.3.1 and 2.1.3.2. For leaf index `m` (0-based) in
 a tree of `n` leaves, `PATH(m, D[n])` is empty when `n = 1`; otherwise, with `k` as above, it is

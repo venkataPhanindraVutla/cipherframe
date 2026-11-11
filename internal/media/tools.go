@@ -121,6 +121,30 @@ func (t Tools) CheckCapabilities(ctx context.Context) error {
 	return nil
 }
 
+// maxVersionLine bounds the version string that goes into a signed manifest.
+const maxVersionLine = 256
+
+// Version returns the first line of `ffmpeg -version`, such as "ffmpeg version 7.1 Copyright ...".
+// It runs under the same bounds as the capability listings.
+func (t Tools) Version(ctx context.Context) (string, error) {
+	res, err := runBounded(ctx, t.FFmpeg, "-hide_banner", "-version")
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("media: ffmpeg version: %w", err)
+	}
+	line, _, _ := strings.Cut(string(res.stdout), "\n")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", errors.New("media: ffmpeg printed no version")
+	}
+	if len(line) > maxVersionLine {
+		line = strings.ToValidUTF8(line[:maxVersionLine], "")
+	}
+	return strings.ToValidUTF8(line, ""), nil
+}
+
 func joinProblems(p []string) string {
 	if len(p) == 0 {
 		return ""

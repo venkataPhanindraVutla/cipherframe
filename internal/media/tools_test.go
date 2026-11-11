@@ -175,3 +175,24 @@ func TestParseListing(t *testing.T) {
 		t.Errorf("encoders: %v", got)
 	}
 }
+
+func TestVersionIsTheFirstLine(t *testing.T) {
+	ff := fakeFFmpeg(t, map[string]string{"-version": "ffmpeg version 9.0.2 Copyright (c) test\nbuilt with gcc\n"})
+	got, err := (Tools{FFmpeg: ff}).Version(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ffmpeg version 9.0.2 Copyright (c) test" {
+		t.Fatalf("version = %q", got)
+	}
+}
+
+func TestVersionErrors(t *testing.T) {
+	empty := fakeFFmpeg(t, map[string]string{"-version": ""})
+	if _, err := (Tools{FFmpeg: empty}).Version(context.Background()); err == nil {
+		t.Error("an empty version must fail")
+	}
+	if _, err := (Tools{FFmpeg: filepath.Join(t.TempDir(), "missing")}).Version(context.Background()); err == nil {
+		t.Error("a missing binary must fail")
+	}
+}

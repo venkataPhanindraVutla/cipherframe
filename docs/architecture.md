@@ -304,7 +304,10 @@ already uses every core) and 10 default-queue jobs; the api role inserts into `m
    `asset_artifacts` (asset, kind `master|playlist|init|segment|poster`, bucket role, object key,
    size, SHA-256 of the stored bytes: invariant I6, the start of the derived-artifact registry for
    M6-1) and the asset moves `processing -> ready` with its duration and a JSON summary of the
-   renditions, in one transaction.
+   renditions, in one transaction. Just before that, the worker builds the integrity manifest from
+   those records, signs it with the current key and stores the signed envelope in `asset_manifests`
+   in the same transaction, so a ready asset always has its manifest (see
+   [integrity.md](integrity.md#manifest-format)). A signer failure is an ordinary, retried failure.
 
 Object keys are `hls/master.m3u8` and, per rendition, `hls/<name>/playlist.m3u8`, `init.mp4` and
 `seg-<n>.m4s` (n from 0), under `t/<tenant>/a/<asset>/`.
@@ -360,7 +363,8 @@ job runs (it was deleted), the job removes what it uploaded and ends.
   use on a best-effort basis; a memory dump of the worker can expose it.
 - The init segment is stored unencrypted (see [encryption.md](encryption.md)).
 - The source file in the source bucket is not encrypted by this pipeline; it stays until deletion.
-- Segment hashes in `asset_artifacts` prove what was stored at upload time; they are not signed.
+- Segment hashes in `asset_artifacts` prove what was stored at upload time; the signed manifest in
+  `asset_manifests` is what lets a third party check them.
 - A source file is hostile input to a C media decoder. See the media toolkit section above.
 
 ## Playback delivery on edge

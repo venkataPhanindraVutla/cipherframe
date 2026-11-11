@@ -5,6 +5,7 @@ package pipeline_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -30,12 +31,15 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/hls"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media/testmedia"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/storagetest"
@@ -74,6 +78,7 @@ type rig struct {
 	repos   *db.Repos
 	buckets *storage.Buckets
 	mgr     *contentkey.Manager
+	signer  *signing.Manager
 	proc    *pipeline.Processor
 	tenant  db.Tenant
 	client  db.Client
@@ -102,6 +107,11 @@ func newRig(t *testing.T) *rig {
 	r := &rig{t: t, pool: pool, repos: db.New(pool), buckets: buckets, workDir: t.TempDir(), logs: &bytes.Buffer{}, tools: tools}
 	r.mgr = contentkey.NewManager(pool, reg, slog.New(slog.DiscardHandler))
 	ctx := context.Background()
+	r.signer = signing.NewManager(pool, reg, slog.New(slog.DiscardHandler))
+	t.Cleanup(r.signer.Close)
+	if err := r.signer.EnsureCurrent(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if r.tenant, err = r.repos.CreateTenant(ctx, "acme"); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +120,7 @@ func newRig(t *testing.T) *rig {
 	}
 	r.proc, err = pipeline.NewProcessor(pipeline.Deps{
 		Repo: pipeline.NewDBRepo(pool), Source: buckets.Source, Delivery: buckets.Delivery,
-		Keys: pipeline.ContentKeys{Pool: pool, Manager: r.mgr}, Tools: tools,
+		Keys: pipeline.ContentKeys{Pool: pool, Manager: r.mgr}, Tools: tools, Signer: r.signer,
 		Limits:  media.Limits{MaxDuration: time.Hour, MaxWidth: 3840, MaxHeight: 2160},
 		WorkDir: r.workDir, TranscodeTimeout: 10 * time.Minute,
 		Log: slog.New(slog.NewTextHandler(r.logs, nil)), ProgressInterval: 500 * time.Millisecond,
@@ -397,6 +407,8 @@ func TestPipelineEndToEnd(t *testing.T) {
 		}
 	}
 
+	t.Run("signed manifest", func(t *testing.T) { checkManifest(t, r, a, sourceSum) })
+
 	// ---- the work directory is empty ----
 	if es, err := os.ReadDir(r.workDir); err != nil || len(es) != 0 {
 		t.Errorf("work directory after the job: %v, %v", es, err)
@@ -437,8 +449,76 @@ func TestPipelineEndToEnd(t *testing.T) {
 		if n != len(arts) {
 			t.Fatalf("%d delivery objects after the retry, want %d", n, len(arts))
 		}
+		// The retry replaced the manifest; it describes the rebuilt objects.
+		checkManifest(t, r, a, sourceSum)
 	})
 	t.Logf("total test time %s", time.Since(start).Round(time.Millisecond))
+}
+
+// checkManifest: the manifest row exists, its envelope verifies against the published keys with
+// nothing but the public key, and every hash in it is the SHA-256 of the object in the delivery
+// bucket (hashed here from the stored bytes).
+func checkManifest(t *testing.T, r *rig, a db.Asset, sourceSum [sha256.Size]byte) {
+	t.Helper()
+	ctx := context.Background()
+	row, err := r.repos.GetManifest(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubs, err := r.signer.PublicKeys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := map[string]ed25519.PublicKey{}
+	for _, k := range pubs {
+		trusted[k.KeyID] = k.PublicKey
+	}
+	env, err := dsse.Decode(row.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := dsse.Verify(env, manifest.PayloadType, trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := res.RequireAny(); err != nil {
+		t.Fatalf("the envelope does not verify: %v", err)
+	}
+	if _, ok := trusted[row.KeyID]; !ok {
+		t.Errorf("manifest key %q is not a published key", row.KeyID)
+	}
+	var doc manifest.Manifest
+	if err := json.Unmarshal(env.Payload, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Source.SHA256 != hex.EncodeToString(sourceSum[:]) || doc.Source.Size != a.SizeBytes {
+		t.Errorf("manifest source = %+v", doc.Source)
+	}
+	if hex.EncodeToString(row.TopRoot) != doc.TopLevel.Root {
+		t.Error("top_root column differs from the manifest")
+	}
+	prefix := keys.HLSPrefix(a.TenantID, a.ID)
+	check := func(path, want string) {
+		t.Helper()
+		got := sha256.Sum256(r.get(r.buckets.Delivery, prefix+path))
+		if hex.EncodeToString(got[:]) != want {
+			t.Errorf("%s: the manifest hash is not the hash of the stored object", path)
+		}
+	}
+	n := 0
+	for _, rend := range doc.Renditions {
+		check(rend.Init.Path, rend.Init.SHA256)
+		for _, s := range rend.Segments {
+			check(s.Path, s.SHA256)
+			n++
+		}
+	}
+	for _, art := range doc.Artifacts {
+		check(art.Path, art.SHA256)
+	}
+	if n != 4*4 || len(doc.Artifacts) != 5 {
+		t.Errorf("manifest lists %d segments and %d playlists", n, len(doc.Artifacts))
+	}
 }
 
 // checkEncryption: segments fetched straight from storage are not media; they are media after

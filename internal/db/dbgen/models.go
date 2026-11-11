@@ -64,6 +64,16 @@ type AssetArtifact struct {
 	CreatedAt time.Time
 }
 
+type AssetManifest struct {
+	AssetID       pgtype.UUID
+	TenantID      pgtype.UUID
+	KeyID         string
+	PayloadSha256 []byte
+	TopRoot       []byte
+	Envelope      []byte
+	CreatedAt     time.Time
+}
+
 type AuditEvent struct {
 	ID        pgtype.UUID
 	TenantID  pgtype.UUID

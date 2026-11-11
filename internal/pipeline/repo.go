@@ -24,8 +24,10 @@ type Repo interface {
 	SetProgress(ctx context.Context, tenant id.TenantID, asset id.AssetID, percent int) error
 	ResetProgress(ctx context.Context, tenant id.TenantID, asset id.AssetID) error
 	DeleteHLSArtifacts(ctx context.Context, asset id.AssetID) (int64, error)
-	// Complete registers every artifact and moves the asset processing -> ready in ONE
-	// transaction, so a ready asset always has its full artifact registry.
+	// DeleteManifest removes the asset's integrity manifest, if it has one.
+	DeleteManifest(ctx context.Context, asset id.AssetID) (bool, error)
+	// Complete registers every artifact, stores c.Manifest and moves the asset processing -> ready
+	// in ONE transaction, so a ready asset always has its full artifact registry and its manifest.
 	Complete(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, c db.Completion) (db.Asset, error)
 }
 
@@ -120,6 +122,8 @@ func isCode(err error, code errs.Code) bool {
 type Toolchain interface {
 	Probe(ctx context.Context, path string) (media.Info, error)
 	Transcode(ctx context.Context, spec media.TranscodeSpec, progress func(done time.Duration)) error
+	// Version returns the first line of `ffmpeg -version`.
+	Version(ctx context.Context) (string, error)
 }
 
 var _ Toolchain = media.Tools{}

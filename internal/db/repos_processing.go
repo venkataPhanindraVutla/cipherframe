@@ -99,7 +99,11 @@ type Completion struct {
 	Duration time.Duration
 	// Renditions is a JSON summary of the renditions produced; it must be valid JSON.
 	Renditions []byte
-	At         time.Time
+	// Manifest, when set, is stored with the completion (ADR 0033). CompleteProcessing writes it
+	// after the compare-and-set succeeds, so a caller that runs it in a transaction gets a ready
+	// asset and its manifest together or neither.
+	Manifest *AssetManifest
+	At       time.Time
 }
 
 // CompleteProcessing moves the asset processing -> ready with a compare-and-set and records the
@@ -124,6 +128,16 @@ func (r *Repos) CompleteProcessing(ctx context.Context, tenantID id.TenantID, as
 			return Asset{}, stateConflict()
 		}
 		return Asset{}, mapError(err)
+	}
+	if m := c.Manifest; m != nil {
+		stored := *m
+		stored.AssetID, stored.TenantID = assetID, tenantID
+		if stored.CreatedAt.IsZero() {
+			stored.CreatedAt = c.At
+		}
+		if err := r.InsertManifest(ctx, stored); err != nil {
+			return Asset{}, err
+		}
 	}
 	return assetFromRow(row), nil
 }

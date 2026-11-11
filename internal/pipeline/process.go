@@ -113,13 +113,18 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		return err
 	}
 
-	// 7. Register everything and finish, atomically.
+	// 7. Sign the manifest, then register everything and finish, atomically.
 	summary, err := json.Marshal(pub.summary)
 	if err != nil {
 		return err
 	}
+	at := p.Now().UTC()
+	sealed, err := p.sealManifest(ctx, asset, sourceDigest{sha256: src.SHA256, size: src.Size}, renditions, info, pub, at)
+	if err != nil {
+		return err
+	}
 	_, err = p.Repo.Complete(ctx, asset.TenantID, asset.ID, pub.artifacts, db.Completion{
-		Duration: pub.duration, Renditions: summary, At: p.Now().UTC(),
+		Duration: pub.duration, Renditions: summary, Manifest: sealed, At: at,
 	})
 	if errors.Is(err, db.ErrStateChanged) {
 		// The asset left processing while we worked (deleted, say): do not leave its output behind.

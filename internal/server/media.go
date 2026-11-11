@@ -48,6 +48,7 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, contentKeys *con
 		Delivery: proc.Buckets.Delivery,
 		Keys:     pipeline.ContentKeys{Pool: pool, Manager: contentKeys},
 		Tools:    mediaTools(cfg),
+		Signer:   proc.Signer,
 		Limits: media.Limits{
 			MaxDuration: cfg.Media.MaxSourceDuration, MaxWidth: cfg.Media.MaxSourceWidth, MaxHeight: cfg.Media.MaxSourceHeight,
 		},
