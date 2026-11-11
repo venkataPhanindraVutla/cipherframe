@@ -57,6 +57,17 @@ func NewStore(ctx context.Context, cfg config.S3, bucket string, role keys.Bucke
 	return &s3Store{api: c.internal, pre: c.presign, bucket: bucket, role: role}, nil
 }
 
+// NewS3Client returns the internal S3 client for server-side calls, configured exactly like the
+// one behind the Stores. It is for libraries that need the raw SDK client (the tus data store in
+// the edge role). Never hand it, or anything derived from it, to a client of the API.
+func NewS3Client(ctx context.Context, cfg config.S3) (*s3.Client, error) {
+	c, err := newClients(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return c.internal, nil
+}
+
 type clients struct {
 	internal *s3.Client
 	presign  *s3.PresignClient

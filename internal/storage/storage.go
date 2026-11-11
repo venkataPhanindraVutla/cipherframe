@@ -65,6 +65,12 @@ type Store interface {
 	// response's ETag header is needed for CompleteMultipart.
 	PresignPart(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (PresignedRequest, error)
 
+	// UploadPart streams one part (1 to 10000) of size bytes from body into an upload started with
+	// CreateMultipart and returns the part's ETag, which CompleteMultipart needs. The body is
+	// streamed, never buffered whole; size must be the exact number of bytes it yields. Every part
+	// but the last must be at least 5 MiB for the upload to complete.
+	UploadPart(ctx context.Context, key, uploadID string, partNumber int32, body io.Reader, size int64) (etag string, err error)
+
 	// CompleteMultipart assembles the uploaded parts, which must be listed in ascending order.
 	CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletedPart) error
 
