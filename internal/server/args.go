@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 )
 
 // Command is the parsed command line.
@@ -22,14 +24,20 @@ type Command struct {
 const (
 	AdminBootstrap   = "bootstrap"
 	AdminPepperUsage = "pepper-usage"
+	AdminKMSRewrap   = "kms-rewrap"
+	AdminKMSUsage    = "kms-usage"
 )
 
 // AdminCommand is a parsed `cipherframe-server admin ...` command.
 type AdminCommand struct {
-	// Action is AdminBootstrap or AdminPepperUsage.
+	// Action is one of the Admin constants.
 	Action string
 	// TenantName and ClientName are the bootstrap names.
 	TenantName, ClientName string
+	// BatchSize is the re-wrap batch size of kms-rewrap; zero means the job default.
+	BatchSize int
+	// Wait makes kms-rewrap wait until no content key is left on an old KEK.
+	Wait bool
 }
 
 // Usage is the help text.
@@ -38,6 +46,8 @@ const Usage = `Usage:
   cipherframe-server migrate
   cipherframe-server admin bootstrap --tenant-name NAME --client-name NAME
   cipherframe-server admin pepper-usage
+  cipherframe-server admin kms-usage
+  cipherframe-server admin kms-rewrap [--batch-size N] [--wait]
 
 Roles is a comma-separated list of api, edge and worker, for example --role=api,edge.
   --role     roles to run (required)
@@ -46,6 +56,10 @@ Roles is a comma-separated list of api, edge and worker, for example --role=api,
   admin bootstrap     create a tenant, a client and an admin API key in one transaction;
                       prints only the key on stdout (everything else goes to the log on stderr)
   admin pepper-usage  print how many active API keys use each pepper version
+  admin kms-usage     print how many content keys each KEK (provider, id, version) wraps
+  admin kms-rewrap    enqueue the job that re-wraps every content key under the current KEK;
+                      prints the job id on stdout. --wait polls until none is left on an old KEK
+                      and prints progress to stderr. A worker must be running to do the work.
 
 Configuration is read from CIPHERFRAME_* environment variables (docs/usage.md).
 `
@@ -89,9 +103,32 @@ func ParseArgs(args []string) (Command, error) {
 
 func parseAdmin(args []string) (Command, error) {
 	if len(args) == 0 {
-		return Command{}, errors.New("admin needs a subcommand: bootstrap or pepper-usage")
+		return Command{}, errors.New("admin needs a subcommand: bootstrap, pepper-usage, kms-usage or kms-rewrap")
 	}
 	switch args[0] {
+	case AdminKMSUsage:
+		if len(args) > 1 {
+			return Command{}, errors.New("admin kms-usage takes no arguments")
+		}
+		return Command{Admin: &AdminCommand{Action: AdminKMSUsage}}, nil
+	case AdminKMSRewrap:
+		fs := flag.NewFlagSet("admin kms-rewrap", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		batch := fs.Int("batch-size", 0, "content keys per job run")
+		wait := fs.Bool("wait", false, "wait until no key is left on an old KEK")
+		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return Command{}, ErrHelp
+			}
+			return Command{}, err
+		}
+		if fs.NArg() > 0 {
+			return Command{}, fmt.Errorf("unexpected argument %q", sanitize(strings.Join(fs.Args(), " ")))
+		}
+		if *batch < 0 || *batch > contentkey.MaxRewrapBatch {
+			return Command{}, fmt.Errorf("--batch-size must be between 1 and %d", contentkey.MaxRewrapBatch)
+		}
+		return Command{Admin: &AdminCommand{Action: AdminKMSRewrap, BatchSize: *batch, Wait: *wait}}, nil
 	case AdminPepperUsage:
 		if len(args) > 1 {
 			return Command{}, errors.New("admin pepper-usage takes no arguments")
@@ -116,6 +153,6 @@ func parseAdmin(args []string) (Command, error) {
 		}
 		return Command{Admin: &AdminCommand{Action: AdminBootstrap, TenantName: *tenant, ClientName: *client}}, nil
 	default:
-		return Command{}, fmt.Errorf("unknown admin subcommand %q (valid: bootstrap, pepper-usage)", sanitize(args[0]))
+		return Command{}, fmt.Errorf("unknown admin subcommand %q (valid: bootstrap, pepper-usage, kms-usage, kms-rewrap)", sanitize(args[0]))
 	}
 }

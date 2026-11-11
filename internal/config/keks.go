@@ -29,10 +29,14 @@ func KMSProviders() []string {
 type KMS struct {
 	// Provider is the provider that wraps new content keys.
 	Provider string
-	// LocalKEKs is the local provider's key set. It is empty unless Provider is "local".
+	// UnwrapProviders are providers, other than Provider, that may only unwrap keys they made
+	// earlier, so content keys can be moved between providers (M2-4). Their settings are loaded
+	// into the fields below like the current provider's.
+	UnwrapProviders []string
+	// LocalKEKs is the local provider's key set. It is empty unless Provider or UnwrapProviders names "local".
 	LocalKEKs KEKs
-	// Vault, AWS and GCP hold provider-specific settings. Each is filled only when Provider names
-	// that provider; each lives in its own file (kms_vault.go, kms_aws.go, kms_gcp.go).
+	// Vault, AWS and GCP hold provider-specific settings. Each is filled only when Provider or
+	// UnwrapProviders names that provider; each lives in its own file (kms_vault.go, kms_aws.go, kms_gcp.go).
 	Vault KMSVault
 	AWS   KMSAWS
 	GCP   KMSGCP

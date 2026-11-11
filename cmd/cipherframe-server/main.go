@@ -53,6 +53,11 @@ func run(args []string) int {
 	case cmd.Admin != nil && cmd.Admin.Action == server.AdminBootstrap:
 		// The key goes to stdout and nothing else does; the log is on stderr.
 		err = server.Bootstrap(ctx, cfg, log, os.Stdout, cmd.Admin.TenantName, cmd.Admin.ClientName)
+	case cmd.Admin != nil && cmd.Admin.Action == server.AdminKMSUsage:
+		err = server.KMSUsage(ctx, cfg, log, os.Stdout)
+	case cmd.Admin != nil && cmd.Admin.Action == server.AdminKMSRewrap:
+		// The job id goes to stdout and progress to stderr.
+		err = server.KMSRewrap(ctx, cfg, log, os.Stdout, os.Stderr, cmd.Admin.BatchSize, cmd.Admin.Wait)
 	case cmd.Admin != nil:
 		err = server.PepperUsage(ctx, cfg, log, os.Stdout)
 	default:

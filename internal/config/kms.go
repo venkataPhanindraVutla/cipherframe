@@ -21,22 +21,64 @@ func (l *loader) kms(prod bool) KMS {
 		l.errf("%s must be one of %s", EnvKMSProvider, strings.Join(KMSProviders(), ", "))
 		return k
 	}
-	switch k.Provider {
+	l.kmsProvider(&k, k.Provider, prod)
+	k.UnwrapProviders = l.unwrapProviders(k.Provider)
+	for _, name := range k.UnwrapProviders {
+		l.kmsProvider(&k, name, prod)
+	}
+	return k
+}
+
+// unwrapProviders reads the providers that may only unwrap keys they made earlier (M2-4). Each is
+// loaded and validated exactly like the current provider; it must be a known name, listed once, and
+// not the current provider.
+func (l *loader) unwrapProviders(current string) []string {
+	raw := l.plain(EnvKMSUnwrapProviders, "")
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		switch {
+		case name == "":
+			l.errf("%s must not contain an empty entry", EnvKMSUnwrapProviders)
+		case !slices.Contains(KMSProviders(), name):
+			l.errf("%s must list only %s", EnvKMSUnwrapProviders, strings.Join(KMSProviders(), ", "))
+		case name == current:
+			l.errf("%s must not list the current provider %s", EnvKMSUnwrapProviders, name)
+		case slices.Contains(out, name):
+			l.errf("%s lists %s more than once", EnvKMSUnwrapProviders, name)
+		default:
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// kmsProvider loads and validates the settings of one provider into k.
+func (l *loader) kmsProvider(k *KMS, name string, prod bool) {
+	switch name {
 	case ProviderVault:
 		k.Vault = l.kmsVault(prod)
-		return k
 	case ProviderAWSKMS:
 		k.AWS = l.kmsAWS(prod)
-		return k
 	case ProviderGCPKMS:
 		k.GCP = l.kmsGCP(prod)
-		return k
+	default:
+		if prod {
+			l.errf("%s=%s is development-only; not allowed in production", kmsVarFor(k, name), ProviderLocal)
+		}
+		k.LocalKEKs = l.localKEKs(prod)
 	}
-	if prod {
-		l.errf("%s=%s is development-only; not allowed in production", EnvKMSProvider, ProviderLocal)
+}
+
+// kmsVarFor names the variable that selected the local provider, for the production refusal.
+func kmsVarFor(k *KMS, name string) string {
+	if name == k.Provider {
+		return EnvKMSProvider
 	}
-	k.LocalKEKs = l.localKEKs(prod)
-	return k
+	return EnvKMSUnwrapProviders
 }
 
 func (l *loader) localKEKs(prod bool) KEKs {

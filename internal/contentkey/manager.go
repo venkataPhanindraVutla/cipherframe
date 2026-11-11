@@ -21,17 +21,20 @@ const wrapAttempts = 2
 // for concurrent use.
 type Manager struct {
 	repos *db.Repos
+	begin db.Beginner // nil when the pool cannot start transactions; Rewrap then fails
 	reg   *kms.Registry
 	log   *slog.Logger
 }
 
 // NewManager returns a Manager that reads through pool and wraps with reg's current provider.
-// pool is a *pgxpool.Pool. Create and Destroy use the caller's transaction instead. log may be nil.
+// pool is a *pgxpool.Pool. Create and Destroy use the caller's transaction instead; Rewrap starts
+// its own transactions on pool. log may be nil.
 func NewManager(pool dbgen.DBTX, reg *kms.Registry, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{repos: db.New(pool), reg: reg, log: log}
+	b, _ := pool.(db.Beginner)
+	return &Manager{repos: db.New(pool), begin: b, reg: reg, log: log}
 }
 
 // Create generates a content key, wraps it with the current provider and inserts it in the

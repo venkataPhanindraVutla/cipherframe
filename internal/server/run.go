@@ -87,6 +87,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		return fmt.Errorf("peppers: %w", err)
 	}
 
+	// Likewise refuse to serve when a stored content key needs a provider or a local KEK version
+	// that is not configured (ADR 0020); the error names providers and versions only.
+	if err := contentkey.CheckKEKs(ctx, repos, kmsReg); err != nil {
+		return fmt.Errorf("content keys: %w", err)
+	}
+
 	contentKeys := contentkey.NewManager(pool, kmsReg, log)
 
 	buckets, err := storage.New(ctx, cfg.S3)
@@ -132,7 +138,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s)
 	}
 	if Has(opts.Roles, RoleWorker) {
-		w, err := newWorker(pool, log)
+		w, err := newWorker(pool, contentKeys, log)
 		if err != nil {
 			cleanup()
 			return err
@@ -150,9 +156,18 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 const workerConcurrency = 10
 
 // newWorker builds the job registry and, when it has kinds, a working queue. Milestones register
-// their job kinds here (for example transcoding in M3).
-func newWorker(pool *pgxpool.Pool, log *slog.Logger) (*worker.Worker, error) {
+// their job kinds here (for example transcoding in M3). The first real kind is kms.rewrap (M2-4).
+func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Logger) (*worker.Worker, error) {
 	reg := jobs.NewRegistry()
+	// A handler that chains the next run needs a queue to insert with. This one has no workers and
+	// shares the registry, so it only inserts.
+	inserter, err := jobs.NewQueue(pool, reg, jobs.Config{Logger: log})
+	if err != nil {
+		return nil, fmt.Errorf("worker: %w", err)
+	}
+	if err := contentkey.RegisterRewrapJob(reg, contentKeys, inserter, jobs.KindConfig{}); err != nil {
+		return nil, fmt.Errorf("worker: %w", err)
+	}
 	kinds := reg.Kinds()
 	if len(kinds) == 0 {
 		return worker.New(log, nil, nil), nil
