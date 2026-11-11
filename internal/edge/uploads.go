@@ -51,6 +51,9 @@ func (u *Uploads) authorize(r *http.Request) (uploads.Grant, error) {
 	if !ok {
 		return uploads.Grant{}, errs.New(errs.Unauthenticated, "The upload token is missing, invalid or expired.")
 	}
+	if _, err := uploads.HashToken(token); err != nil { // not even shaped like an upload token (an API key, say)
+		return uploads.Grant{}, errs.New(errs.Unauthenticated, "The upload token is missing, invalid or expired.")
+	}
 	if u == nil || u.Authz == nil {
 		return uploads.Grant{}, errUnavailable()
 	}

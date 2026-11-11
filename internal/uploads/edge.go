@@ -28,7 +28,9 @@ type grantKey struct{}
 
 // WithGrant returns a context carrying g. Edge sets it after checking the token; the tus data store
 // and the part receiver read it.
-func WithGrant(ctx context.Context, g Grant) context.Context { return context.WithValue(ctx, grantKey{}, g) }
+func WithGrant(ctx context.Context, g Grant) context.Context {
+	return context.WithValue(ctx, grantKey{}, g)
+}
 
 // GrantFrom returns the grant stored by WithGrant.
 func GrantFrom(ctx context.Context) (Grant, bool) {
@@ -39,12 +41,17 @@ func GrantFrom(ctx context.Context) (Grant, bool) {
 // Authorizer checks upload tokens statefully: every request looks the token up in the database,
 // so an expired token, a committed or aborted asset, and a deleted token all stop working at once.
 type Authorizer struct {
-	repos *db.Repos
+	repos GrantReader
 	now   func() time.Time
 }
 
+// GrantReader looks an upload token up by its hash. *db.Repos implements it.
+type GrantReader interface {
+	GetUploadGrant(ctx context.Context, hash []byte) (db.UploadGrant, error)
+}
+
 // NewAuthorizer returns an Authorizer. now defaults to time.Now.
-func NewAuthorizer(repos *db.Repos, now func() time.Time) *Authorizer {
+func NewAuthorizer(repos GrantReader, now func() time.Time) *Authorizer {
 	if now == nil {
 		now = time.Now
 	}
