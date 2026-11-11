@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
@@ -18,6 +19,8 @@ import (
 type Deps struct {
 	Log   *slog.Logger
 	Ready *health.Runner
+	// ContentKeys reads content keys for the key endpoint (M4). No endpoint uses it yet.
+	ContentKeys *contentkey.Manager
 }
 
 // Edge is the data-plane HTTP handler.

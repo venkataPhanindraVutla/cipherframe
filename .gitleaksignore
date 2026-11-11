@@ -5,3 +5,9 @@
 # production placeholder rules. Not real keys.
 a5645d81e290e97d7cc84dece5282ef3d9ce2450:internal/config/load_test.go:generic-api-key:328
 a5645d81e290e97d7cc84dece5282ef3d9ce2450:internal/config/load_test.go:generic-api-key:352
+
+# internal/config KMS tests: fake values ("s", "dev-placeholder-root") used to test production
+# placeholder and credential rules for the AWS and Vault providers. Not real secrets.
+f097e02d3f547f8d71f4eb1e792533abcd80b9ff:internal/config/kms_aws_test.go:generic-api-key:87
+fcb428fde29ef91f72b1f1e6a25e5df7822ce477:internal/config/kms_vault_test.go:generic-api-key:135
+fcb428fde29ef91f72b1f1e6a25e5df7822ce477:internal/config/kms_vault_test.go:generic-api-key:147

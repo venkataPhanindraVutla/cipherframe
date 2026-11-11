@@ -15,11 +15,13 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
+	kmsregistry "github.com/venkataPhanindraVutla/cipherframe/internal/kms/registry"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/worker"
 )
@@ -61,6 +63,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 	if len(opts.Roles) == 0 {
 		return errors.New("server: no roles")
 	}
+	// Build the key providers before touching anything else: a misconfigured or unavailable
+	// provider stops the process here with a message that names the setting, never a value.
+	kmsReg, err := kmsregistry.FromConfig(cfg, log)
+	if err != nil {
+		return err
+	}
 	pool, err := openDatabase(ctx, cfg, log)
 	if err != nil {
 		return err
@@ -78,6 +86,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 	if err := auth.CheckPeppers(ctx, repos, cfg.Peppers, time.Now()); err != nil {
 		return fmt.Errorf("peppers: %w", err)
 	}
+
+	contentKeys := contentkey.NewManager(pool, kmsReg, log)
 
 	buckets, err := storage.New(ctx, cfg.S3)
 	if err != nil {
@@ -103,6 +113,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Ready:    ready,
 			Verifier: auth.NewVerifier(repos, cfg.Peppers, log, nil),
 			Manager:  auth.NewManager(pool, cfg.Peppers, nil),
+
+			ContentKeys: contentKeys,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
@@ -112,7 +124,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s)
 	}
 	if Has(opts.Roles, RoleEdge) {
-		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready}).Handler(), log)
+		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, ContentKeys: contentKeys}).Handler(), log)
 		if err != nil {
 			cleanup()
 			return err

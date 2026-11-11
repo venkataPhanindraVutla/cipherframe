@@ -20,6 +20,11 @@ x-cipherframe-env: &cipherframe-env
   # Base64 of "dev-placeholder-pepper-0123456789abcdef" (39 bytes).
   CIPHERFRAME_API_KEY_PEPPERS: "1:ZGV2LXBsYWNlaG9sZGVyLXBlcHBlci0wMTIzNDU2Nzg5YWJjZGVm"
   CIPHERFRAME_API_KEY_PEPPER_CURRENT: "1"
+  # Development-only key provider (ADR 0019); production refuses it.
+  # Base64 of "dev-placeholder-0123456789abcdef" (exactly 32 bytes).
+  CIPHERFRAME_KMS_PROVIDER: local
+  CIPHERFRAME_KMS_LOCAL_KEKS: "1:ZGV2LXBsYWNlaG9sZGVyLTAxMjM0NTY3ODlhYmNkZWY="
+  CIPHERFRAME_KMS_LOCAL_KEK_CURRENT: "1"
 
 x-cipherframe-build: &cipherframe-build
   context: ../..

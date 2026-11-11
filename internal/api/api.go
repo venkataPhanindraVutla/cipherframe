@@ -11,6 +11,7 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 )
@@ -28,6 +29,8 @@ type Deps struct {
 	Ready    *health.Runner
 	Verifier *auth.Verifier
 	Manager  *auth.Manager
+	// ContentKeys creates, reads and destroys content keys (M2-1). No endpoint uses it yet.
+	ContentKeys *contentkey.Manager
 }
 
 // API is the control-plane HTTP handler.

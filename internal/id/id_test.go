@@ -33,6 +33,7 @@ func TestRoundTripEveryKind(t *testing.T) {
 	roundTrip[ClientKind](t, "cli")
 	roundTrip[APIKeyKind](t, "key")
 	roundTrip[AssetKind](t, "ast")
+	roundTrip[ContentKeyKind](t, "cky")
 }
 
 func TestWrongPrefixRejected(t *testing.T) {
