@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 )
 
 const (
@@ -23,7 +25,7 @@ const (
 // Sweeper is what the playback sweeper writes to. *db.Repos implements it.
 type Sweeper interface {
 	SweepPlaybackKeyFetches(ctx context.Context, before time.Time) (int64, error)
-	EndExpiredPlaybackSessions(ctx context.Context, now time.Time, batch int) (int64, error)
+	EndExpiredPlaybackSessions(ctx context.Context, now time.Time, batch int) ([]db.SessionRef, error)
 	SweepPlaybackJWTIDs(ctx context.Context, before time.Time) (int64, error)
 }
 
@@ -51,7 +53,8 @@ func SweepJWTIDs(ctx context.Context, s Sweeper, now time.Time) (int64, error) {
 func SweepSessions(ctx context.Context, s Sweeper, now time.Time, batch int) (int64, error) {
 	var total int64
 	for range maxSweepPasses {
-		n, err := s.EndExpiredPlaybackSessions(ctx, now, batch)
+		ended, err := s.EndExpiredPlaybackSessions(ctx, now, batch)
+		n := int64(len(ended))
 		total += n
 		if err != nil {
 			return total, err

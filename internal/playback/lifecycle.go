@@ -135,8 +135,8 @@ func (s *Service) RevokeSessions(ctx context.Context, tenantID id.TenantID, acto
 	now := s.now().UTC().Truncate(time.Microsecond)
 	var n int64
 	err := db.Tx(ctx, s.pool, func(tx *db.Repos) error {
-		var err error
-		if n, err = tx.RevokePlaybackSessionsByFilter(ctx, tenantID, viewerID, assetID, reason, now); err != nil || n == 0 {
+		refs, err := tx.RevokePlaybackSessionsByFilter(ctx, tenantID, viewerID, assetID, reason, now)
+		if n = int64(len(refs)); err != nil || n == 0 {
 			return err
 		}
 		_, err = tx.InsertAuditEvent(ctx, db.NewAuditEvent{

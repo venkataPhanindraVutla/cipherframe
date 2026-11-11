@@ -73,7 +73,7 @@ func (q *Queries) CountActivePlaybackSessions(ctx context.Context, arg CountActi
 	return count, err
 }
 
-const endExpiredPlaybackSessions = `-- name: EndExpiredPlaybackSessions :execrows
+const endExpiredPlaybackSessions = `-- name: EndExpiredPlaybackSessions :many
 WITH due AS (
     SELECT s.id_hash
     FROM playback_sessions s
@@ -89,6 +89,7 @@ WITH due AS (
 )
 UPDATE playback_sessions p SET state = 'ended', ended_at = $1::timestamptz
 FROM due WHERE p.id_hash = due.id_hash
+RETURNING p.id_hash, p.tenant_id, p.asset_id, p.viewer_id, p.auth_method
 `
 
 type EndExpiredPlaybackSessionsParams struct {
@@ -98,22 +99,49 @@ type EndExpiredPlaybackSessionsParams struct {
 	Batch              int32
 }
 
+type EndExpiredPlaybackSessionsRow struct {
+	IDHash     []byte
+	TenantID   pgtype.UUID
+	AssetID    pgtype.UUID
+	ViewerID   string
+	AuthMethod string
+}
+
 // The sweep: ends one bounded batch of active sessions that are past their expiry or idle past
 // their tenant's idle timeout (default_idle_seconds for a tenant without stored settings). The
 // inner filter uses the partial indexes (min_idle_seconds is the smallest idle timeout a tenant
 // can set); the join then applies the tenant's exact value. SKIP LOCKED lets replicas sweep side by
-// side without waiting for each other.
-func (q *Queries) EndExpiredPlaybackSessions(ctx context.Context, arg EndExpiredPlaybackSessionsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, endExpiredPlaybackSessions,
+// side without waiting for each other. It returns the sessions it ended (the access log records
+// one 'expired' row each).
+func (q *Queries) EndExpiredPlaybackSessions(ctx context.Context, arg EndExpiredPlaybackSessionsParams) ([]EndExpiredPlaybackSessionsRow, error) {
+	rows, err := q.db.Query(ctx, endExpiredPlaybackSessions,
 		arg.Now,
 		arg.MinIdleSeconds,
 		arg.DefaultIdleSeconds,
 		arg.Batch,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []EndExpiredPlaybackSessionsRow
+	for rows.Next() {
+		var i EndExpiredPlaybackSessionsRow
+		if err := rows.Scan(
+			&i.IDHash,
+			&i.TenantID,
+			&i.AssetID,
+			&i.ViewerID,
+			&i.AuthMethod,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const endPlaybackSession = `-- name: EndPlaybackSession :execrows
@@ -502,13 +530,14 @@ func (q *Queries) RevokePlaybackSession(ctx context.Context, arg RevokePlaybackS
 	return i, err
 }
 
-const revokePlaybackSessionsByFilter = `-- name: RevokePlaybackSessionsByFilter :execrows
+const revokePlaybackSessionsByFilter = `-- name: RevokePlaybackSessionsByFilter :many
 UPDATE playback_sessions SET state = 'revoked', revoked_at = $1::timestamptz,
     revoke_reason = $2::text
 WHERE tenant_id = $3::uuid
   AND state = 'active'
   AND ($4::text IS NULL OR viewer_id = $4::text)
   AND ($5::uuid IS NULL OR asset_id = $5::uuid)
+RETURNING id_hash, tenant_id, asset_id, viewer_id, auth_method
 `
 
 type RevokePlaybackSessionsByFilterParams struct {
@@ -519,10 +548,18 @@ type RevokePlaybackSessionsByFilterParams struct {
 	AssetID  pgtype.UUID
 }
 
-// Revokes every active session of the tenant that matches the viewer and/or the asset. The caller
-// guarantees at least one filter is set.
-func (q *Queries) RevokePlaybackSessionsByFilter(ctx context.Context, arg RevokePlaybackSessionsByFilterParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokePlaybackSessionsByFilter,
+type RevokePlaybackSessionsByFilterRow struct {
+	IDHash     []byte
+	TenantID   pgtype.UUID
+	AssetID    pgtype.UUID
+	ViewerID   string
+	AuthMethod string
+}
+
+// Revokes every active session of the tenant that matches the viewer and/or the asset, and returns
+// which ones (the access log records one row each). The caller guarantees at least one filter is set.
+func (q *Queries) RevokePlaybackSessionsByFilter(ctx context.Context, arg RevokePlaybackSessionsByFilterParams) ([]RevokePlaybackSessionsByFilterRow, error) {
+	rows, err := q.db.Query(ctx, revokePlaybackSessionsByFilter,
 		arg.Now,
 		arg.Reason,
 		arg.TenantID,
@@ -530,9 +567,27 @@ func (q *Queries) RevokePlaybackSessionsByFilter(ctx context.Context, arg Revoke
 		arg.AssetID,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []RevokePlaybackSessionsByFilterRow
+	for rows.Next() {
+		var i RevokePlaybackSessionsByFilterRow
+		if err := rows.Scan(
+			&i.IDHash,
+			&i.TenantID,
+			&i.AssetID,
+			&i.ViewerID,
+			&i.AuthMethod,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const sweepPlaybackKeyFetches = `-- name: SweepPlaybackKeyFetches :execrows

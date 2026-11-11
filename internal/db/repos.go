@@ -16,10 +16,12 @@ import (
 // Tx. All methods return *errs.Error values (see mapError).
 type Repos struct {
 	q *dbgen.Queries
+	// conn is the same connection source as q, for the few statements sqlc cannot generate.
+	conn dbgen.DBTX
 }
 
 // New returns repositories over db, which is a *pgxpool.Pool, *pgx.Conn or pgx.Tx.
-func New(db dbgen.DBTX) *Repos { return &Repos{q: dbgen.New(db)} }
+func New(db dbgen.DBTX) *Repos { return &Repos{q: dbgen.New(db), conn: db} }
 
 // Beginner starts transactions. *pgxpool.Pool implements it.
 type Beginner interface {
