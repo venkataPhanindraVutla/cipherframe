@@ -31,8 +31,15 @@ RUN rm -f /etc/apt/sources.list.d/* /etc/apt/sources.list \
     && echo 'Acquire::Retries "5";' >> /etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        bzip2 ca-certificates gcc libc6-dev make meson nasm ninja-build pkg-config xz-utils \
+        bzip2 ca-certificates curl gcc libc6-dev make meson nasm ninja-build pkg-config xz-utils \
     && rm -rf /var/lib/apt/lists/*
+# fetch URL SHA256 DEST: download with retries (a flaky TLS handshake is retried, not fatal), then
+# verify the pinned checksum. The pins are in each RUN's text, so a cached layer is reused without
+# touching the network; only a pin change downloads again.
+RUN printf '%s\n' '#!/bin/sh' 'set -eu' \
+        'curl -fsSL --proto =https --tlsv1.2 --retry 6 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 900 --create-dirs -o "$3" "$1"' \
+        'echo "$2  $3" | sha256sum -c -' > /usr/local/bin/fetch \
+    && chmod 0755 /usr/local/bin/fetch
 ENV PREFIX=/opt/deps
 
 # ---------------------------------------------------------------------------------------------
@@ -40,8 +47,8 @@ ENV PREFIX=/opt/deps
 FROM toolchain AS x264
 ARG X264_COMMIT=b35605ace3ddf7c1a5d67a2eb553f034aef41d55
 ARG X264_SHA256=6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224
-ADD --checksum=sha256:${X264_SHA256} \
-    https://code.videolan.org/videolan/x264/-/archive/${X264_COMMIT}/x264-${X264_COMMIT}.tar.bz2 /src/x264.tar.bz2
+RUN fetch https://code.videolan.org/videolan/x264/-/archive/${X264_COMMIT}/x264-${X264_COMMIT}.tar.bz2 \
+        ${X264_SHA256} /src/x264.tar.bz2
 RUN mkdir /src/x264 && tar -xjf /src/x264.tar.bz2 -C /src/x264 --strip-components=1
 WORKDIR /src/x264
 RUN ./configure --prefix=${PREFIX} --enable-static --enable-pic --bit-depth=8 \
@@ -54,8 +61,8 @@ RUN ./configure --prefix=${PREFIX} --enable-static --enable-pic --bit-depth=8 \
 FROM toolchain AS dav1d
 ARG DAV1D_VERSION=1.5.4
 ARG DAV1D_SHA256=686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
-ADD --checksum=sha256:${DAV1D_SHA256} \
-    https://downloads.videolan.org/pub/videolan/dav1d/${DAV1D_VERSION}/dav1d-${DAV1D_VERSION}.tar.xz /src/dav1d.tar.xz
+RUN fetch https://downloads.videolan.org/pub/videolan/dav1d/${DAV1D_VERSION}/dav1d-${DAV1D_VERSION}.tar.xz \
+        ${DAV1D_SHA256} /src/dav1d.tar.xz
 RUN mkdir /src/dav1d && tar -xJf /src/dav1d.tar.xz -C /src/dav1d --strip-components=1
 WORKDIR /src/dav1d
 RUN meson setup build --prefix=${PREFIX} --libdir=lib --buildtype=release --default-library=static \
@@ -67,9 +74,9 @@ RUN meson setup build --prefix=${PREFIX} --libdir=lib --buildtype=release --defa
 FROM toolchain AS ffmpeg-src
 ARG FFMPEG_VERSION=9.0.2
 ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
-# FFMPEG_URL can point at a mirror; the checksum is verified either way.
+# FFMPEG_URL can point at an HTTPS mirror; the checksum is verified either way.
 ARG FFMPEG_URL=https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz
-ADD --checksum=sha256:${FFMPEG_SHA256} ${FFMPEG_URL} /src/ffmpeg.tar.xz
+RUN fetch "${FFMPEG_URL}" ${FFMPEG_SHA256} /src/ffmpeg.tar.xz
 RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-components=1
 
 # ---------------------------------------------------------------------------------------------
