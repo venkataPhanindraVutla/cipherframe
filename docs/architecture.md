@@ -491,6 +491,45 @@ browser -- POST /v1/play/tenants/<tenant>/sessions -->  guarded (CORS from the t
   (`api_key`, `jwt`, `callback`) is tied to it by a CHECK: a client exactly when the method is
   `api_key`. The per-viewer limit counts all methods together.
 
+## The access trail (M4-7)
+
+The access trail is the one record of viewer activity (invariant I10). It is built so that it can
+never slow or fail playback, and so that it cannot say what was watched.
+
+```
+edge handlers ──► accesslog.Recorder ──► bounded queue (8192) ──► writer goroutine ──► playback_access_log
+ (playlist, key,    │  heartbeat / key_denied throttles (LRU)        │  batches of 500, every 1 s
+  heartbeat, end)   │  segment counter  (per session, bounded)       │  privacy settings (30 s cache)
+playback.Service ───┘  denied-creation limiter                       └─ viewer filled in from the session row
+ (created, denied, revoked)
+sweeper (edge role) ──► expired rows, written directly; creates the monthly partitions
+```
+
+- `internal/accesslog` owns the queue, the writer and the counters. A nil `*Recorder` is a no-op, so
+  every collaborator takes one optionally. Callers pass what they know (the session by hash, the
+  asset, the request ID, and the raw peer address and user agent); the **writer** applies the tenant's
+  privacy settings and fills the viewer from the session row, so a request never waits for the database.
+- Edge records a `playlist` row per master fetch, `key` and `key_denied`, accepted `heartbeat`s
+  (throttled to one per session per 5 minutes per replica) and `end`. A segment request only calls
+  `CountSegment(session)`: the recorder keeps a count per session, flushed as one `segments` row every
+  30 seconds. No code path passes a segment name, rendition or position to the recorder.
+- `playback.Service` records `session_created`, `session_denied` (limit, asset not ready) and
+  `revoked`, one row per session of a bulk revoke. The browser-session route records a refused JWT or
+  callback authorization through a limiter, because anyone can start that request for any tenant
+  ID; rows of tenants that do not exist are discarded at insert.
+- The sweeper creates the partitions of the current month and the next two on every run, then ends
+  expired sessions and writes their `expired` rows in the same pass. The migration creates two
+  months. There is no default partition: a missing partition makes inserts fail (logged, dropped),
+  which is better than an undroppable catch-all. Retention (M6-4) will call
+  `playback_access_log_drop_partitions_before`, which exists and is tested but unused.
+- Under overload the queue drops and counts events; a failing database retries a batch three times and
+  then drops it; on shutdown the server flushes the queue and the segment counts after the listeners
+  stop, within 5 seconds. Heartbeat and `key_denied` throttles and the segment counter live in memory
+  per replica.
+- Reads (`assets:read`) are keyset-paginated on `(at, id)` newest first through the indexes
+  `(tenant_id, asset_id, at, id)` and `(tenant_id, session_hash, at, id)`. A row exposes a session
+  fingerprint, never the hash.
+
 ## Keys
 
 Each asset has one active content key (I7), wrapped by a key-encryption key held in a key management

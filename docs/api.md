@@ -72,6 +72,8 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `GET /v1/playback-sessions/{session_id}` | yes | no | `sessions:write` |
 | `POST /v1/playback-sessions/{session_id}/revoke`, `POST /v1/playback-sessions/revoke` | yes | no | `sessions:write` |
 | `GET /v1/playback-settings`, `PUT /v1/playback-settings` | yes | no | `admin` |
+| `GET /v1/privacy-settings`, `PUT /v1/privacy-settings` | yes | no | `admin` |
+| `GET /v1/assets/{asset_id}/access-log`, `GET /v1/playback-sessions/{session_id}/access-log` | yes | no | `assets:read` |
 | `GET /v1/play/{session_id}/master.m3u8`, `GET /v1/play/{session_id}/{rendition}/media.m3u8` | no | yes | playback token (`manifest`) |
 | `GET /v1/play/{session_id}/{rendition}/{file}` | no | yes | playback token (`segment`) |
 | `GET /v1/play/{session_id}/key` | no | yes | playback token (`key`) |
@@ -125,7 +127,7 @@ endpoints need no key.
 
 | Scope | Allows |
 |---|---|
-| `assets:read` | Read assets, status, deletion records |
+| `assets:read` | Read assets, status, deletion records, the access trail |
 | `assets:write` | Create, upload, process and delete assets |
 | `sessions:write` | Create and revoke playback sessions |
 | `webhooks:manage` | Configure webhooks and replay deliveries |
@@ -581,6 +583,82 @@ timeout or past their maximum age, in batches of 1000 (up to 20 batches per run)
 and at start-up. This only keeps the stored state honest (every check recomputes the same rule from
 the row's times, so nothing waits for the sweep).
 
+### The access trail and the privacy settings
+
+Cipherframe keeps an **access trail**: one row per session event, so you can answer "who played this
+asset, and when" and "what happened to this session". It is the only record of viewer activity
+(invariant I10): there are no viewer behavioural analytics, and what a viewer watched is never recorded.
+(This is not the per-request log line described under [Access log](#access-log) below, which has no
+viewer in it.)
+
+- `GET /v1/assets/{asset_id}/access-log` and `GET /v1/playback-sessions/{session_id}/access-log` need the
+  `assets:read` scope. Both return `{items, next_cursor}`, **newest first**. Filters: `from` (inclusive)
+  and `to` (exclusive) as RFC 3339 times, `event` (one of the events below), `limit` (1 to 500, default
+  100) and `cursor` (the opaque `next_cursor` of the previous page; it is present while older rows
+  remain). A bad filter is `400` with an `errors` entry; `from` must be before `to`. An asset or session
+  of another tenant, a deleted asset and an unknown one are all `404`.
+- A row is `{event, at, asset_id, session, viewer_id, auth_method, segments_served, ip, user_agent,
+  request_id}`; everything but `event` and `at` is present only when there is a value.
+  **`session` is not the session ID** and not its hash: it is the first 4 bytes, in hex (8 characters),
+  of SHA-256 of the session's stored hash followed by your tenant ID. It only lets you group the rows of
+  one session in the asset's trail, and it cannot be turned back into the ID. Rows never contain a
+  session ID or a token.
+
+| Event | Meaning |
+|---|---|
+| `session_created` | A session started, by API key, JWT or callback. |
+| `session_denied` | A session could not start: the viewer's limit was reached, the asset was not ready, or a JWT or callback authorization failed (no `viewer_id`, since nothing vouches for one). Refused authorizations are rate limited per tenant (30 a minute and 300 a minute over all tenants, per edge replica), so a flood of bad requests from the internet cannot fill the trail. |
+| `playlist` | The session fetched its master playlist. Media playlists are **not** logged (a player fetches one every few seconds). |
+| `key` | The session fetched the content key. |
+| `key_denied` | A key request was refused for a session that exists: revoked, ended, expired or idle (the generic `401`), or over a bound (`429`). At most one row per session per minute per edge replica. A token that does not verify names no session and logs nothing. |
+| `heartbeat` | A heartbeat was accepted. At most one row per session per 5 minutes per edge replica (the last time is kept in memory, in a table bounded to 10 000 sessions). |
+| `end` | The player ended the session (a repeated end is not logged again). |
+| `revoked` | The session was revoked through the API. Each session of a bulk revoke gets a row. |
+| `expired` | The background sweep ended the session (past its maximum age, or idle). `at` is when the sweep recorded it, up to about 10 minutes after the session stopped being usable. |
+| `segments` | How many segment requests the session made in the last flush interval (about 30 seconds); `segments_served` is that count. |
+
+**What is never recorded.** Not which segment, rendition or position was fetched: segment requests are
+counted in memory per session (the init segment counts like a media segment) and written as one
+`segments` row per session per flush interval, with a count and nothing else. Not the media playlists
+fetched, not what the player did. With `delivery: presigned` the player fetches segments from storage
+directly and edge never sees them, so there are no `segments` rows. The viewer's own `viewer_id` is
+whatever you chose.
+
+**It is best effort.** Requests hand events to a bounded in-memory queue (8192 events) and never wait;
+one writer per process inserts them in batches of up to 500, at least once a second. When the queue is
+full, or the database keeps refusing a batch (it is retried three times), events are **dropped** and
+counted, and a warning is logged at most once a minute. A crash loses what is still queued (about a
+second of events and up to 30 seconds of segment counts), a graceful shutdown flushes them with a
+5-second limit, and counts for more than 10 000 sessions at once on one replica are dropped. Heartbeat and
+`key_denied` limits are per replica, so several replicas can log a little more often. Treat the trail
+as an audit aid, not a billing ledger or a complete record. It never slows or fails playback. `expired`
+rows are written by the sweeper directly, and a failure to write them is only logged.
+
+**What a row can hold about the viewer's connection.** `ip` (the address of the TCP peer) and
+`user_agent` (the `User-Agent` header, cut to 256 characters) are stored **only** when the tenant allows
+it, and the default is that nothing is stored. They are recorded only for requests the viewer's own
+browser made (playlist, key, heartbeat, end, browser-started creation or refusal), never for
+API-key session creation, revocation or expiry, whose caller is your server or nobody. Cipherframe has
+no trusted-proxy setting and **never reads `X-Forwarded-For`**, which a client can write: behind a
+reverse proxy or load balancer `ip` is the proxy's address, and the proxy's own logs are where the
+client address lives.
+
+- `GET /v1/privacy-settings` returns `{store_ip, store_user_agent, updated_at}`: the stored settings, or
+  the defaults (both `false`, `updated_at` absent). `PUT /v1/privacy-settings` replaces both (send both: a
+  missing one is `400` with an `errors` entry). Both need the `admin` scope, and a change is written to
+  the audit log (`privacy_settings.update`). It applies to rows written afterwards (each process caches
+  the settings for up to 30 seconds, and a row is written about a second after its request); rows
+  already written are not rewritten. When the settings cannot be read, nothing is stored.
+  Gate P11 sets the final defaults and adds fields (access-log retention, original file names, asset
+  time-to-live); until then retention is **not** implemented: no row is ever deleted.
+
+**Storage.** The table `playback_access_log` is partitioned by month (UTC). Every sweep of the edge
+role creates the partitions of the current month and the next two; there is no default partition, so a
+database whose edge role has never run has partitions for the month of the migration and the next one
+only, and inserts for a later month fail (and are dropped and logged) until a sweep runs. Dropping old
+partitions for retention is a function that exists and is tested (`playback_access_log_drop_partitions_before`)
+but is not called by anything: M6 will.
+
 ### What the playback endpoints do not protect against
 
 - A token holder can fetch the playlists and segments of that one session until the token expires.
@@ -607,6 +685,10 @@ the row's times, so nothing waits for the sweep).
   loop can play for the whole session; revoke a session you suspect.
 - Anything that can call `POST /v1/playback-sessions` with a `sessions:write` key can start sessions
   for any `viewer_id` of its tenant, up to the limit, for any ready asset of the tenant.
+- The access trail is best effort (see above): under overload or a database outage events are dropped,
+  so a missing row is not proof that something did not happen.
+- The access trail records who and when, not what was watched, and its `ip` is the connecting peer,
+  which is a proxy's address behind one.
 
 ## Browser-started sessions: JWT and signed callback (ADR 0029, 0031)
 
