@@ -35,6 +35,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0027](0027-segment-encryption-in-the-worker.md) | Segment encryption in the worker | none | Accepted (flagged for owner review) | 2026-11-11 |
 | [0028](0028-playback-tokens-and-session-parameters.md) | Playback tokens and session parameters | P6 | Accepted | 2026-11-11 |
 | [0029](0029-jwt-and-signed-callback-authorization.md) | JWT and signed-callback authorization | P7 (JWT and signed callback) | Accepted | 2026-11-11 |
+| [0030](0030-playback-token-transport.md) | Playback token transport | none | Accepted | 2026-11-11 |
 
 ## Open gates
 
