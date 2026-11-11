@@ -68,6 +68,7 @@ type Config struct {
 	S3          S3
 	Uploads     Uploads
 	Peppers     Peppers
+	Playback    PlaybackKeys
 	KMS         KMS
 	Media       Media
 }
@@ -108,6 +109,11 @@ func (c *Config) LogValue() slog.Value {
 		slog.Group("api_key_peppers",
 			slog.String("versions", strings.Join(vs, ",")),
 			slog.Int("current", c.Peppers.current),
+			slog.String("values", Redacted),
+		),
+		slog.Group("playback_token_keys",
+			slog.String("versions", versionList(c.Playback.Versions())),
+			slog.Int("current", c.Playback.current),
 			slog.String("values", Redacted),
 		),
 		slog.Group("media",

@@ -104,6 +104,7 @@ func (l *loader) load() *Config {
 	c.S3 = l.s3(prod)
 	c.Uploads = l.uploads()
 	c.Peppers = l.peppers(prod)
+	c.Playback = l.playbackKeys(prod)
 	c.KMS = l.kms(prod)
 	c.Media = l.media()
 	return c
