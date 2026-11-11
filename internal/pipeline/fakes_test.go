@@ -3,7 +3,9 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -21,6 +23,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 )
 
@@ -123,6 +126,10 @@ type fakeRepo struct {
 	artifacts   map[string]db.Artifact
 	transitions []db.Transition
 	progress    []int
+	// manifest is the stored manifest, nil when there is none; manifestDeletes counts the calls
+	// that removed one.
+	manifest        *db.AssetManifest
+	manifestDeletes int
 }
 
 func newFakeRepo(a db.Asset) *fakeRepo {
@@ -187,14 +194,32 @@ func (r *fakeRepo) DeleteHLSArtifacts(context.Context, id.AssetID) (int64, error
 	return n, nil
 }
 
+func (r *fakeRepo) DeleteManifest(context.Context, id.AssetID) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	had := r.manifest != nil
+	if had {
+		r.manifestDeletes++
+	}
+	r.manifest = nil
+	return had, nil
+}
+
 func (r *fakeRepo) Complete(_ context.Context, _ id.TenantID, _ id.AssetID, arts []db.Artifact, c db.Completion) (db.Asset, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.asset.State != db.AssetProcessing {
 		return db.Asset{}, errs.Wrap(errs.Conflict, "state", db.ErrStateChanged)
 	}
+	if r.manifest != nil && c.Manifest != nil {
+		return db.Asset{}, errors.New("duplicate manifest")
+	}
 	for _, a := range arts {
 		r.artifacts[a.Bucket+"/"+a.ObjectKey] = a
+	}
+	if c.Manifest != nil {
+		m := *c.Manifest
+		r.manifest = &m
 	}
 	r.asset.State = db.AssetReady
 	r.asset.DurationMS = c.Duration.Milliseconds()
@@ -255,10 +280,20 @@ type fakeTools struct {
 	started chan struct{}
 
 	probes, transcodes int
+	versionCalls       int
+	versionErr         error
 	// plaintext records what the fake wrote per rendition and segment index.
 	mu        sync.Mutex
 	plaintext map[string][]byte
 	lastSpec  media.TranscodeSpec
+}
+
+func (f *fakeTools) Version(context.Context) (string, error) {
+	f.versionCalls++
+	if f.versionErr != nil {
+		return "", f.versionErr
+	}
+	return "ffmpeg version test-fixture", nil
 }
 
 func (f *fakeTools) Probe(context.Context, string) (media.Info, error) {
@@ -351,4 +386,36 @@ func landscapeInfo() media.Info {
 		Video: &media.VideoStream{Index: 0, Codec: "h264", Width: 1280, Height: 720, DisplayWidth: 1280, DisplayHeight: 720, FrameRate: 30},
 		Audio: &media.AudioStream{Index: 1, Codec: "aac", Channels: 2, SampleRate: 48000},
 	}
+}
+
+// ---- signer -----------------------------------------------------------------------------------
+
+// fakeSigner signs with an Ed25519 key made from a fixed seed.
+type fakeSigner struct {
+	mu    sync.Mutex
+	priv  ed25519.PrivateKey
+	keyID string
+	err   error
+	calls int
+}
+
+const fakeKeyID = "sk_0123456789abcdefghjkmnpqrs"
+
+func newFakeSigner() *fakeSigner {
+	seed := sha256.Sum256([]byte("test-fixture-pipeline-signer-seed"))
+	return &fakeSigner{priv: ed25519.NewKeyFromSeed(seed[:]), keyID: fakeKeyID}
+}
+
+func (s *fakeSigner) Sign(_ context.Context, message []byte) (string, []byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	if s.err != nil {
+		return "", nil, s.err
+	}
+	return s.keyID, ed25519.Sign(s.priv, message), nil
+}
+
+func (s *fakeSigner) PublicKeys(context.Context) ([]signing.PublicKey, error) {
+	return []signing.PublicKey{{KeyID: s.keyID, Algorithm: signing.AlgEd25519, PublicKey: s.priv.Public().(ed25519.PublicKey)}}, nil
 }

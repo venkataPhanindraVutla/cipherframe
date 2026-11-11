@@ -8,7 +8,9 @@
 //	  ONE FFmpeg process: decode once, split, encode every rung, write fMP4 HLS segments
 //	  for each rendition: encrypt each segment (AES-128-CBC, own IV), upload, hash what is stored
 //	  write and upload the canonical playlists
-//	  register every object in asset_artifacts and move processing -> ready, in one transaction
+//	  build the integrity manifest (package integrity/manifest) and sign it as a DSSE envelope
+//	  register every object in asset_artifacts, store the manifest and move processing -> ready,
+//	    in one transaction
 //
 // The content key and the plaintext segments never touch storage, a log line, a job argument or an
 // error. Plaintext exists only in the job's work directory, mode 0700, which is deleted when the
@@ -26,12 +28,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
@@ -62,7 +66,9 @@ type Deps struct {
 	Delivery storage.Store // the delivery bucket
 	Keys     KeyEnsurer
 	Tools    Toolchain
-	Limits   media.Limits
+	// Signer signs the integrity manifest with the current key (M5-1). It is required.
+	Signer signing.Signer
+	Limits media.Limits
 	// WorkDir is the base directory for per-job directories (CIPHERFRAME_WORK_DIR).
 	WorkDir string
 	// TranscodeTimeout bounds the FFmpeg run (CIPHERFRAME_TRANSCODE_TIMEOUT).
@@ -77,13 +83,17 @@ type Deps struct {
 // Processor runs asset.process jobs.
 type Processor struct {
 	Deps
+
+	// ffmpegVersion caches the first successful read of the FFmpeg version.
+	versionMu     sync.Mutex
+	ffmpegVersion string
 }
 
 // NewProcessor validates deps and returns a Processor. It creates the work directory (mode 0700).
 func NewProcessor(d Deps) (*Processor, error) {
 	switch {
-	case d.Repo == nil || d.Source == nil || d.Delivery == nil || d.Keys == nil || d.Tools == nil:
-		return nil, errors.New("pipeline: repository, both stores, key source and tools are required")
+	case d.Repo == nil || d.Source == nil || d.Delivery == nil || d.Keys == nil || d.Tools == nil || d.Signer == nil:
+		return nil, errors.New("pipeline: repository, both stores, key source, tools and signer are required")
 	case d.TranscodeTimeout <= 0:
 		return nil, errors.New("pipeline: transcode timeout must be positive")
 	case d.WorkDir == "":

@@ -58,6 +58,7 @@ type harness struct {
 	delivery *memStore
 	keys     *fakeKeys
 	tools    *fakeTools
+	signer   *fakeSigner
 	logs     *logBuffer
 	args     uploads.ProcessArgs
 	workDir  string
@@ -81,11 +82,12 @@ func newHarness(t *testing.T) *harness {
 	h.tools = &fakeTools{
 		info: landscapeInfo(), segments: []time.Duration{6 * time.Second, 6 * time.Second, 2 * time.Second}, events: &h.events,
 	}
+	h.signer = newFakeSigner()
 	h.workDir = t.TempDir()
 	h.args = uploads.ProcessArgs{TenantID: tenant, AssetID: asset}
 
 	proc, err := NewProcessor(Deps{
-		Repo: h.repo, Source: h.source, Delivery: h.delivery, Keys: h.keys, Tools: h.tools,
+		Repo: h.repo, Source: h.source, Delivery: h.delivery, Keys: h.keys, Tools: h.tools, Signer: h.signer,
 		Limits:  media.Limits{MaxDuration: time.Hour, MaxWidth: 3840, MaxHeight: 2160},
 		WorkDir: h.workDir, TranscodeTimeout: time.Minute,
 		Log:              slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),

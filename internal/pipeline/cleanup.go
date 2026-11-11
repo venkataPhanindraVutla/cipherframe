@@ -10,7 +10,7 @@ import (
 )
 
 // cleanDelivery removes every HLS object the asset has in the delivery bucket and every artifact
-// row it has. It enumerates the prefix from the key layout (keys.HLSPrefix), not from the registry,
+// row it has, and the asset's integrity manifest. It enumerates the prefix from the key layout (keys.HLSPrefix), not from the registry,
 // so it also removes objects an attempt uploaded but never got to register. The content key is not
 // touched: it is reused.
 func (p *Processor) cleanDelivery(ctx context.Context, asset db.Asset) error {
@@ -39,6 +39,10 @@ func (p *Processor) cleanDelivery(ctx context.Context, asset db.Asset) error {
 		return fmt.Errorf("pipeline: delete delivery objects: %w", err)
 	}
 	if _, err := p.Repo.DeleteHLSArtifacts(ctx, asset.ID); err != nil {
+		return err
+	}
+	// The manifest describes the objects just removed; a stale one must never survive a retry.
+	if _, err := p.Repo.DeleteManifest(ctx, asset.ID); err != nil {
 		return err
 	}
 	return nil
