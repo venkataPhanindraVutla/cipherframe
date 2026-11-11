@@ -44,11 +44,14 @@ var base = env{ //nolint:gosec // test fixture
 	EnvS3DeliveryBucket:    "cf-delivery",
 	EnvAPIKeyPeppers:       "1:" + pepper('a', 32),
 	EnvAPIKeyPepperCurrent: "1",
+	EnvKMSLocalKEKs:        "1:" + pepper('k', KEKBytes),
+	EnvKMSLocalKEKCurrent:  "1",
 }
 
 // prod is a valid production environment.
 var prod = base.with(
 	EnvEnv, "production",
+	EnvKMSProvider, ProviderVault,
 	EnvS3AccessKeyID, "",
 	EnvS3SecretAccessKey, "",
 )
@@ -371,21 +374,28 @@ func TestRedaction(t *testing.T) {
 	)
 	pep1 := base64.StdEncoding.EncodeToString([]byte(pepRaw))
 	pep2 := base64.StdEncoding.EncodeToString([]byte(pepRaw2))
+	const (
+		kekRaw1 = "KEK1-distinct-bytes-0123456789ab" // exactly KEKBytes
+		kekRaw2 = "KEK2-distinct-bytes-0123456789ab"
+	)
+	kek1 := base64.StdEncoding.EncodeToString([]byte(kekRaw1))
+	kek2 := base64.StdEncoding.EncodeToString([]byte(kekRaw2))
 	e := base.with(
 		EnvDatabaseURL, "postgres://app:"+dbPass+"@db:5432/cf",
 		EnvS3AccessKeyID, akid, EnvS3SecretAccessKey, sak,
 		EnvAPIKeyPeppers, "1:"+pep1+",2:"+pep2, EnvAPIKeyPepperCurrent, "2",
+		EnvKMSLocalKEKs, "1:"+kek1+",2:"+kek2, EnvKMSLocalKEKCurrent, "2",
 	)
 	c, err := load(e, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secrets := []string{dbPass, akid, sak, pepRaw, pepRaw2, pep1, pep2, e[EnvDatabaseURL]}
+	secrets := []string{dbPass, akid, sak, pepRaw, pepRaw2, pep1, pep2, e[EnvDatabaseURL], kekRaw1, kekRaw2, kek1, kek2}
 
 	var outs []string
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
 		outs = append(outs, fmt.Sprintf(verb, c), fmt.Sprintf(verb, *c), fmt.Sprintf(verb, c.S3),
-			fmt.Sprintf(verb, c.Peppers), fmt.Sprintf(verb, c.DatabaseURL), fmt.Sprintf(verb, c.S3.AccessKeyID))
+			fmt.Sprintf(verb, c.Peppers), fmt.Sprintf(verb, c.KMS), fmt.Sprintf(verb, c.KMS.LocalKEKs), fmt.Sprintf(verb, c.DatabaseURL), fmt.Sprintf(verb, c.S3.AccessKeyID))
 	}
 	j, err := json.Marshal(c)
 	if err != nil {

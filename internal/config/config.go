@@ -23,6 +23,9 @@ const (
 	EnvS3SecretAccessKey   = "CIPHERFRAME_S3_SECRET_ACCESS_KEY"   //nolint:gosec // environment variable name, not a credential
 	EnvAPIKeyPeppers       = "CIPHERFRAME_API_KEY_PEPPERS"        //nolint:gosec // environment variable name, not a credential
 	EnvAPIKeyPepperCurrent = "CIPHERFRAME_API_KEY_PEPPER_CURRENT" //nolint:gosec // environment variable name, not a credential
+	EnvKMSProvider         = "CIPHERFRAME_KMS_PROVIDER"
+	EnvKMSLocalKEKs        = "CIPHERFRAME_KMS_LOCAL_KEKS"        //nolint:gosec // environment variable name, not a credential
+	EnvKMSLocalKEKCurrent  = "CIPHERFRAME_KMS_LOCAL_KEK_CURRENT" //nolint:gosec // environment variable name, not a credential
 )
 
 // PlaceholderPrefix marks a development placeholder secret. Production
@@ -63,6 +66,7 @@ type Config struct {
 	DatabaseURL Secret
 	S3          S3
 	Peppers     Peppers
+	KMS         KMS
 }
 
 // LogValue implements slog.LogValuer. It shows the effective configuration
@@ -96,6 +100,12 @@ func (c *Config) LogValue() slog.Value {
 			slog.String("versions", strings.Join(vs, ",")),
 			slog.Int("current", c.Peppers.current),
 			slog.String("values", Redacted),
+		),
+		slog.Group("kms",
+			slog.String("provider", c.KMS.Provider),
+			slog.String("local_kek_versions", kekVersions(c.KMS.LocalKEKs)),
+			slog.Int("local_kek_current", c.KMS.LocalKEKs.current),
+			slog.String("local_kek_values", Redacted),
 		),
 	)
 }

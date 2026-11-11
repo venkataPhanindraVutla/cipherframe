@@ -103,6 +103,7 @@ func (l *loader) load() *Config {
 	c.DatabaseURL = l.databaseURL(prod)
 	c.S3 = l.s3(prod)
 	c.Peppers = l.peppers(prod)
+	c.KMS = l.kms(prod)
 	return c
 }
 
