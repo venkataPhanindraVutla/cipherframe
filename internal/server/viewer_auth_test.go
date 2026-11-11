@@ -14,7 +14,7 @@ import (
 func TestEdgeViewerAuthIsOffWithoutThePublicURL(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
-	viewer, err := newEdgeViewerAuth(nil, nil, nil, nil, nil, &config.Config{}, log)
+	viewer, err := newEdgeViewerAuth(nil, nil, nil, nil, nil, nil, &config.Config{}, log)
 	if err != nil || viewer != nil {
 		t.Fatalf("viewer %v, err %v", viewer, err)
 	}

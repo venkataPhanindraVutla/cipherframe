@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
@@ -26,10 +27,13 @@ import (
 //  3. The per-session window: this request is counted in the session's fixed one-minute window,
 //     whatever happens next. Rejected requests are counted too, so a client that keeps hammering
 //     stays rejected until the window ends. Past key_requests_per_minute the answer is 429, and
-//     the request that first crosses the line records one key_rate event.
+//     the request that first crosses the line raises one key_rate event (once per session per
+//     10 minutes, see package anomaly).
 //  4. The per-token bound: one atomic statement takes one of the token's key_fetches_per_token
-//     fetches, or finds none left. None left is a 429 and, once per token, a key_replay event.
-//  5. The key service: the content key is unwrapped. A fetch is taken in step 4 BEFORE this call,
+//     fetches, or finds none left. None left is a 429 and, once per token, a key_replay event
+//     (once per session per 10 minutes). Both events apply the tenant's auto-revoke policy.
+//  5. The session is marked as having been served the key (the segments_without_key signal needs
+//     it), then the key service unwraps the content key. A fetch is taken in step 4 BEFORE this call,
 //     which is what makes the bound exact under concurrency (a count taken afterwards could be
 //     passed by every request that was already in flight). A request that then gets no key, because
 //     the key service or the database failed, gives its fetch back: only successful key responses
@@ -79,7 +83,10 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 	}
 	if limit := g.settings.KeyRequestsPerMinute; n > limit {
 		if n == limit+1 { // the first request past the line: one event per window
-			p.recordEvent(ctx, g, db.EventKeyRate, now, map[string]int64{"limit": int64(limit)})
+			p.anomalies.Raise(ctx, anomaly.Signal{
+				Tenant: g.tenant, Asset: g.asset, Session: hash, Kind: db.EventKeyRate, At: now,
+				Detail: map[string]int64{"limit": int64(limit)},
+			})
 		}
 		retry := retryAfter(start.Add(keyWindow).Sub(now))
 		p.logRateLimited(ctx, g, db.EventKeyRate, retry)
@@ -100,6 +107,14 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 		p.logRateLimited(ctx, g, db.EventKeyReplay, retry)
 		p.access.RecordKeyDenied(p.accessEvent(ctx, g, db.AccessKeyDenied))
 		return rateLimited(ctx, "This playback token has used its key fetches. Request a new token with a heartbeat.", retry), nil
+	}
+
+	// The session has now been served the key (the segments_without_key signal reads this). It is
+	// recorded BEFORE the key is read, so a viewer that got the key is never counted as one that
+	// did not: at worst an outage after this point hides a scraper, which is the safe direction.
+	if err := p.keyStore.MarkPlaybackKeyServed(ctx, g.tenant, hash, now); err != nil {
+		p.release(ctx, g)
+		return nil, unauthIfNotFound(err)
 	}
 
 	// 5. The key service.
@@ -159,27 +174,24 @@ func (p *Playback) release(ctx context.Context, g grant) {
 	}
 }
 
-// recordReplay records the key_replay event for a token over its bound, once per token.
+// recordReplay raises the key_replay event for a token over its bound, once per token (the mark),
+// and then at most once per session per window.
 func (p *Playback) recordReplay(ctx context.Context, g grant, limit int, now time.Time) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 	defer cancel()
-	if _, err := p.keyStore.RecordKeyReplay(rctx, g.tenant, g.asset, g.tokenHash, limit, now); err != nil {
-		httpx.Logger(ctx).LogAttrs(ctx, slog.LevelWarn, "key anomaly event not recorded",
-			slog.String("session", fingerprint(g.session)), slog.String("kind", db.EventKeyReplay), slog.String("code", errCode(err)))
-	}
-}
-
-// recordEvent stores an anomaly event. The 429 is answered either way.
-func (p *Playback) recordEvent(ctx context.Context, g grant, kind string, now time.Time, detail map[string]int64) {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
-	defer cancel()
-	err := p.keyStore.InsertPlaybackEvent(rctx, db.NewPlaybackEvent{
-		TenantID: g.tenant, SessionHash: db.SessionHash(g.session), AssetID: g.asset, Kind: kind, At: now, Detail: detail,
-	})
+	hash, first, err := p.keyStore.MarkKeyReplay(rctx, g.tokenHash, now)
 	if err != nil {
 		httpx.Logger(ctx).LogAttrs(ctx, slog.LevelWarn, "key anomaly event not recorded",
-			slog.String("session", fingerprint(g.session)), slog.String("kind", kind), slog.String("code", errCode(err)))
+			slog.String("session", fingerprint(g.session)), slog.String("kind", db.EventKeyReplay), slog.String("code", errCode(err)))
+		return
 	}
+	if !first {
+		return
+	}
+	p.anomalies.Raise(ctx, anomaly.Signal{
+		Tenant: g.tenant, Asset: g.asset, Session: hash, Kind: db.EventKeyReplay, At: now,
+		Detail: map[string]int64{"limit": int64(limit)},
+	})
 }
 
 func (p *Playback) logRateLimited(ctx context.Context, g grant, kind string, retry int) {

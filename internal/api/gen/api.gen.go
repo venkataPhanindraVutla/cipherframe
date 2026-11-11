@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for AccessLogEntryAuthMethod.
@@ -144,6 +145,33 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for PlaybackEventKind.
+const (
+	PlaybackEventKindKeyRate              PlaybackEventKind = "key_rate"
+	PlaybackEventKindKeyReplay            PlaybackEventKind = "key_replay"
+	PlaybackEventKindRapidSessionCreation PlaybackEventKind = "rapid_session_creation"
+	PlaybackEventKindSegmentsWithoutKey   PlaybackEventKind = "segments_without_key"
+	PlaybackEventKindSessionLimit         PlaybackEventKind = "session_limit"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackEventKind enum.
+func (e PlaybackEventKind) Valid() bool {
+	switch e {
+	case PlaybackEventKindKeyRate:
+		return true
+	case PlaybackEventKindKeyReplay:
+		return true
+	case PlaybackEventKindRapidSessionCreation:
+		return true
+	case PlaybackEventKindSegmentsWithoutKey:
+		return true
+	case PlaybackEventKindSessionLimit:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlaybackJwtKeyAlg.
 const (
 	PlaybackJwtKeyAlgES256 PlaybackJwtKeyAlg = "ES256"
@@ -186,6 +214,30 @@ func (e PlaybackSessionStatusState) Valid() bool {
 	}
 }
 
+// Defines values for PlaybackSettingsAutoRevoke.
+const (
+	PlaybackSettingsAutoRevokeKeyRate              PlaybackSettingsAutoRevoke = "key_rate"
+	PlaybackSettingsAutoRevokeKeyReplay            PlaybackSettingsAutoRevoke = "key_replay"
+	PlaybackSettingsAutoRevokeRapidSessionCreation PlaybackSettingsAutoRevoke = "rapid_session_creation"
+	PlaybackSettingsAutoRevokeSegmentsWithoutKey   PlaybackSettingsAutoRevoke = "segments_without_key"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackSettingsAutoRevoke enum.
+func (e PlaybackSettingsAutoRevoke) Valid() bool {
+	switch e {
+	case PlaybackSettingsAutoRevokeKeyRate:
+		return true
+	case PlaybackSettingsAutoRevokeKeyReplay:
+		return true
+	case PlaybackSettingsAutoRevokeRapidSessionCreation:
+		return true
+	case PlaybackSettingsAutoRevokeSegmentsWithoutKey:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlaybackSettingsDelivery.
 const (
 	PlaybackSettingsDeliveryPresigned PlaybackSettingsDelivery = "presigned"
@@ -198,6 +250,30 @@ func (e PlaybackSettingsDelivery) Valid() bool {
 	case PlaybackSettingsDeliveryPresigned:
 		return true
 	case PlaybackSettingsDeliveryProxy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PlaybackSettingsInputAutoRevoke.
+const (
+	PlaybackSettingsInputAutoRevokeKeyRate              PlaybackSettingsInputAutoRevoke = "key_rate"
+	PlaybackSettingsInputAutoRevokeKeyReplay            PlaybackSettingsInputAutoRevoke = "key_replay"
+	PlaybackSettingsInputAutoRevokeRapidSessionCreation PlaybackSettingsInputAutoRevoke = "rapid_session_creation"
+	PlaybackSettingsInputAutoRevokeSegmentsWithoutKey   PlaybackSettingsInputAutoRevoke = "segments_without_key"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackSettingsInputAutoRevoke enum.
+func (e PlaybackSettingsInputAutoRevoke) Valid() bool {
+	switch e {
+	case PlaybackSettingsInputAutoRevokeKeyRate:
+		return true
+	case PlaybackSettingsInputAutoRevokeKeyReplay:
+		return true
+	case PlaybackSettingsInputAutoRevokeRapidSessionCreation:
+		return true
+	case PlaybackSettingsInputAutoRevokeSegmentsWithoutKey:
 		return true
 	default:
 		return false
@@ -729,6 +805,85 @@ type PlaybackAuthInput struct {
 	JwtViewerClaim *string `json:"jwt_viewer_claim,omitempty"`
 }
 
+// PlaybackEvent defines model for PlaybackEvent.
+type PlaybackEvent struct {
+	// AssetId The asset the event concerns.
+	AssetId string    `json:"asset_id"`
+	At      time.Time `json:"at"`
+
+	// Detail Small integers only, the threshold that was crossed and the observed count.
+	Detail map[string]int64 `json:"detail"`
+
+	// Id The event's ID, stable and unique. Webhook deliveries (M7) will carry it.
+	Id openapi_types.UUID `json:"id"`
+
+	// Kind What was detected. Every kind is computed from counters and times Cipherframe keeps for
+	// enforcement and for the access trail; nothing about what a viewer watched or did in the
+	// player is used (invariant I10).
+	//
+	// - `key_replay`: one playback token asked for the key more often than the tenant's
+	//   `key_fetches_per_token`. `detail`: `limit`.
+	// - `key_rate`: one session asked for the key more often than `key_requests_per_minute` in
+	//   a minute. `detail`: `limit`.
+	// - `session_limit`: a session creation was refused with `session_limit` because the viewer
+	//   had `max_sessions_per_viewer` active sessions. Raised at most once per viewer per 10
+	//   minutes. A player that retries triggers it too, so it is information, and it can never
+	//   be an `auto_revoke` kind.
+	// - `rapid_session_creation`: more than `anomaly_sessions_per_viewer_10m` sessions were
+	//   created for one viewer in a sliding 10 minutes. Raised at most once per viewer per 10
+	//   minutes. `detail`: `limit`, `sessions`.
+	// - `segments_without_key`: a session was served more than `anomaly_segments_without_key`
+	//   segments without ever being served the key. Raised once per session. `detail`: `limit`,
+	//   `segments`. Only `proxy` delivery counts segments: with `presigned` delivery storage
+	//   serves them and this signal never fires.
+	//
+	// None of these detects a careful scraper that fetches the key like a player and paces
+	// itself, and HLS with AES-128 is not DRM: a viewer who receives the key can decrypt what
+	// they receive.
+	Kind PlaybackEventKind `json:"kind"`
+
+	// Session An 8-character fingerprint of the session, the same one the access log shows
+	// (`AccessLogEntry.session`). It cannot be turned into the session ID. Absent for the
+	// viewer-level kinds (`session_limit`, `rapid_session_creation`).
+	Session *string `json:"session,omitempty"`
+
+	// ViewerId The viewer ID your application chose, when known.
+	ViewerId *string `json:"viewer_id,omitempty"`
+}
+
+// PlaybackEventKind What was detected. Every kind is computed from counters and times Cipherframe keeps for
+// enforcement and for the access trail; nothing about what a viewer watched or did in the
+// player is used (invariant I10).
+//
+//   - `key_replay`: one playback token asked for the key more often than the tenant's
+//     `key_fetches_per_token`. `detail`: `limit`.
+//   - `key_rate`: one session asked for the key more often than `key_requests_per_minute` in
+//     a minute. `detail`: `limit`.
+//   - `session_limit`: a session creation was refused with `session_limit` because the viewer
+//     had `max_sessions_per_viewer` active sessions. Raised at most once per viewer per 10
+//     minutes. A player that retries triggers it too, so it is information, and it can never
+//     be an `auto_revoke` kind.
+//   - `rapid_session_creation`: more than `anomaly_sessions_per_viewer_10m` sessions were
+//     created for one viewer in a sliding 10 minutes. Raised at most once per viewer per 10
+//     minutes. `detail`: `limit`, `sessions`.
+//   - `segments_without_key`: a session was served more than `anomaly_segments_without_key`
+//     segments without ever being served the key. Raised once per session. `detail`: `limit`,
+//     `segments`. Only `proxy` delivery counts segments: with `presigned` delivery storage
+//     serves them and this signal never fires.
+//
+// None of these detects a careful scraper that fetches the key like a player and paces
+// itself, and HLS with AES-128 is not DRM: a viewer who receives the key can decrypt what
+// they receive.
+type PlaybackEventKind string
+
+// PlaybackEventList defines model for PlaybackEventList.
+type PlaybackEventList struct {
+	Items []PlaybackEvent `json:"items"`
+
+	// NextCursor Present when there are older events. Pass it as `cursor`.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // PlaybackJwtKey defines model for PlaybackJwtKey.
 type PlaybackJwtKey struct {
 	Alg       PlaybackJwtKeyAlg `json:"alg"`
@@ -770,12 +925,19 @@ type PlaybackSessionStatusState string
 
 // PlaybackSettings A tenant's effective playback settings.
 type PlaybackSettings struct {
-	AllowedOrigins           []string                 `json:"allowed_origins"`
-	Delivery                 PlaybackSettingsDelivery `json:"delivery"`
-	HeartbeatIntervalSeconds int                      `json:"heartbeat_interval_seconds"`
-	IdleTimeoutSeconds       int                      `json:"idle_timeout_seconds"`
-	KeyFetchesPerToken       int                      `json:"key_fetches_per_token"`
-	KeyRequestsPerMinute     int                      `json:"key_requests_per_minute"`
+	AllowedOrigins []string `json:"allowed_origins"`
+
+	// AnomalySegmentsWithoutKey 0 means the signal is off.
+	AnomalySegmentsWithoutKey int `json:"anomaly_segments_without_key"`
+
+	// AnomalySessionsPerViewer10m 0 means the signal is off.
+	AnomalySessionsPerViewer10m int                          `json:"anomaly_sessions_per_viewer_10m"`
+	AutoRevoke                  []PlaybackSettingsAutoRevoke `json:"auto_revoke"`
+	Delivery                    PlaybackSettingsDelivery     `json:"delivery"`
+	HeartbeatIntervalSeconds    int                          `json:"heartbeat_interval_seconds"`
+	IdleTimeoutSeconds          int                          `json:"idle_timeout_seconds"`
+	KeyFetchesPerToken          int                          `json:"key_fetches_per_token"`
+	KeyRequestsPerMinute        int                          `json:"key_requests_per_minute"`
 
 	// MaxSessionsPerViewer 0 means unlimited.
 	MaxSessionsPerViewer int  `json:"max_sessions_per_viewer"`
@@ -786,6 +948,9 @@ type PlaybackSettings struct {
 	// UpdatedAt When the settings were last replaced. Absent while the defaults are in force.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
+
+// PlaybackSettingsAutoRevoke defines model for PlaybackSettings.AutoRevoke.
+type PlaybackSettingsAutoRevoke string
 
 // PlaybackSettingsDelivery defines model for PlaybackSettings.Delivery.
 type PlaybackSettingsDelivery string
@@ -799,6 +964,23 @@ type PlaybackSettingsInput struct {
 	// `https://host[:port]`, or `http://localhost[:port]` for development: lower case, no
 	// path, no wildcard, and no port that is the scheme's default. Default empty.
 	AllowedOrigins *[]string `json:"allowed_origins,omitempty"`
+
+	// AnomalySegmentsWithoutKey A session served more than this many segments without ever being served the key
+	// raises `segments_without_key`. 0 disables the signal. Only `proxy` delivery counts
+	// segments. Default 30.
+	AnomalySegmentsWithoutKey *int `json:"anomaly_segments_without_key,omitempty"`
+
+	// AnomalySessionsPerViewer10m More than this many sessions created for one viewer in a sliding 10 minutes raises
+	// `rapid_session_creation`. 0 disables the signal. Default 10.
+	AnomalySessionsPerViewer10m *int `json:"anomaly_sessions_per_viewer_10m,omitempty"`
+
+	// AutoRevoke Event kinds that also revoke: when one of these is detected the session is revoked
+	// with the reason `auto:<kind>` (for `rapid_session_creation`, every active session of
+	// the viewer), the access trail gets a `revoked` row, and the action is audited. An
+	// empty list, the default, only records events. Revocation is automatic and a false
+	// positive costs a viewer their playback, so enable a kind only after watching its
+	// events for a while. `session_limit` is not allowed.
+	AutoRevoke *[]PlaybackSettingsInputAutoRevoke `json:"auto_revoke,omitempty"`
 
 	// Delivery How segments reach the player (ADR 0032). `proxy` (the default): edge serves every
 	// segment after checking the token. `presigned`: media playlists carry short-lived
@@ -838,6 +1020,9 @@ type PlaybackSettingsInput struct {
 	// TokenTtlSeconds How long a playback token works. Default 600.
 	TokenTtlSeconds *int `json:"token_ttl_seconds,omitempty"`
 }
+
+// PlaybackSettingsInputAutoRevoke defines model for PlaybackSettingsInput.AutoRevoke.
+type PlaybackSettingsInputAutoRevoke string
 
 // PlaybackSettingsInputDelivery How segments reach the player (ADR 0032). `proxy` (the default): edge serves every
 // segment after checking the token. `presigned`: media playlists carry short-lived
@@ -1031,6 +1216,37 @@ type KidPath = string
 // Limit defines model for Limit.
 type Limit = int
 
+// PlaybackEventAssetId defines model for PlaybackEventAssetId.
+type PlaybackEventAssetId = string
+
+// PlaybackEventKindQuery What was detected. Every kind is computed from counters and times Cipherframe keeps for
+// enforcement and for the access trail; nothing about what a viewer watched or did in the
+// player is used (invariant I10).
+//
+//   - `key_replay`: one playback token asked for the key more often than the tenant's
+//     `key_fetches_per_token`. `detail`: `limit`.
+//   - `key_rate`: one session asked for the key more often than `key_requests_per_minute` in
+//     a minute. `detail`: `limit`.
+//   - `session_limit`: a session creation was refused with `session_limit` because the viewer
+//     had `max_sessions_per_viewer` active sessions. Raised at most once per viewer per 10
+//     minutes. A player that retries triggers it too, so it is information, and it can never
+//     be an `auto_revoke` kind.
+//   - `rapid_session_creation`: more than `anomaly_sessions_per_viewer_10m` sessions were
+//     created for one viewer in a sliding 10 minutes. Raised at most once per viewer per 10
+//     minutes. `detail`: `limit`, `sessions`.
+//   - `segments_without_key`: a session was served more than `anomaly_segments_without_key`
+//     segments without ever being served the key. Raised once per session. `detail`: `limit`,
+//     `segments`. Only `proxy` delivery counts segments: with `presigned` delivery storage
+//     serves them and this signal never fires.
+//
+// None of these detects a careful scraper that fetches the key like a player and paces
+// itself, and HLS with AES-128 is not DRM: a viewer who receives the key can decrypt what
+// they receive.
+type PlaybackEventKindQuery = PlaybackEventKind
+
+// PlaybackEventViewerId defines model for PlaybackEventViewerId.
+type PlaybackEventViewerId = string
+
 // SessionIdPath A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
 type SessionIdPath = SessionId
 
@@ -1080,6 +1296,30 @@ type ListKeysParams struct {
 
 	// Cursor The `next_cursor` of the previous page. Treat it as opaque.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListPlaybackEventsParams defines parameters for ListPlaybackEvents.
+type ListPlaybackEventsParams struct {
+	// Kind Only events of this kind.
+	Kind *PlaybackEventKindQuery `form:"kind,omitempty" json:"kind,omitempty"`
+
+	// AssetId Only events about this asset (`ast_` followed by 26 characters).
+	AssetId *PlaybackEventAssetId `form:"asset_id,omitempty" json:"asset_id,omitempty"`
+
+	// ViewerId Only events about this viewer ID.
+	ViewerId *PlaybackEventViewerId `form:"viewer_id,omitempty" json:"viewer_id,omitempty"`
+
+	// From Only events at or after this time (RFC 3339).
+	From *AccessLogFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only events before this time (RFC 3339). Must be after `from`.
+	To *AccessLogTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// Limit Page size, 1 to 500 (default 100).
+	Limit *AccessLogLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Treat it as opaque.
+	Cursor *AccessLogCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // GetPlaybackSessionAccessLogParams defines parameters for GetPlaybackSessionAccessLog.
@@ -1376,6 +1616,9 @@ type ServerInterface interface {
 	// PutPlaybackJwtKey Upload a public JWT verification key
 	// (PUT /v1/playback-auth/jwt-keys/{kid})
 	PutPlaybackJwtKey(w http.ResponseWriter, r *http.Request, kid KidPath)
+	// ListPlaybackEvents List playback anomaly events
+	// (GET /v1/playback-events)
+	ListPlaybackEvents(w http.ResponseWriter, r *http.Request, params ListPlaybackEventsParams)
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(w http.ResponseWriter, r *http.Request)
@@ -1943,6 +2186,117 @@ func (siw *ServerInterfaceWrapper) PutPlaybackJwtKey(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// ListPlaybackEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListPlaybackEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPlaybackEventsParams
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "asset_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "asset_id", r.URL.Query(), &params.AssetId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "asset_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "viewer_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "viewer_id", r.URL.Query(), &params.ViewerId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "viewer_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "viewer_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPlaybackEvents(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePlaybackSession operation middleware
 func (siw *ServerInterfaceWrapper) CreatePlaybackSession(w http.ResponseWriter, r *http.Request) {
 
@@ -2327,6 +2681,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-sessions/{session_id}", wrapper.GetPlaybackSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions/{session_id}/revoke", wrapper.RevokePlaybackSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-sessions/{session_id}/access-log", wrapper.GetPlaybackSessionAccessLog)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-events", wrapper.ListPlaybackEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-settings", wrapper.GetPlaybackSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-settings", wrapper.UpdatePlaybackSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/privacy-settings", wrapper.GetPrivacySettings)
@@ -4372,6 +4727,118 @@ func (response PutPlaybackJwtKeydefaultApplicationProblemPlusJSONResponse) Visit
 	return err
 }
 
+type ListPlaybackEventsRequestObject struct {
+	Params ListPlaybackEventsParams
+}
+
+type ListPlaybackEventsResponseObject interface {
+	VisitListPlaybackEventsResponse(w http.ResponseWriter) error
+}
+
+type ListPlaybackEvents200ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type ListPlaybackEvents200JSONResponse struct {
+	Body    PlaybackEventList
+	Headers ListPlaybackEvents200ResponseHeaders
+}
+
+func (response ListPlaybackEvents200JSONResponse) VisitListPlaybackEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPlaybackEvents400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListPlaybackEvents400ApplicationProblemPlusJSONResponse) VisitListPlaybackEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPlaybackEvents401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListPlaybackEvents401ApplicationProblemPlusJSONResponse) VisitListPlaybackEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPlaybackEvents403ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListPlaybackEvents403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ListPlaybackEvents403ResponseHeaders
+}
+
+func (response ListPlaybackEvents403ApplicationProblemPlusJSONResponse) VisitListPlaybackEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPlaybackEventsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListPlaybackEventsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListPlaybackEventsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListPlaybackEventsdefaultApplicationProblemPlusJSONResponse) VisitListPlaybackEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreatePlaybackSessionRequestObject struct {
 	Body *CreatePlaybackSessionJSONRequestBody
 }
@@ -5535,6 +6002,9 @@ type StrictServerInterface interface {
 	// PutPlaybackJwtKey Upload a public JWT verification key
 	// (PUT /v1/playback-auth/jwt-keys/{kid})
 	PutPlaybackJwtKey(ctx context.Context, request PutPlaybackJwtKeyRequestObject) (PutPlaybackJwtKeyResponseObject, error)
+	// ListPlaybackEvents List playback anomaly events
+	// (GET /v1/playback-events)
+	ListPlaybackEvents(ctx context.Context, request ListPlaybackEventsRequestObject) (ListPlaybackEventsResponseObject, error)
 	// CreatePlaybackSession Start a playback session
 	// (POST /v1/playback-sessions)
 	CreatePlaybackSession(ctx context.Context, request CreatePlaybackSessionRequestObject) (CreatePlaybackSessionResponseObject, error)
@@ -6123,6 +6593,32 @@ func (sh *strictHandler) PutPlaybackJwtKey(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutPlaybackJwtKeyResponseObject); ok {
 		if err := validResponse.VisitPutPlaybackJwtKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListPlaybackEvents operation middleware
+func (sh *strictHandler) ListPlaybackEvents(w http.ResponseWriter, r *http.Request, params ListPlaybackEventsParams) {
+	var request ListPlaybackEventsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListPlaybackEvents(ctx, request.(ListPlaybackEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListPlaybackEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListPlaybackEventsResponseObject); ok {
+		if err := validResponse.VisitListPlaybackEventsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

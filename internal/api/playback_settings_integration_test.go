@@ -17,6 +17,7 @@ func fullSettings() map[string]any {
 		"session_max_seconds": 7200, "max_sessions_per_viewer": 5, "key_fetches_per_token": 10,
 		"key_requests_per_minute": 15, "allowed_origins": []any{"https://app.example.com", "http://localhost:3000"},
 		"token_in_url": false, "delivery": "proxy",
+		"anomaly_sessions_per_viewer_10m": 20, "anomaly_segments_without_key": 50, "auto_revoke": []any{"key_replay"},
 	}
 }
 
@@ -39,6 +40,7 @@ func TestPlaybackSettingsDefaults(t *testing.T) {
 		"token_ttl_seconds": 600.0, "heartbeat_interval_seconds": 60.0, "idle_timeout_seconds": 300.0,
 		"session_max_seconds": 14400.0, "max_sessions_per_viewer": 3.0, "key_fetches_per_token": 20.0,
 		"key_requests_per_minute": 30.0, "allowed_origins": []any{}, "token_in_url": false, "delivery": "proxy",
+		"anomaly_sessions_per_viewer_10m": 10.0, "anomaly_segments_without_key": 30.0, "auto_revoke": []any{},
 	}
 	if !reflect.DeepEqual(r.m, want) {
 		t.Fatalf("defaults = %s", r.raw)
@@ -72,14 +74,17 @@ func TestPlaybackSettingsRoundTrip(t *testing.T) {
 	// and the limit to their zero values.
 	again := fullSettings()
 	again["allowed_origins"], again["max_sessions_per_viewer"], again["token_in_url"], again["delivery"] = []any{}, 0, true, "presigned"
+	again["anomaly_sessions_per_viewer_10m"], again["anomaly_segments_without_key"], again["auto_revoke"] = 0, 0, []any{}
 	r := h.mustOK(h.do(key, "PUT", "/v1/playback-settings", again), 200)
-	if !reflect.DeepEqual(r.m["allowed_origins"], []any{}) || r.m["max_sessions_per_viewer"] != 0.0 || r.m["token_in_url"] != true || r.m["delivery"] != "presigned" {
+	if !reflect.DeepEqual(r.m["allowed_origins"], []any{}) || r.m["max_sessions_per_viewer"] != 0.0 || r.m["token_in_url"] != true || r.m["delivery"] != "presigned" ||
+		r.m["anomaly_sessions_per_viewer_10m"] != 0.0 || r.m["anomaly_segments_without_key"] != 0.0 || !reflect.DeepEqual(r.m["auto_revoke"], []any{}) {
 		t.Fatalf("second PUT = %s", r.raw)
 	}
 
 	// Settings belong to the tenant.
 	other := h.mustOK(h.do(otherKey, "GET", "/v1/playback-settings", nil), 200)
-	if other.m["max_sessions_per_viewer"] != 3.0 || other.m["token_in_url"] != false || other.m["delivery"] != "proxy" {
+	if other.m["max_sessions_per_viewer"] != 3.0 || other.m["token_in_url"] != false || other.m["delivery"] != "proxy" ||
+		other.m["anomaly_sessions_per_viewer_10m"] != 10.0 || !reflect.DeepEqual(other.m["auto_revoke"], []any{}) {
 		t.Fatalf("another tenant's settings = %s", other.raw)
 	}
 	if _, ok := other.m["updated_at"]; ok {
@@ -132,29 +137,36 @@ func TestPlaybackSettingsValidation(t *testing.T) {
 		body  map[string]any
 		field []string
 	}{
-		"ttl low":            {with("token_ttl_seconds", 59), []string{"token_ttl_seconds"}},
-		"ttl high":           {with("token_ttl_seconds", 3601), []string{"token_ttl_seconds"}},
-		"heartbeat low":      {with("heartbeat_interval_seconds", 9), []string{"heartbeat_interval_seconds"}},
-		"heartbeat high":     {with("heartbeat_interval_seconds", 601), []string{"heartbeat_interval_seconds"}},
-		"idle low":           {with("idle_timeout_seconds", 29), []string{"idle_timeout_seconds"}},
-		"idle high":          {with("idle_timeout_seconds", 3601), []string{"idle_timeout_seconds"}},
-		"session max low":    {with("session_max_seconds", 299), []string{"session_max_seconds"}},
-		"session max high":   {with("session_max_seconds", 86401), []string{"session_max_seconds"}},
-		"max sessions neg":   {with("max_sessions_per_viewer", -1), []string{"max_sessions_per_viewer"}},
-		"max sessions high":  {with("max_sessions_per_viewer", 101), []string{"max_sessions_per_viewer"}},
-		"key fetches zero":   {with("key_fetches_per_token", 0), []string{"key_fetches_per_token"}},
-		"key fetches high":   {with("key_fetches_per_token", 1001), []string{"key_fetches_per_token"}},
-		"key rpm zero":       {with("key_requests_per_minute", 0), []string{"key_requests_per_minute"}},
-		"key rpm high":       {with("key_requests_per_minute", 601), []string{"key_requests_per_minute"}},
-		"huge number":        {with("session_max_seconds", 1<<40), []string{"session_max_seconds"}},
-		"wildcard origin":    {with("allowed_origins", []any{"https://ok.example.com", "https://*.example.com"}), []string{"allowed_origins[1]"}},
-		"unknown delivery":   {with("delivery", "cdn"), []string{"delivery"}},
-		"http origin":        {with("allowed_origins", []any{"http://example.com"}), []string{"allowed_origins[0]"}},
-		"origin with path":   {with("allowed_origins", []any{"https://example.com/app"}), []string{"allowed_origins[0]"}},
-		"origin with slash":  {with("allowed_origins", []any{"https://example.com/"}), []string{"allowed_origins[0]"}},
-		"origin credentials": {with("allowed_origins", []any{"https://u:p@example.com"}), []string{"allowed_origins[0]"}},
-		"duplicate origin":   {with("allowed_origins", []any{"https://a.example.com", "https://a.example.com"}), []string{"allowed_origins[1]"}},
-		"not an origin":      {with("allowed_origins", []any{"example.com", "", "null"}), []string{"allowed_origins[0]", "allowed_origins[1]", "allowed_origins[2]"}},
+		"ttl low":                     {with("token_ttl_seconds", 59), []string{"token_ttl_seconds"}},
+		"ttl high":                    {with("token_ttl_seconds", 3601), []string{"token_ttl_seconds"}},
+		"heartbeat low":               {with("heartbeat_interval_seconds", 9), []string{"heartbeat_interval_seconds"}},
+		"heartbeat high":              {with("heartbeat_interval_seconds", 601), []string{"heartbeat_interval_seconds"}},
+		"idle low":                    {with("idle_timeout_seconds", 29), []string{"idle_timeout_seconds"}},
+		"idle high":                   {with("idle_timeout_seconds", 3601), []string{"idle_timeout_seconds"}},
+		"session max low":             {with("session_max_seconds", 299), []string{"session_max_seconds"}},
+		"session max high":            {with("session_max_seconds", 86401), []string{"session_max_seconds"}},
+		"max sessions neg":            {with("max_sessions_per_viewer", -1), []string{"max_sessions_per_viewer"}},
+		"max sessions high":           {with("max_sessions_per_viewer", 101), []string{"max_sessions_per_viewer"}},
+		"key fetches zero":            {with("key_fetches_per_token", 0), []string{"key_fetches_per_token"}},
+		"key fetches high":            {with("key_fetches_per_token", 1001), []string{"key_fetches_per_token"}},
+		"key rpm zero":                {with("key_requests_per_minute", 0), []string{"key_requests_per_minute"}},
+		"key rpm high":                {with("key_requests_per_minute", 601), []string{"key_requests_per_minute"}},
+		"huge number":                 {with("session_max_seconds", 1<<40), []string{"session_max_seconds"}},
+		"wildcard origin":             {with("allowed_origins", []any{"https://ok.example.com", "https://*.example.com"}), []string{"allowed_origins[1]"}},
+		"unknown delivery":            {with("delivery", "cdn"), []string{"delivery"}},
+		"sessions threshold negative": {with("anomaly_sessions_per_viewer_10m", -1), []string{"anomaly_sessions_per_viewer_10m"}},
+		"sessions threshold high":     {with("anomaly_sessions_per_viewer_10m", 1001), []string{"anomaly_sessions_per_viewer_10m"}},
+		"segments threshold negative": {with("anomaly_segments_without_key", -1), []string{"anomaly_segments_without_key"}},
+		"segments threshold high":     {with("anomaly_segments_without_key", 100001), []string{"anomaly_segments_without_key"}},
+		"auto_revoke session_limit":   {with("auto_revoke", []any{"session_limit"}), []string{"auto_revoke[0]"}},
+		"auto_revoke unknown":         {with("auto_revoke", []any{"key_rate", "nope"}), []string{"auto_revoke[1]"}},
+		"auto_revoke repeated":        {with("auto_revoke", []any{"key_rate", "key_rate"}), []string{"auto_revoke[1]"}},
+		"http origin":                 {with("allowed_origins", []any{"http://example.com"}), []string{"allowed_origins[0]"}},
+		"origin with path":            {with("allowed_origins", []any{"https://example.com/app"}), []string{"allowed_origins[0]"}},
+		"origin with slash":           {with("allowed_origins", []any{"https://example.com/"}), []string{"allowed_origins[0]"}},
+		"origin credentials":          {with("allowed_origins", []any{"https://u:p@example.com"}), []string{"allowed_origins[0]"}},
+		"duplicate origin":            {with("allowed_origins", []any{"https://a.example.com", "https://a.example.com"}), []string{"allowed_origins[1]"}},
+		"not an origin":               {with("allowed_origins", []any{"example.com", "", "null"}), []string{"allowed_origins[0]", "allowed_origins[1]", "allowed_origins[2]"}},
 		"several problems": {func() map[string]any {
 			s := with("token_ttl_seconds", 1)
 			s["key_fetches_per_token"], s["allowed_origins"] = 0, []any{"*"}
@@ -207,11 +219,14 @@ func TestPlaybackSettingsValidation(t *testing.T) {
 		"token_ttl_seconds": 60, "heartbeat_interval_seconds": 10, "idle_timeout_seconds": 30,
 		"session_max_seconds": 300, "max_sessions_per_viewer": 0, "key_fetches_per_token": 1,
 		"key_requests_per_minute": 1, "allowed_origins": []any{}, "token_in_url": true, "delivery": "presigned",
+		"anomaly_sessions_per_viewer_10m": 0, "anomaly_segments_without_key": 0, "auto_revoke": []any{},
 	}), 200)
 	h.mustOK(h.do(key, "PUT", "/v1/playback-settings", map[string]any{
 		"token_ttl_seconds": 3600, "heartbeat_interval_seconds": 600, "idle_timeout_seconds": 3600,
 		"session_max_seconds": 86400, "max_sessions_per_viewer": 100, "key_fetches_per_token": 1000,
 		"key_requests_per_minute": 600, "allowed_origins": []any{"https://a.example.com:8443"}, "token_in_url": false, "delivery": "proxy",
+		"anomaly_sessions_per_viewer_10m": 1000, "anomaly_segments_without_key": 100000,
+		"auto_revoke": []any{"key_replay", "key_rate", "rapid_session_creation", "segments_without_key"},
 	}), 200)
 }
 
@@ -221,16 +236,17 @@ func TestPlaybackSettingsMissingFields(t *testing.T) {
 
 	r := h.do(key, "PUT", "/v1/playback-settings", `{}`)
 	h.wantStatus(r, 400, "invalid_request")
-	if len(fieldErrors(r)) != 10 {
+	if len(fieldErrors(r)) != 13 {
 		t.Fatalf("empty body: field errors = %v", fieldErrors(r))
 	}
 	// A zero value is not a missing field; null and absent are.
 	s := fullSettings()
 	delete(s, "max_sessions_per_viewer")
-	s["token_in_url"], s["allowed_origins"], s["delivery"] = nil, nil, nil
+	delete(s, "anomaly_segments_without_key")
+	s["token_in_url"], s["allowed_origins"], s["delivery"], s["auto_revoke"] = nil, nil, nil, nil
 	r = h.do(key, "PUT", "/v1/playback-settings", s)
 	h.wantStatus(r, 400, "invalid_request")
-	if got, want := fieldErrors(r), []string{"max_sessions_per_viewer", "allowed_origins", "token_in_url", "delivery"}; !reflect.DeepEqual(got, want) {
+	if got, want := fieldErrors(r), []string{"max_sessions_per_viewer", "anomaly_segments_without_key", "auto_revoke", "allowed_origins", "token_in_url", "delivery"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("field errors = %v, want %v", got, want)
 	}
 	h.wantStatus(h.do(key, "PUT", "/v1/playback-settings", `not json`), 400, "invalid_request")

@@ -530,6 +530,39 @@ sweeper (edge role) ──► expired rows, written directly; creates the monthl
   `(tenant_id, asset_id, at, id)` and `(tenant_id, session_hash, at, id)`. A row exposes a session
   fingerprint, never the hash.
 
+## Anomaly signals (M4-9)
+
+Package `internal/anomaly` raises the playback signals and applies the tenant's auto-revoke policy. A
+`Detector` is built once per process (api and edge roles) over the same pool and access recorder.
+
+```
+edge key route ────────► Raise(key_replay | key_rate)                 ┐
+playback.Service ──────► Raise(session_limit | rapid_session_creation)├► playback_events (outbox for M7)
+accesslog.Recorder ────► SegmentsServed(counts) ─► one batched UPDATE ┘        │ + revoke, audit, access-trail row
+ (segment-count flush)     of playback_sessions.segments_served                 │   when the kind is in auto_revoke
+```
+
+- **One transaction per signal.** `Raise` takes an advisory lock on (tenant, kind, subject), inserts the
+  event unless one exists for the subject and kind in the window (10 minutes; once per session for
+  `segments_without_key`), and, if the kind is in the tenant's `auto_revoke`, revokes in the same
+  transaction and writes an audit row. The `revoked` access-trail row is queued after the commit. If the
+  settings or the transaction fail, nothing is revoked (I11).
+- **Why `segments_without_key` runs at the segment flush and not in the sweeper.** The recorder already
+  counts segment requests per session in memory and flushes them every 30 seconds; the detector is its
+  sink. Each flush adds the counts to `playback_sessions.segments_served` in one `UPDATE ... FROM
+  unnest(...)` per replica and the same statement returns the sessions that are over their tenant's
+  threshold, with no key stamp (`key_served_at`) and no event yet. The alternative, summing `segments` and
+  `key` rows of the access trail from a sweeper, reads a best-effort table (a dropped `key` row would
+  accuse an honest viewer), scans partitions and runs only every 10 minutes. The session-row counters are
+  exact, shared by all replicas, and cost one statement per replica per 30 seconds.
+- **The key stamp** is set by the key endpoint before it reads the key, so a viewer that received the
+  key is never counted as one that did not.
+- **Rapid creation** counts `playback_sessions.created_at` for the viewer in the creation transaction
+  (which already holds the viewer's lock) through `(tenant_id, viewer_id, created_at DESC)`.
+- **The outbox.** `playback_events.delivered_at` (NULL) and the partial index on undelivered rows exist
+  so that M7's webhook worker can claim rows oldest first, deliver and stamp them. Nothing in M4 reads
+  or writes `delivered_at`.
+
 ## Keys
 
 Each asset has one active content key (I7), wrapped by a key-encryption key held in a key management

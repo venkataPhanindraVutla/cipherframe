@@ -21,6 +21,13 @@ func settingsOut(s db.PlaybackSettings) gen.PlaybackSettings {
 		AllowedOrigins:           append([]string{}, s.AllowedOrigins...),
 		TokenInUrl:               s.TokenInURL,
 		Delivery:                 gen.PlaybackSettingsDelivery(s.Delivery),
+
+		AnomalySessionsPerViewer10m: s.AnomalySessionsPerViewer10m,
+		AnomalySegmentsWithoutKey:   s.AnomalySegmentsWithoutKey,
+		AutoRevoke:                  make([]gen.PlaybackSettingsAutoRevoke, len(s.AutoRevoke)),
+	}
+	for i, k := range s.AutoRevoke {
+		out.AutoRevoke[i] = gen.PlaybackSettingsAutoRevoke(k)
 	}
 	if !s.UpdatedAt.IsZero() {
 		t := s.UpdatedAt
@@ -54,6 +61,16 @@ func settingsIn(b *gen.PlaybackSettingsInput) (db.PlaybackSettings, error) {
 		MaxSessionsPerViewer:     num("max_sessions_per_viewer", b.MaxSessionsPerViewer),
 		KeyFetchesPerToken:       num("key_fetches_per_token", b.KeyFetchesPerToken),
 		KeyRequestsPerMinute:     num("key_requests_per_minute", b.KeyRequestsPerMinute),
+
+		AnomalySessionsPerViewer10m: num("anomaly_sessions_per_viewer_10m", b.AnomalySessionsPerViewer10m),
+		AnomalySegmentsWithoutKey:   num("anomaly_segments_without_key", b.AnomalySegmentsWithoutKey),
+	}
+	need("auto_revoke", b.AutoRevoke != nil)
+	if b.AutoRevoke != nil {
+		out.AutoRevoke = make([]string, len(*b.AutoRevoke))
+		for i, k := range *b.AutoRevoke {
+			out.AutoRevoke[i] = string(k)
+		}
 	}
 	need("allowed_origins", b.AllowedOrigins != nil)
 	if b.AllowedOrigins != nil {

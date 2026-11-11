@@ -116,6 +116,7 @@ func TestPlaybackOperationsMatchSpec(t *testing.T) {
 		"session_max_seconds": 7200, "max_sessions_per_viewer": 0, "key_fetches_per_token": 10,
 		"key_requests_per_minute": 15, "allowed_origins": []string{"https://app.example.com", "http://localhost:3000"},
 		"token_in_url": true, "delivery": "presigned",
+		"anomaly_sessions_per_viewer_10m": 20, "anomaly_segments_without_key": 0, "auto_revoke": []string{"key_replay", "segments_without_key"},
 	}
 	put := call(admin, "PUT", "/v1/playback-settings", full, 200)
 	if _, has := put["updated_at"]; !has || put["token_in_url"] != true || put["delivery"] != "presigned" {

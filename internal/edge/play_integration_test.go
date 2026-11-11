@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
@@ -139,6 +140,12 @@ type env struct {
 	vx *viewerExtras
 	// access, when set (useAccess), receives the access trail of the edge and of the services.
 	access *accesslog.Recorder
+	// segFlush is how often the recorder flushes segment counts; zero means never (an hour).
+	segFlush time.Duration
+	// anomalies raises the anomaly signals of the edge and of the playback service. anomalyPool,
+	// when set, wraps the database handle it uses (fault injection).
+	anomalies   *anomaly.Detector
+	anomalyPool func(anomaly.Pool) anomaly.Pool
 }
 
 func newEnv(t *testing.T) *env {
@@ -186,12 +193,25 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Access: e.access, Now: e.clk.Now})
+	e.newDetector()
+	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Access: e.access, Anomalies: e.anomalies, Now: e.clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.start()
 	return e
+}
+
+// newDetector (re)builds the anomaly detector over the current recorder and makes it the
+// recorder's segment sink.
+func (e *env) newDetector() {
+	e.t.Helper()
+	var pool anomaly.Pool = e.pool
+	if e.anomalyPool != nil {
+		pool = e.anomalyPool(pool)
+	}
+	e.anomalies = anomaly.New(anomaly.Deps{Pool: pool, Access: e.access, Log: e.log, Now: e.clk.Now})
+	e.access.SetSegmentSink(e.anomalies)
 }
 
 func readyAsset(t *testing.T, repos *db.Repos, res auth.BootstrapResult) db.Asset {
@@ -281,7 +301,7 @@ func (e *env) start() {
 		ks = e.keyStore(ks)
 	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Viewer: e.viewerDeps(), Access: e.access, Now: e.clk.Now,
+		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Viewer: e.viewerDeps(), Access: e.access, Anomalies: e.anomalies, Now: e.clk.Now,
 	})
 	if err != nil {
 		e.t.Fatal(err)

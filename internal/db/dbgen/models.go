@@ -151,6 +151,8 @@ type PlaybackEvent struct {
 	Kind        string
 	At          time.Time
 	Detail      []byte
+	ViewerID    *string
+	DeliveredAt *time.Time
 }
 
 type PlaybackJwtJti struct {
@@ -191,21 +193,26 @@ type PlaybackSession struct {
 	KeyWindowStart  *time.Time
 	KeyWindowCount  int32
 	AuthMethod      string
+	SegmentsServed  int64
+	KeyServedAt     *time.Time
 }
 
 type PlaybackSetting struct {
-	TenantID                 pgtype.UUID
-	TokenTtlSeconds          int32
-	HeartbeatIntervalSeconds int32
-	IdleTimeoutSeconds       int32
-	SessionMaxSeconds        int32
-	MaxSessionsPerViewer     int32
-	KeyFetchesPerToken       int32
-	KeyRequestsPerMinute     int32
-	AllowedOrigins           []string
-	TokenInUrl               bool
-	UpdatedAt                time.Time
-	Delivery                 string
+	TenantID                    pgtype.UUID
+	TokenTtlSeconds             int32
+	HeartbeatIntervalSeconds    int32
+	IdleTimeoutSeconds          int32
+	SessionMaxSeconds           int32
+	MaxSessionsPerViewer        int32
+	KeyFetchesPerToken          int32
+	KeyRequestsPerMinute        int32
+	AllowedOrigins              []string
+	TokenInUrl                  bool
+	UpdatedAt                   time.Time
+	Delivery                    string
+	AnomalySessionsPerViewer10m int32
+	AnomalySegmentsWithoutKey   int32
+	AutoRevoke                  []string
 }
 
 type PrivacySetting struct {

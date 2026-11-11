@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
@@ -132,6 +133,16 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		}()
 	}
 
+	// The anomaly signals (M4-9): raised by the playback service (session limit, rapid session
+	// creation), by the edge key route (key replay, key rate) and, as the recorder's segment sink,
+	// from the segment counts (segments without a key). The recorder and the detector refer to
+	// each other (a revocation writes an access-trail row), hence the setter.
+	var anomalies *anomaly.Detector
+	if access != nil {
+		anomalies = anomaly.NewFromPool(pool, access, log, nil)
+		access.SetSegmentSink(anomalies)
+	}
+
 	buckets, err := storage.New(ctx, cfg.S3)
 	if err != nil {
 		return fmt.Errorf("storage: %w", err)
@@ -156,7 +167,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		playbackSvc, err := newPlaybackService(pool, cfg, kmsReg, access)
+		playbackSvc, err := newPlaybackService(pool, cfg, kmsReg, access, anomalies)
 		if err != nil {
 			cleanup()
 			return err
@@ -185,7 +196,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			return err
 		}
 		defer closeUploads()
-		play, err := newEdgePlayback(pool, repos, buckets, contentKeys, kmsReg, access, cfg, log)
+		play, err := newEdgePlayback(pool, repos, buckets, contentKeys, kmsReg, access, anomalies, cfg, log)
 		if err != nil {
 			cleanup()
 			return err
@@ -245,12 +256,12 @@ func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.C
 // the configured keyring (ADR 0028) and tells clients where the edge serves playlists, so it needs
 // the edge's public URL (already required by the asset service). It wraps callback secrets with the
 // key providers (ADR 0029).
-func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Registry, access *accesslog.Recorder) (*playback.Service, error) {
+func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Registry, access *accesslog.Recorder, anomalies *anomaly.Detector) (*playback.Service, error) {
 	keyring, err := token.KeyringFromConfig(cfg.Playback)
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
-	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access})
+	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access, Anomalies: anomalies})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
@@ -268,7 +279,7 @@ func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Regi
 // SSRF-guarded client of package outbound, to a tenant's JWKS URL or callback URL, and needs the
 // edge's public URL to tell the player where its playlists are. Without the URL the route answers
 // 503 and the process says so at startup.
-func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Buckets, contentKeys *contentkey.Manager, kmsReg *kms.Registry, access *accesslog.Recorder, cfg *config.Config, log *slog.Logger) (*edge.Playback, error) {
+func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Buckets, contentKeys *contentkey.Manager, kmsReg *kms.Registry, access *accesslog.Recorder, anomalies *anomaly.Detector, cfg *config.Config, log *slog.Logger) (*edge.Playback, error) {
 	if contentKeys == nil {
 		return nil, errors.New("playback: the edge role needs the key service")
 	}
@@ -276,12 +287,12 @@ func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Bucke
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
-	viewer, err := newEdgeViewerAuth(pool, repos, keyring, kmsReg, access, cfg, log)
+	viewer, err := newEdgeViewerAuth(pool, repos, keyring, kmsReg, access, anomalies, cfg, log)
 	if err != nil {
 		return nil, err
 	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys, Viewer: viewer, Access: access,
+		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys, Viewer: viewer, Access: access, Anomalies: anomalies,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
@@ -294,12 +305,12 @@ const jwksFetchTimeout = 3 * time.Second
 
 // newEdgeViewerAuth builds the collaborators of the browser-session route. It returns nil, with a
 // warning, when the edge's public URL is not configured.
-func newEdgeViewerAuth(pool *pgxpool.Pool, repos *db.Repos, keyring *token.Keyring, kmsReg *kms.Registry, access *accesslog.Recorder, cfg *config.Config, log *slog.Logger) (*edge.ViewerDeps, error) {
+func newEdgeViewerAuth(pool *pgxpool.Pool, repos *db.Repos, keyring *token.Keyring, kmsReg *kms.Registry, access *accesslog.Recorder, anomalies *anomaly.Detector, cfg *config.Config, log *slog.Logger) (*edge.ViewerDeps, error) {
 	if cfg.Uploads.EdgePublicURL == "" {
 		log.Warn("browser playback sessions are disabled: " + config.EnvEdgePublicURL + " is not set")
 		return nil, nil
 	}
-	sessions, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access})
+	sessions, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access, Anomalies: anomalies})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}

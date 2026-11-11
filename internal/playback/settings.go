@@ -31,6 +31,20 @@ func ValidateSettings(s db.PlaybackSettings) []errs.FieldError {
 	rng("max_sessions_per_viewer", s.MaxSessionsPerViewer, 0, 100)
 	rng("key_fetches_per_token", s.KeyFetchesPerToken, 1, 1000)
 	rng("key_requests_per_minute", s.KeyRequestsPerMinute, 1, 600)
+	// 0 disables the signal.
+	rng("anomaly_sessions_per_viewer_10m", s.AnomalySessionsPerViewer10m, 0, 1000)
+	rng("anomaly_segments_without_key", s.AnomalySegmentsWithoutKey, 0, 100000)
+	seenKind := map[string]bool{}
+	for i, k := range s.AutoRevoke {
+		field := "auto_revoke[" + strconv.Itoa(i) + "]"
+		switch {
+		case !db.ValidAutoRevokeKind(k):
+			bad(field, "must be one of "+strings.Join(db.AutoRevokeKinds, ", "))
+		case seenKind[k]:
+			bad(field, "must not repeat another entry")
+		}
+		seenKind[k] = true
+	}
 	// The relations only make sense when both sides are in range.
 	inRange := func(v, lo, hi int) bool { return v >= lo && v <= hi }
 	hbOK := inRange(s.HeartbeatIntervalSeconds, 10, 600)

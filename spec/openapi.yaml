@@ -747,6 +747,55 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/playback-events:
+    get:
+      operationId: listPlaybackEvents
+      summary: List playback anomaly events
+      description: |
+        Returns the anomaly events raised for the caller's tenant, newest first, with optional
+        `kind`, `asset_id` and `viewer_id` filters, a half-open `from`/`to` range on the event
+        time, and cursor pagination (`limit` up to 500, default 100). Requires the `assets:read`
+        scope.
+
+        An event is a signal, not a verdict: see `PlaybackEventKind` for what each one means and
+        for what it cannot catch. Events are written by edge and the API as they are detected,
+        once per session (or viewer) and kind per 10 minutes, and `segments_without_key` once per
+        session. They carry no session ID, token or address: `session` is the same 8-character
+        fingerprint the access log uses.
+
+        Webhook delivery of events arrives with milestone M7; until then this endpoint is the way
+        to read them.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/PlaybackEventKindQuery"
+        - $ref: "#/components/parameters/PlaybackEventAssetId"
+        - $ref: "#/components/parameters/PlaybackEventViewerId"
+        - $ref: "#/components/parameters/AccessLogFrom"
+        - $ref: "#/components/parameters/AccessLogTo"
+        - $ref: "#/components/parameters/AccessLogLimit"
+        - $ref: "#/components/parameters/AccessLogCursor"
+      responses:
+        "200":
+          description: One page of events, newest first.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackEventList"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/playback-settings:
     get:
       operationId: getPlaybackSettings
@@ -1685,6 +1734,30 @@ components:
         type: string
         minLength: 1
         maxLength: 128
+    PlaybackEventKindQuery:
+      name: kind
+      in: query
+      required: false
+      description: Only events of this kind.
+      schema:
+        $ref: "#/components/schemas/PlaybackEventKind"
+    PlaybackEventAssetId:
+      name: asset_id
+      in: query
+      required: false
+      description: Only events about this asset (`ast_` followed by 26 characters).
+      schema:
+        type: string
+        maxLength: 64
+    PlaybackEventViewerId:
+      name: viewer_id
+      in: query
+      required: false
+      description: Only events about this viewer ID.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
     AssetId:
       name: asset_id
       in: path
@@ -2218,6 +2291,77 @@ components:
         next_cursor:
           type: string
           description: Present when there are older rows. Pass it as `cursor`.
+    PlaybackEventKind:
+      type: string
+      enum: [key_replay, key_rate, session_limit, rapid_session_creation, segments_without_key]
+      description: |
+        What was detected. Every kind is computed from counters and times Cipherframe keeps for
+        enforcement and for the access trail; nothing about what a viewer watched or did in the
+        player is used (invariant I10).
+
+        - `key_replay`: one playback token asked for the key more often than the tenant's
+          `key_fetches_per_token`. `detail`: `limit`.
+        - `key_rate`: one session asked for the key more often than `key_requests_per_minute` in
+          a minute. `detail`: `limit`.
+        - `session_limit`: a session creation was refused with `session_limit` because the viewer
+          had `max_sessions_per_viewer` active sessions. Raised at most once per viewer per 10
+          minutes. A player that retries triggers it too, so it is information, and it can never
+          be an `auto_revoke` kind.
+        - `rapid_session_creation`: more than `anomaly_sessions_per_viewer_10m` sessions were
+          created for one viewer in a sliding 10 minutes. Raised at most once per viewer per 10
+          minutes. `detail`: `limit`, `sessions`.
+        - `segments_without_key`: a session was served more than `anomaly_segments_without_key`
+          segments without ever being served the key. Raised once per session. `detail`: `limit`,
+          `segments`. Only `proxy` delivery counts segments: with `presigned` delivery storage
+          serves them and this signal never fires.
+
+        None of these detects a careful scraper that fetches the key like a player and paces
+        itself, and HLS with AES-128 is not DRM: a viewer who receives the key can decrypt what
+        they receive.
+    PlaybackEvent:
+      type: object
+      additionalProperties: false
+      required: [id, kind, at, asset_id, detail]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The event's ID, stable and unique. Webhook deliveries (M7) will carry it.
+        kind:
+          $ref: "#/components/schemas/PlaybackEventKind"
+        at:
+          type: string
+          format: date-time
+        asset_id:
+          type: string
+          description: The asset the event concerns.
+        viewer_id:
+          type: string
+          description: The viewer ID your application chose, when known.
+        session:
+          type: string
+          description: |
+            An 8-character fingerprint of the session, the same one the access log shows
+            (`AccessLogEntry.session`). It cannot be turned into the session ID. Absent for the
+            viewer-level kinds (`session_limit`, `rapid_session_creation`).
+        detail:
+          type: object
+          description: Small integers only, the threshold that was crossed and the observed count.
+          additionalProperties:
+            type: integer
+            format: int64
+    PlaybackEventList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlaybackEvent"
+        next_cursor:
+          type: string
+          description: Present when there are older events. Pass it as `cursor`.
     PrivacySettings:
       description: |
         A tenant's effective privacy settings. Gate P11 sets the final defaults and adds fields.
@@ -2489,6 +2633,35 @@ components:
             can appear in playlists, browser history and the logs of intermediaries. The key
             endpoint is always served by edge, so revocation still applies. In `presigned` mode
             the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
+        anomaly_sessions_per_viewer_10m:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: |
+            More than this many sessions created for one viewer in a sliding 10 minutes raises
+            `rapid_session_creation`. 0 disables the signal. Default 10.
+        anomaly_segments_without_key:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: |
+            A session served more than this many segments without ever being served the key
+            raises `segments_without_key`. 0 disables the signal. Only `proxy` delivery counts
+            segments. Default 30.
+        auto_revoke:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          description: |
+            Event kinds that also revoke: when one of these is detected the session is revoked
+            with the reason `auto:<kind>` (for `rapid_session_creation`, every active session of
+            the viewer), the access trail gets a `revoked` row, and the action is audited. An
+            empty list, the default, only records events. Revocation is automatic and a false
+            positive costs a viewer their playback, so enable a kind only after watching its
+            events for a while. `session_limit` is not allowed.
+          items:
+            type: string
+            enum: [key_replay, key_rate, rapid_session_creation, segments_without_key]
     PlaybackSettings:
       description: A tenant's effective playback settings.
       type: object
@@ -2504,6 +2677,9 @@ components:
         - allowed_origins
         - token_in_url
         - delivery
+        - anomaly_sessions_per_viewer_10m
+        - anomaly_segments_without_key
+        - auto_revoke
       properties:
         token_ttl_seconds:
           type: integer
@@ -2529,6 +2705,17 @@ components:
         delivery:
           type: string
           enum: [proxy, presigned]
+        anomaly_sessions_per_viewer_10m:
+          type: integer
+          description: 0 means the signal is off.
+        anomaly_segments_without_key:
+          type: integer
+          description: 0 means the signal is off.
+        auto_revoke:
+          type: array
+          items:
+            type: string
+            enum: [key_replay, key_rate, rapid_session_creation, segments_without_key]
         updated_at:
           type: string
           format: date-time

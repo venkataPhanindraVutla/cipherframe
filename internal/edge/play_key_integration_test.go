@@ -324,8 +324,8 @@ func TestKeyPerMinuteBound(t *testing.T) {
 		want(t, e.get(p, s.token), 200)
 	}
 	want(t, e.get(p, s.token), 429)
-	if n := e.events(db.EventKeyRate); n != 2 {
-		t.Fatalf("key_rate events = %d, want one per window", n)
+	if n := e.events(db.EventKeyRate); n != 1 {
+		t.Fatalf("key_rate events = %d, want one per 10-minute event window (the key window is 1 minute)", n)
 	}
 }
 
