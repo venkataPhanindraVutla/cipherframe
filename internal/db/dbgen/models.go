@@ -45,6 +45,22 @@ type Asset struct {
 	ReadyAt             *time.Time
 	FailedAt            *time.Time
 	FailureCode         *string
+	SourceSha256        []byte
+	SourceSizeBytes     *int64
+	DurationMs          *int64
+	Renditions          []byte
+	Progress            int16
+}
+
+type AssetArtifact struct {
+	AssetID   pgtype.UUID
+	Kind      string
+	Rendition *string
+	Bucket    string
+	ObjectKey string
+	SizeBytes int64
+	Sha256    []byte
+	CreatedAt time.Time
 }
 
 type AuditEvent struct {

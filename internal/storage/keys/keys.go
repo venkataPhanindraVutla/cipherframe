@@ -97,19 +97,26 @@ func renditionName(r Rendition) string {
 	return r.name
 }
 
+// HLSPrefix is the prefix of every HLS object of the asset in the delivery bucket: the master
+// playlist and each rendition's playlist, init segment and media segments. A retried processing job
+// enumerates it to remove the previous attempt's output.
+func HLSPrefix(t id.TenantID, a id.AssetID) string {
+	return DeliveryPrefix(t, a) + "hls/"
+}
+
 // Master is the key of the master playlist in the delivery bucket.
 func Master(t id.TenantID, a id.AssetID) string {
-	return DeliveryPrefix(t, a) + "hls/master.m3u8"
+	return HLSPrefix(t, a) + "master.m3u8"
 }
 
 // Playlist is the key of a rendition's media playlist in the delivery bucket.
 func Playlist(t id.TenantID, a id.AssetID, r Rendition) string {
-	return DeliveryPrefix(t, a) + "hls/" + renditionName(r) + "/playlist.m3u8"
+	return HLSPrefix(t, a) + renditionName(r) + "/playlist.m3u8"
 }
 
 // InitSegment is the key of a rendition's initialization segment in the delivery bucket.
 func InitSegment(t id.TenantID, a id.AssetID, r Rendition) string {
-	return DeliveryPrefix(t, a) + "hls/" + renditionName(r) + "/init.mp4"
+	return HLSPrefix(t, a) + renditionName(r) + "/init.mp4"
 }
 
 // Segment is the key of media segment n (n >= 0) of a rendition in the delivery bucket.
@@ -117,7 +124,7 @@ func Segment(t id.TenantID, a id.AssetID, r Rendition, n int) string {
 	if n < 0 {
 		panic("keys: negative segment number")
 	}
-	return DeliveryPrefix(t, a) + "hls/" + renditionName(r) + "/seg-" + strconv.Itoa(n) + ".m4s"
+	return HLSPrefix(t, a) + renditionName(r) + "/seg-" + strconv.Itoa(n) + ".m4s"
 }
 
 // Poster is the key of the poster image in the delivery bucket.

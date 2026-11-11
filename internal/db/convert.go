@@ -157,9 +157,18 @@ func assetFromRow(r dbgen.Asset) Asset {
 		ReadyAt:             utcPtr(r.ReadyAt),
 		FailedAt:            utcPtr(r.FailedAt),
 		FailureCode:         strVal(r.FailureCode),
+		SourceSHA256:        r.SourceSha256,
+		Renditions:          r.Renditions,
+		Progress:            int(r.Progress),
 	}
 	if r.SizeBytes != nil {
 		a.SizeBytes = *r.SizeBytes
+	}
+	if r.SourceSizeBytes != nil {
+		a.SourceSizeBytes = *r.SourceSizeBytes
+	}
+	if r.DurationMs != nil {
+		a.DurationMS = *r.DurationMs
 	}
 	return a
 }
