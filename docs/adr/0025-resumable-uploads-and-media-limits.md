@@ -44,8 +44,7 @@ needs default limits on what an upload may be.
 
 - All upload bytes pass through edge (both paths), so upload bandwidth and CPU scale with edge
   replicas; this is the price of never exposing a source key. Upload and playback share the edge
-  listener; a dedicated role remains possible later. A
-  dedicated role remains possible later without changing the API.
+  listener; a dedicated role remains possible later without changing the API.
 - One new dependency (tusd and its transitive modules), subject to the licence allowlist.
 - Abandoned uploads leave incomplete multipart uploads and objects; they are cleaned up by expiry and
   found by the storage-enumerating purge (pitfall 8).
