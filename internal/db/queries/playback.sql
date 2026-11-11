@@ -62,3 +62,7 @@ RETURNING *;
 
 -- name: GetPlaybackSession :one
 SELECT * FROM playback_sessions WHERE tenant_id = $1 AND id_hash = $2;
+
+-- name: GetPlaybackSessionTenant :one
+-- Edge answers a CORS preflight, which carries no token, knowing only the session in the path.
+SELECT tenant_id FROM playback_sessions WHERE id_hash = $1;

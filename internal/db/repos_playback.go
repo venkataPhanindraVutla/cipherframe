@@ -248,3 +248,14 @@ func (r *Repos) GetPlaybackSession(ctx context.Context, tenantID id.TenantID, ha
 	}
 	return sessionFromRow(row), nil
 }
+
+// PlaybackSessionTenant returns the tenant of the session with the given ID hash, or a not_found
+// error. Edge uses it where it has only the session from a request path (a CORS preflight carries
+// no token), to find the tenant's allowed origins.
+func (r *Repos) PlaybackSessionTenant(ctx context.Context, hash []byte) (id.TenantID, error) {
+	tid, err := r.q.GetPlaybackSessionTenant(ctx, hash)
+	if err != nil {
+		return id.TenantID{}, mapError(err)
+	}
+	return fromPG[id.TenantKind](tid), nil
+}

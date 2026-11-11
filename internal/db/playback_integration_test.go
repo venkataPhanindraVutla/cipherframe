@@ -169,6 +169,27 @@ func TestPlaybackSessionsStoreOnlyTheHash(t *testing.T) {
 	wantCode(t, err, errs.NotFound)
 }
 
+func TestPlaybackSessionTenant(t *testing.T) {
+	ctx := context.Background()
+	r, _ := newMigrated(t)
+	f := newFixture(t, r, "acme")
+	a := readyAsset(t, r, f)
+	in := newSession(f, a, "viewer-1", micro(time.Now()))
+	if _, err := r.InsertPlaybackSession(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.PlaybackSessionTenant(ctx, db.SessionHash(in.ID))
+	if err != nil || got != f.tenant.ID {
+		t.Fatalf("tenant = %v, %v", got, err)
+	}
+	unknown, err := id.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.PlaybackSessionTenant(ctx, db.SessionHash(unknown))
+	wantCode(t, err, errs.NotFound)
+}
+
 func TestInsertPlaybackSessionNeedsAReadyAssetOfTheTenant(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newMigrated(t)
