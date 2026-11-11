@@ -29,6 +29,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
@@ -120,6 +121,23 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 
 	contentKeys := contentkey.NewManager(pool, kmsReg, log)
 
+	// The integrity signing keys (M5-2, ADR 0033). The worker signs with the current key (M5-1) and
+	// the api role administers the set, so both build the manager and make sure a first key
+	// exists; concurrent starts produce one key. The edge role only publishes the public keys: it
+	// reads them through a short cache and never touches the key service for this.
+	var signer *signing.Manager
+	if Has(opts.Roles, RoleAPI) || Has(opts.Roles, RoleWorker) {
+		signer = signing.NewManager(pool, kmsReg, log)
+		defer signer.Close()
+		if err := signer.EnsureCurrent(ctx); err != nil {
+			return fmt.Errorf("signing keys: %w", err)
+		}
+	}
+	var keySet *signing.KeySet
+	if Has(opts.Roles, RoleAPI) || Has(opts.Roles, RoleEdge) {
+		keySet = signing.NewKeySet(repos, signing.KeySetTTL, nil)
+	}
+
 	// The access trail (invariant I10): a best-effort queue and writer shared by the playback
 	// service and the edge routes. It is flushed after every listener has stopped, so the events of
 	// the last requests are not lost on a graceful shutdown.
@@ -181,6 +199,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			ContentKeys: contentKeys,
 			Assets:      assets,
 			Playback:    playbackSvc,
+			Signing:     signer,
+			KeySet:      keySet,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
@@ -201,7 +221,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, Uploads: up, Playback: play}).Handler(), log)
+		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, Uploads: up, Playback: play, KeySet: keySet}).Handler(), log)
 		if err != nil {
 			cleanup()
 			return err
@@ -209,7 +229,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s, sweepService{repos: repos, log: log})
 	}
 	if Has(opts.Roles, RoleWorker) {
-		w, err := newWorker(pool, contentKeys, log, &processing{Buckets: buckets, Config: cfg})
+		w, err := newWorker(pool, contentKeys, log, &processing{Buckets: buckets, Config: cfg, Signer: signer})
 		if err != nil {
 			cleanup()
 			return err
@@ -364,11 +384,13 @@ func newEdgeUploads(ctx context.Context, pool *pgxpool.Pool, buckets *storage.Bu
 // workerConcurrency is how many jobs one worker process runs at once.
 const workerConcurrency = 10 // the default queue; the media queue is sized by Media.Concurrency
 
-// processing is what the asset.process job needs besides the database: the two buckets and the
-// configuration (FFmpeg paths, limits, work directory, timeout).
+// processing is what the asset.process job needs besides the database: the two buckets, the
+// configuration (FFmpeg paths, limits, work directory, timeout) and the integrity signer.
 type processing struct {
 	Buckets *storage.Buckets
 	Config  *config.Config
+	// Signer signs integrity manifests with the current key (M5-1).
+	Signer signing.Signer
 }
 
 // newWorker builds the job registry and, when it has kinds, a working queue. Milestones register
