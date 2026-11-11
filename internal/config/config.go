@@ -66,6 +66,7 @@ type Config struct {
 	EdgeListen  string
 	DatabaseURL Secret
 	S3          S3
+	Uploads     Uploads
 	Peppers     Peppers
 	KMS         KMS
 	Media       Media
@@ -98,6 +99,12 @@ func (c *Config) LogValue() slog.Value {
 			slog.Any("access_key_id", c.S3.AccessKeyID),
 			slog.Any("secret_access_key", c.S3.SecretAccessKey),
 		),
+		slog.Group("uploads",
+			slog.String("edge_public_url", c.Uploads.EdgePublicURL),
+			slog.Int64("max_source_bytes", c.Uploads.MaxSourceBytes),
+			slog.String("token_ttl", c.Uploads.TokenTTL.String()),
+			slog.Int64("part_bytes", c.Uploads.PartBytes),
+		),
 		slog.Group("api_key_peppers",
 			slog.String("versions", strings.Join(vs, ",")),
 			slog.Int("current", c.Peppers.current),
@@ -110,6 +117,7 @@ func (c *Config) LogValue() slog.Value {
 			slog.Int("max_source_width", c.Media.MaxSourceWidth),
 			slog.Int("max_source_height", c.Media.MaxSourceHeight),
 			slog.Duration("transcode_timeout", c.Media.TranscodeTimeout),
+			slog.String("work_dir", c.Media.WorkDir),
 		),
 		slog.Group("kms",
 			slog.String("provider", c.KMS.Provider),

@@ -8,6 +8,7 @@ x-cipherframe-env: &cipherframe-env
   CIPHERFRAME_LOG_LEVEL: info
   CIPHERFRAME_API_LISTEN: ":8080"
   CIPHERFRAME_EDGE_LISTEN: ":8081"
+  CIPHERFRAME_EDGE_PUBLIC_URL: http://localhost:8081
   CIPHERFRAME_DATABASE_URL: postgres://cipherframe:dev-placeholder-postgres@postgres:5432/cipherframe?sslmode=disable
   CIPHERFRAME_S3_ENDPOINT: http://seaweedfs:8333
   CIPHERFRAME_S3_PUBLIC_ENDPOINT: http://localhost:8333

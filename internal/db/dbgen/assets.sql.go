@@ -7,16 +7,76 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const completeAssetProcessing = `-- name: CompleteAssetProcessing :one
+UPDATE assets SET
+    state       = 'ready',
+    ready_at    = $1::timestamptz,
+    updated_at  = $1::timestamptz,
+    duration_ms = $2::bigint,
+    renditions  = $3::jsonb,
+    progress    = 100
+WHERE tenant_id = $4::uuid
+  AND id = $5::uuid
+  AND state = 'processing'
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
+`
+
+type CompleteAssetProcessingParams struct {
+	At         time.Time
+	DurationMs int64
+	Renditions []byte
+	TenantID   pgtype.UUID
+	ID         pgtype.UUID
+}
+
+// Compare-and-set processing -> ready with the results of the pipeline.
+func (q *Queries) CompleteAssetProcessing(ctx context.Context, arg CompleteAssetProcessingParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, completeAssetProcessing,
+		arg.At,
+		arg.DurationMs,
+		arg.Renditions,
+		arg.TenantID,
+		arg.ID,
+	)
+	var i Asset
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.CreatedByClientID,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
+	)
+	return i, err
+}
 
 const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (id, tenant_id, created_by_client_id, state)
 SELECT $1::uuid, c.tenant_id, c.id, $2::text
 FROM clients c
 WHERE c.id = $3::uuid AND c.tenant_id = $4::uuid
-RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
 `
 
 type CreateAssetParams struct {
@@ -42,12 +102,112 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Asset
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
 }
 
+const createUploadAsset = `-- name: CreateUploadAsset :one
+INSERT INTO assets (
+    id, tenant_id, created_by_client_id, state, size_bytes, content_type, upload_method,
+    source_key, s3_upload_id, upload_expires_at
+)
+SELECT $1::uuid, c.tenant_id, c.id, 'created', $2::bigint,
+       $3::text, $4::text, $5::text,
+       $6::text, $7::timestamptz
+FROM clients c
+WHERE c.id = $8::uuid AND c.tenant_id = $9::uuid
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
+`
+
+type CreateUploadAssetParams struct {
+	ID              pgtype.UUID
+	SizeBytes       int64
+	ContentType     *string
+	UploadMethod    string
+	SourceKey       string
+	S3UploadID      *string
+	UploadExpiresAt time.Time
+	ClientID        pgtype.UUID
+	TenantID        pgtype.UUID
+}
+
+// The client must belong to the tenant; otherwise no row is inserted.
+func (q *Queries) CreateUploadAsset(ctx context.Context, arg CreateUploadAssetParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, createUploadAsset,
+		arg.ID,
+		arg.SizeBytes,
+		arg.ContentType,
+		arg.UploadMethod,
+		arg.SourceKey,
+		arg.S3UploadID,
+		arg.UploadExpiresAt,
+		arg.ClientID,
+		arg.TenantID,
+	)
+	var i Asset
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.CreatedByClientID,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
+	)
+	return i, err
+}
+
+const deleteUploadParts = `-- name: DeleteUploadParts :exec
+DELETE FROM upload_parts WHERE asset_id = $1
+`
+
+func (q *Queries) DeleteUploadParts(ctx context.Context, assetID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUploadParts, assetID)
+	return err
+}
+
+const deleteUploadTokens = `-- name: DeleteUploadTokens :exec
+DELETE FROM upload_tokens WHERE asset_id = $1
+`
+
+func (q *Queries) DeleteUploadTokens(ctx context.Context, assetID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUploadTokens, assetID)
+	return err
+}
+
 const getAsset = `-- name: GetAsset :one
-SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at FROM assets
+SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress FROM assets
 WHERE tenant_id = $1 AND id = $2
 `
 
@@ -66,6 +226,448 @@ func (q *Queries) GetAsset(ctx context.Context, arg GetAssetParams) (Asset, erro
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
+}
+
+const getUploadGrant = `-- name: GetUploadGrant :one
+SELECT a.id, a.tenant_id, a.created_by_client_id, a.state, a.created_at, a.updated_at, a.size_bytes, a.content_type, a.upload_method, a.source_key, a.s3_upload_id, a.upload_expires_at, a.committed_at, a.processing_started_at, a.ready_at, a.failed_at, a.failure_code, a.source_sha256, a.source_size_bytes, a.duration_ms, a.renditions, a.progress, t.expires_at AS token_expires_at
+FROM upload_tokens t
+JOIN assets a ON a.id = t.asset_id AND a.tenant_id = t.tenant_id
+WHERE t.token_hash = $1
+`
+
+type GetUploadGrantRow struct {
+	Asset          Asset
+	TokenExpiresAt time.Time
+}
+
+func (q *Queries) GetUploadGrant(ctx context.Context, tokenHash []byte) (GetUploadGrantRow, error) {
+	row := q.db.QueryRow(ctx, getUploadGrant, tokenHash)
+	var i GetUploadGrantRow
+	err := row.Scan(
+		&i.Asset.ID,
+		&i.Asset.TenantID,
+		&i.Asset.CreatedByClientID,
+		&i.Asset.State,
+		&i.Asset.CreatedAt,
+		&i.Asset.UpdatedAt,
+		&i.Asset.SizeBytes,
+		&i.Asset.ContentType,
+		&i.Asset.UploadMethod,
+		&i.Asset.SourceKey,
+		&i.Asset.S3UploadID,
+		&i.Asset.UploadExpiresAt,
+		&i.Asset.CommittedAt,
+		&i.Asset.ProcessingStartedAt,
+		&i.Asset.ReadyAt,
+		&i.Asset.FailedAt,
+		&i.Asset.FailureCode,
+		&i.Asset.SourceSha256,
+		&i.Asset.SourceSizeBytes,
+		&i.Asset.DurationMs,
+		&i.Asset.Renditions,
+		&i.Asset.Progress,
+		&i.TokenExpiresAt,
+	)
+	return i, err
+}
+
+const insertUploadToken = `-- name: InsertUploadToken :exec
+INSERT INTO upload_tokens (token_hash, asset_id, tenant_id, expires_at)
+VALUES ($1, $2, $3, $4)
+`
+
+type InsertUploadTokenParams struct {
+	TokenHash []byte
+	AssetID   pgtype.UUID
+	TenantID  pgtype.UUID
+	ExpiresAt time.Time
+}
+
+func (q *Queries) InsertUploadToken(ctx context.Context, arg InsertUploadTokenParams) error {
+	_, err := q.db.Exec(ctx, insertUploadToken,
+		arg.TokenHash,
+		arg.AssetID,
+		arg.TenantID,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const listAssetsPage = `-- name: ListAssetsPage :many
+SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress FROM assets
+WHERE tenant_id = $1::uuid
+  AND state <> 'deleted'
+  AND ($2::uuid IS NULL OR id > $2::uuid)
+ORDER BY id
+LIMIT $3::integer
+`
+
+type ListAssetsPageParams struct {
+	TenantID pgtype.UUID
+	AfterID  pgtype.UUID
+	MaxRows  int32
+}
+
+// Keyset pagination on the UUIDv7 id, which is creation-ordered. Deleted assets are not listed.
+func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) ([]Asset, error) {
+	rows, err := q.db.Query(ctx, listAssetsPage, arg.TenantID, arg.AfterID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Asset
+	for rows.Next() {
+		var i Asset
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.CreatedByClientID,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SizeBytes,
+			&i.ContentType,
+			&i.UploadMethod,
+			&i.SourceKey,
+			&i.S3UploadID,
+			&i.UploadExpiresAt,
+			&i.CommittedAt,
+			&i.ProcessingStartedAt,
+			&i.ReadyAt,
+			&i.FailedAt,
+			&i.FailureCode,
+			&i.SourceSha256,
+			&i.SourceSizeBytes,
+			&i.DurationMs,
+			&i.Renditions,
+			&i.Progress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUploadParts = `-- name: ListUploadParts :many
+SELECT asset_id, part_number, etag, size_bytes, created_at FROM upload_parts WHERE asset_id = $1 ORDER BY part_number
+`
+
+func (q *Queries) ListUploadParts(ctx context.Context, assetID pgtype.UUID) ([]UploadPart, error) {
+	rows, err := q.db.Query(ctx, listUploadParts, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UploadPart
+	for rows.Next() {
+		var i UploadPart
+		if err := rows.Scan(
+			&i.AssetID,
+			&i.PartNumber,
+			&i.Etag,
+			&i.SizeBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAsset = `-- name: LockAsset :one
+SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress FROM assets
+WHERE tenant_id = $1 AND id = $2
+FOR UPDATE
+`
+
+type LockAssetParams struct {
+	TenantID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+// Serialises writers of one asset for the length of the transaction.
+func (q *Queries) LockAsset(ctx context.Context, arg LockAssetParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, lockAsset, arg.TenantID, arg.ID)
+	var i Asset
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.CreatedByClientID,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
+	)
+	return i, err
+}
+
+const recordAssetSource = `-- name: RecordAssetSource :execrows
+UPDATE assets SET
+    source_sha256     = $1::bytea,
+    source_size_bytes = $2::bigint,
+    updated_at        = $3::timestamptz
+WHERE tenant_id = $4::uuid
+  AND id = $5::uuid
+  AND state = 'processing'
+`
+
+type RecordAssetSourceParams struct {
+	SourceSha256    []byte
+	SourceSizeBytes int64
+	At              time.Time
+	TenantID        pgtype.UUID
+	ID              pgtype.UUID
+}
+
+// Stores what the worker measured while streaming the source. Only while the asset is processing.
+func (q *Queries) RecordAssetSource(ctx context.Context, arg RecordAssetSourceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordAssetSource,
+		arg.SourceSha256,
+		arg.SourceSizeBytes,
+		arg.At,
+		arg.TenantID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetAssetProgress = `-- name: ResetAssetProgress :exec
+UPDATE assets SET progress = 0
+WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'processing'
+`
+
+type ResetAssetProgressParams struct {
+	TenantID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+func (q *Queries) ResetAssetProgress(ctx context.Context, arg ResetAssetProgressParams) error {
+	_, err := q.db.Exec(ctx, resetAssetProgress, arg.TenantID, arg.ID)
+	return err
+}
+
+const setAssetProgress = `-- name: SetAssetProgress :execrows
+UPDATE assets SET progress = $1::smallint
+WHERE tenant_id = $2::uuid
+  AND id = $3::uuid
+  AND state = 'processing'
+  AND progress < $1::smallint
+`
+
+type SetAssetProgressParams struct {
+	Progress int16
+	TenantID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+// A hint for clients; it never moves backwards (ResetAssetProgress starts a retry from zero) and is
+// written only while processing.
+func (q *Queries) SetAssetProgress(ctx context.Context, arg SetAssetProgressParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setAssetProgress, arg.Progress, arg.TenantID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startTusUpload = `-- name: StartTusUpload :one
+UPDATE assets SET state = 'uploading', s3_upload_id = $1::text, updated_at = $2::timestamptz
+WHERE tenant_id = $3::uuid
+  AND id = $4::uuid
+  AND state = 'created'
+  AND upload_method = 'tus'
+  AND s3_upload_id IS NULL
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
+`
+
+type StartTusUploadParams struct {
+	S3UploadID string
+	At         time.Time
+	TenantID   pgtype.UUID
+	ID         pgtype.UUID
+}
+
+// Records the object store's multipart upload ID and moves created -> uploading, once. A second
+// call finds the asset no longer in 'created' (or already holding an upload ID) and changes nothing.
+func (q *Queries) StartTusUpload(ctx context.Context, arg StartTusUploadParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, startTusUpload,
+		arg.S3UploadID,
+		arg.At,
+		arg.TenantID,
+		arg.ID,
+	)
+	var i Asset
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.CreatedByClientID,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
+	)
+	return i, err
+}
+
+const sumOtherUploadPartSizes = `-- name: SumOtherUploadPartSizes :one
+SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total FROM upload_parts
+WHERE asset_id = $1 AND part_number <> $2
+`
+
+type SumOtherUploadPartSizesParams struct {
+	AssetID    pgtype.UUID
+	PartNumber int32
+}
+
+func (q *Queries) SumOtherUploadPartSizes(ctx context.Context, arg SumOtherUploadPartSizesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, sumOtherUploadPartSizes, arg.AssetID, arg.PartNumber)
+	var total int64
+	err := row.Scan(&total)
+	return total, err
+}
+
+const transitionAsset = `-- name: TransitionAsset :one
+UPDATE assets SET
+    state                 = $1::text,
+    updated_at            = $2::timestamptz,
+    committed_at          = CASE WHEN $1::text = 'committed' THEN $2::timestamptz ELSE committed_at END,
+    processing_started_at = CASE WHEN $1::text = 'processing' THEN $2::timestamptz ELSE processing_started_at END,
+    ready_at              = CASE WHEN $1::text = 'ready' THEN $2::timestamptz ELSE ready_at END,
+    failed_at             = CASE WHEN $1::text = 'failed' THEN $2::timestamptz ELSE failed_at END,
+    failure_code          = CASE WHEN $1::text = 'failed' THEN $3::text ELSE failure_code END
+WHERE tenant_id = $4::uuid
+  AND id = $5::uuid
+  AND state = $6::text
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
+`
+
+type TransitionAssetParams struct {
+	ToState     string
+	At          time.Time
+	FailureCode *string
+	TenantID    pgtype.UUID
+	ID          pgtype.UUID
+	FromState   string
+}
+
+// Compare-and-set: the row changes only while it is still in from_state. The failure code is
+// recorded only by a transition to 'failed'.
+func (q *Queries) TransitionAsset(ctx context.Context, arg TransitionAssetParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, transitionAsset,
+		arg.ToState,
+		arg.At,
+		arg.FailureCode,
+		arg.TenantID,
+		arg.ID,
+		arg.FromState,
+	)
+	var i Asset
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.CreatedByClientID,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
+	)
+	return i, err
+}
+
+const upsertUploadPart = `-- name: UpsertUploadPart :exec
+INSERT INTO upload_parts (asset_id, part_number, etag, size_bytes)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (asset_id, part_number)
+DO UPDATE SET etag = EXCLUDED.etag, size_bytes = EXCLUDED.size_bytes, created_at = now()
+`
+
+type UpsertUploadPartParams struct {
+	AssetID    pgtype.UUID
+	PartNumber int32
+	Etag       string
+	SizeBytes  int64
+}
+
+func (q *Queries) UpsertUploadPart(ctx context.Context, arg UpsertUploadPartParams) error {
+	_, err := q.db.Exec(ctx, upsertUploadPart,
+		arg.AssetID,
+		arg.PartNumber,
+		arg.Etag,
+		arg.SizeBytes,
+	)
+	return err
 }

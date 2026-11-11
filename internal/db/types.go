@@ -1,6 +1,9 @@
 package db
 
 import (
+	"fmt"
+	"io"
+	"log/slog"
 	"time"
 	"uuid"
 
@@ -101,14 +104,77 @@ type AuthKey struct {
 	TenantDisabledAt *time.Time
 }
 
-// Asset is the asset skeleton; later milestones add columns.
+// UploadMethod is how an asset's source is uploaded (ADR 0025).
+type UploadMethod string
+
+// Upload methods.
+const (
+	UploadTus       UploadMethod = "tus"
+	UploadMultipart UploadMethod = "multipart"
+)
+
+// Valid reports whether m is an allowed method.
+func (m UploadMethod) Valid() bool { return m == UploadTus || m == UploadMultipart }
+
+// Asset is a video asset and its lifecycle (assetfsm.go). Nullable columns are the zero value
+// (or nil for times) when unset.
+//
+// SourceKey is the object key of the upload in the source bucket and S3UploadID the object
+// store's multipart upload ID. Neither may ever leave the process: the API converts an Asset
+// field by field, and Asset prints without them in every formatting verb and in logs.
 type Asset struct {
-	ID                id.AssetID
-	TenantID          id.TenantID
-	CreatedByClientID id.ClientID
-	State             AssetState
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                  id.AssetID
+	TenantID            id.TenantID
+	CreatedByClientID   id.ClientID
+	State               AssetState
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	SizeBytes           int64
+	ContentType         string
+	UploadMethod        UploadMethod
+	SourceKey           string
+	S3UploadID          string
+	UploadExpiresAt     *time.Time
+	CommittedAt         *time.Time
+	ProcessingStartedAt *time.Time
+	ReadyAt             *time.Time
+	FailedAt            *time.Time
+	FailureCode         string
+	// SourceSHA256 and SourceSizeBytes are measured by the worker while it streams the source
+	// (nil and 0 until then). DurationMS and Renditions (a JSON summary) are set when the asset
+	// becomes ready. Progress is a 0-100 hint while processing.
+	SourceSHA256    []byte
+	SourceSizeBytes int64
+	DurationMS      int64
+	Renditions      []byte
+	Progress        int
+}
+
+// String implements fmt.Stringer without the source key or upload ID.
+func (a Asset) String() string { return "asset " + a.ID.String() + " (" + string(a.State) + ")" }
+
+// GoString implements fmt.GoStringer.
+func (a Asset) GoString() string { return a.String() }
+
+// Format implements fmt.Formatter and covers every verb, so %+v and %#v cannot print the key.
+func (a Asset) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, a.String()) }
+
+// LogValue implements slog.LogValuer.
+func (a Asset) LogValue() slog.Value { return slog.StringValue(a.String()) }
+
+// UploadPart is one part of a multipart upload that edge stored (ADR 0025).
+type UploadPart struct {
+	PartNumber int
+	ETag       string
+	SizeBytes  int64
+	CreatedAt  time.Time
+}
+
+// UploadGrant is what the edge learns from a valid upload token: the asset it is bound to and
+// when the token expires. The caller must still check the expiry and the asset's state.
+type UploadGrant struct {
+	Asset          Asset
+	TokenExpiresAt time.Time
 }
 
 // AuditEvent is an append-only record. It holds no foreign keys, so it survives deletion of what

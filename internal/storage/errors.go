@@ -303,3 +303,8 @@ func ToAppError(err error) error {
 		return errs.Wrap(errs.InternalError, "internal error", err)
 	}
 }
+
+// Sanitize turns an error from the raw S3 client (which the tus data store uses) into an Error
+// that is safe to log and to wrap: kind, operation, role, S3 code and status only. op names the
+// operation, for example "tus_write_chunk".
+func Sanitize(op string, role keys.Bucket, err error) error { return wrapErr(op, role, err) }

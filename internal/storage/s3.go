@@ -24,6 +24,7 @@ type s3API interface {
 	ListObjectsV2(ctx context.Context, in *s3.ListObjectsV2Input, opts ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 	DeleteObjects(ctx context.Context, in *s3.DeleteObjectsInput, opts ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 	CreateMultipartUpload(ctx context.Context, in *s3.CreateMultipartUploadInput, opts ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
+	UploadPart(ctx context.Context, in *s3.UploadPartInput, opts ...func(*s3.Options)) (*s3.UploadPartOutput, error)
 	CompleteMultipartUpload(ctx context.Context, in *s3.CompleteMultipartUploadInput, opts ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
 	AbortMultipartUpload(ctx context.Context, in *s3.AbortMultipartUploadInput, opts ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
 }
@@ -346,6 +347,38 @@ func (s *s3Store) PresignPart(ctx context.Context, key, uploadID string, partNum
 		return PresignedRequest{}, s.fail(op, err)
 	}
 	return presigned(r), nil
+}
+
+func (s *s3Store) UploadPart(ctx context.Context, key, uploadID string, partNumber int32, body io.Reader, size int64) (string, error) {
+	const op = "upload_part"
+	if err := s.checkKey(op, key); err != nil {
+		return "", err
+	}
+	if uploadID == "" || partNumber < 1 || partNumber > 10000 {
+		return "", s.bad(op, "need an upload ID and a part number from 1 to 10000")
+	}
+	if body == nil || size < 1 {
+		return "", s.bad(op, "need a body and a positive size")
+	}
+	var opts []func(*s3.Options)
+	if _, seekable := body.(io.Seeker); !seekable {
+		opts = append(opts, withUnsignedPayload)
+	}
+	out, err := s.api.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		UploadId:      aws.String(uploadID),
+		PartNumber:    aws.Int32(partNumber),
+		Body:          body,
+		ContentLength: aws.Int64(size),
+	}, opts...)
+	if err != nil {
+		return "", s.fail(op, err)
+	}
+	if aws.ToString(out.ETag) == "" {
+		return "", &Error{Kind: Other, Op: op, Role: s.role, Detail: "no ETag returned"}
+	}
+	return *out.ETag, nil
 }
 
 func (s *s3Store) CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletedPart) error {

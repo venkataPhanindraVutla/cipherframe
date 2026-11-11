@@ -120,7 +120,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.mod
       - run: go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
-      - run: govulncheck -tags=integration ./...
+      - run: govulncheck -tags=integration,media ./...
 
   licenses:
     name: licence check (go-licenses)
@@ -134,7 +134,7 @@ jobs:
       - run: go install github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}
       - run: go-licenses check ./... --allowed_licenses="${ALLOWED_LICENSES}"
         env:
-          GOFLAGS: -tags=integration
+          GOFLAGS: -tags=integration,media
 
   secrets:
     name: secret scan (gitleaks)
@@ -255,12 +255,21 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.mod
-      # The binaries copied out of the image are static, so they run on the runner. Probe and
-      # CheckCapabilities are tested against exactly what ships; the fixtures come from the
-      # test-only generator build.
-      - name: internal/media tests against the image's binaries
+      # The binaries copied out of the image are static, so they run on the runner: put them on PATH
+      # and run every package's integration tests with the media tests. Postgres and SeaweedFS
+      # start through testcontainers on the runner's Docker. The fixtures come from the test-only
+      # generator build (it also has the ssim and psnr filters the pipeline test uses to measure
+      # quality; those filters are never in the shipped FFmpeg).
+      - name: the image's ffmpeg and ffprobe on PATH
+        run: |
+          bin="${RUNNER_TEMP}/ffbin"
+          mkdir -p "${bin}"
+          cp out/image/ffmpeg out/image/ffprobe out/tools/ffmpeg-fixtures "${bin}/"
+          chmod +x "${bin}"/*
+          echo "${bin}" >> "${GITHUB_PATH}"
+      - name: media, pipeline and integration tests against the image's binaries
         env:
-          CIPHERFRAME_TEST_FFMPEG: ${{ github.workspace }}/out/image/ffmpeg
-          CIPHERFRAME_TEST_FFPROBE: ${{ github.workspace }}/out/image/ffprobe
-          CIPHERFRAME_TEST_FFMPEG_FIXTURES: ${{ github.workspace }}/out/tools/ffmpeg-fixtures
-        run: go test -race -count=1 -tags=media -v ./internal/media/...
+          CIPHERFRAME_TEST_FFMPEG_FIXTURES: ${{ runner.temp }}/ffbin/ffmpeg-fixtures
+        run: |
+          export CIPHERFRAME_TEST_FFMPEG="$(command -v ffmpeg)" CIPHERFRAME_TEST_FFPROBE="$(command -v ffprobe)"
+          go test -race -count=1 -tags=integration,media -v ./internal/...

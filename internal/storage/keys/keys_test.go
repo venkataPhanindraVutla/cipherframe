@@ -21,7 +21,7 @@ func allKeys(t *testing.T, tn id.TenantID, a id.AssetID) []builtKey {
 		t.Fatal(err)
 	}
 	return []builtKey{
-		{"SourceOriginal", keys.Source, keys.SourceOriginal(tn, a)},
+		{"NewSource", keys.Source, keys.NewSource(tn, a)},
 		{"Master", keys.Delivery, keys.Master(tn, a)},
 		{"Playlist", keys.Delivery, keys.Playlist(tn, a, r)},
 		{"InitSegment", keys.Delivery, keys.InitSegment(tn, a, r)},
@@ -75,11 +75,23 @@ func TestAssetPrefixesAreDistinctPerAsset(t *testing.T) {
 	}
 }
 
-func TestSourceOriginalLayout(t *testing.T) {
+func TestNewSourceHasARandomComponent(t *testing.T) {
 	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
-	want := "t/" + tn.String() + "/a/" + a.String() + "/source/original"
-	if got := keys.SourceOriginal(tn, a); got != want {
-		t.Fatalf("got %q want %q", got, want)
+	prefix := "t/" + tn.String() + "/a/" + a.String() + "/source/"
+	seen := map[string]bool{}
+	for range 50 {
+		k := keys.NewSource(tn, a)
+		if !strings.HasPrefix(k, prefix) {
+			t.Fatalf("key %q is not under %q", k, prefix)
+		}
+		rnd := strings.TrimPrefix(k, prefix)
+		if len(rnd) != 2*keys.SourceRandomBytes || strings.Trim(rnd, "0123456789abcdef") != "" {
+			t.Fatalf("random component %q is not %d hex characters", rnd, 2*keys.SourceRandomBytes)
+		}
+		if seen[k] {
+			t.Fatalf("key %q repeated", k)
+		}
+		seen[k] = true
 	}
 }
 
@@ -102,5 +114,16 @@ func TestZeroIDsPanic(t *testing.T) {
 			t.Fatal("expected panic")
 		}
 	}()
-	keys.SourceOriginal(id.TenantID{}, id.New[id.AssetKind]())
+	keys.NewSource(id.TenantID{}, id.New[id.AssetKind]())
+}
+
+func TestHLSPrefixCoversEveryHLSKeyAndNothingElse(t *testing.T) {
+	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
+	for _, k := range allKeys(t, tn, a) {
+		under := strings.HasPrefix(k.key, keys.HLSPrefix(tn, a))
+		isHLS := k.bucket == keys.Delivery && k.name != "Poster"
+		if under != isHLS {
+			t.Errorf("%s: under HLSPrefix = %v, want %v", k.name, under, isHLS)
+		}
+	}
 }

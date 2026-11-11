@@ -140,14 +140,37 @@ func authKeyFromRow(r dbgen.GetActiveAPIKeyByPrefixRow) AuthKey {
 }
 
 func assetFromRow(r dbgen.Asset) Asset {
-	return Asset{
-		ID:                fromPG[id.AssetKind](r.ID),
-		TenantID:          fromPG[id.TenantKind](r.TenantID),
-		CreatedByClientID: fromPG[id.ClientKind](r.CreatedByClientID),
-		State:             AssetState(r.State),
-		CreatedAt:         r.CreatedAt.UTC(),
-		UpdatedAt:         r.UpdatedAt.UTC(),
+	a := Asset{
+		ID:                  fromPG[id.AssetKind](r.ID),
+		TenantID:            fromPG[id.TenantKind](r.TenantID),
+		CreatedByClientID:   fromPG[id.ClientKind](r.CreatedByClientID),
+		State:               AssetState(r.State),
+		CreatedAt:           r.CreatedAt.UTC(),
+		UpdatedAt:           r.UpdatedAt.UTC(),
+		ContentType:         strVal(r.ContentType),
+		UploadMethod:        UploadMethod(strVal(r.UploadMethod)),
+		SourceKey:           strVal(r.SourceKey),
+		S3UploadID:          strVal(r.S3UploadID),
+		UploadExpiresAt:     utcPtr(r.UploadExpiresAt),
+		CommittedAt:         utcPtr(r.CommittedAt),
+		ProcessingStartedAt: utcPtr(r.ProcessingStartedAt),
+		ReadyAt:             utcPtr(r.ReadyAt),
+		FailedAt:            utcPtr(r.FailedAt),
+		FailureCode:         strVal(r.FailureCode),
+		SourceSHA256:        r.SourceSha256,
+		Renditions:          r.Renditions,
+		Progress:            int(r.Progress),
 	}
+	if r.SizeBytes != nil {
+		a.SizeBytes = *r.SizeBytes
+	}
+	if r.SourceSizeBytes != nil {
+		a.SourceSizeBytes = *r.SourceSizeBytes
+	}
+	if r.DurationMs != nil {
+		a.DurationMS = *r.DurationMs
+	}
+	return a
 }
 
 func auditFromRow(r dbgen.AuditEvent) AuditEvent {

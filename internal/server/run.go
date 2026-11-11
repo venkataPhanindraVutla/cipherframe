@@ -23,6 +23,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	kmsregistry "github.com/venkataPhanindraVutla/cipherframe/internal/kms/registry"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/worker"
 )
 
@@ -121,6 +122,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		}
 	}
 	if Has(opts.Roles, RoleAPI) {
+		assets, err := newAssetService(pool, buckets, cfg, log)
+		if err != nil {
+			cleanup()
+			return err
+		}
 		handler := api.New(api.Deps{
 			Log:      log,
 			Ready:    ready,
@@ -128,6 +134,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Manager:  auth.NewManager(pool, cfg.Peppers, nil),
 
 			ContentKeys: contentKeys,
+			Assets:      assets,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
@@ -137,7 +144,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s)
 	}
 	if Has(opts.Roles, RoleEdge) {
-		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, ContentKeys: contentKeys}).Handler(), log)
+		up, closeUploads, err := newEdgeUploads(ctx, pool, buckets, cfg)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		defer closeUploads()
+		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, ContentKeys: contentKeys, Uploads: up}).Handler(), log)
 		if err != nil {
 			cleanup()
 			return err
@@ -145,7 +158,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s)
 	}
 	if Has(opts.Roles, RoleWorker) {
-		w, err := newWorker(pool, contentKeys, log)
+		w, err := newWorker(pool, contentKeys, log, &processing{Buckets: buckets, Config: cfg})
 		if err != nil {
 			cleanup()
 			return err
@@ -159,12 +172,72 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 	return err
 }
 
+// lockPoolConns caps the connections that hold tus upload locks (one per active upload request).
+const lockPoolConns = 16
+
+// newAssetService builds the asset service of the api role. The api role needs the edge's public
+// URL to tell clients where to upload; it refuses to start without it.
+func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.Config, log *slog.Logger) (*uploads.Service, error) {
+	if cfg.Uploads.EdgePublicURL == "" {
+		return nil, fmt.Errorf("%s is required when the api role runs", config.EnvEdgePublicURL)
+	}
+	// An insert-only queue: the api role enqueues asset.process, the worker role handles it.
+	queue, err := jobs.NewQueue(pool, jobs.NewRegistry(), jobs.Config{Logger: log})
+	if err != nil {
+		return nil, fmt.Errorf("assets: %w", err)
+	}
+	svc, err := uploads.NewService(uploads.Deps{
+		Pool: pool, Source: buckets.Source, Queue: queue, Limits: uploads.LimitsFrom(cfg.Uploads),
+		EdgeURL: cfg.Uploads.EdgePublicURL, Log: log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("assets: %w", err)
+	}
+	return svc, nil
+}
+
+// newEdgeUploads builds the upload endpoints of the edge role: the token check, the multipart
+// receiver and the tus data store with its cross-replica locker. The returned func releases the
+// lock pool.
+func newEdgeUploads(ctx context.Context, pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.Config) (*edge.Uploads, func(), error) {
+	s3c, err := storage.NewS3Client(ctx, cfg.S3)
+	if err != nil {
+		return nil, nil, fmt.Errorf("uploads: %w", err)
+	}
+	limits := uploads.LimitsFrom(cfg.Uploads)
+	tus, err := uploads.NewTusStore(uploads.TusDeps{Pool: pool, S3: s3c, Bucket: cfg.S3.SourceBucket, Limits: limits})
+	if err != nil {
+		return nil, nil, fmt.Errorf("uploads: %w", err)
+	}
+	lockPool, err := db.OpenSized(ctx, cfg, lockPoolConns)
+	if err != nil {
+		return nil, nil, fmt.Errorf("uploads: lock pool: %w", err)
+	}
+	repos := db.New(pool)
+	return &edge.Uploads{
+		Authz:     uploads.NewAuthorizer(repos, nil),
+		Parts:     uploads.NewReceiver(repos, buckets.Source, limits, nil),
+		Tus:       tus,
+		Locker:    uploads.NewLocker(lockPool),
+		Limits:    limits,
+		PublicURL: cfg.Uploads.EdgePublicURL,
+	}, lockPool.Close, nil
+}
+
 // workerConcurrency is how many jobs one worker process runs at once.
 const workerConcurrency = 10
 
+// processing is what the asset.process job needs besides the database: the two buckets and the
+// configuration (FFmpeg paths, limits, work directory, timeout).
+type processing struct {
+	Buckets *storage.Buckets
+	Config  *config.Config
+}
+
 // newWorker builds the job registry and, when it has kinds, a working queue. Milestones register
-// their job kinds here (for example transcoding in M3). The first real kind is kms.rewrap (M2-4).
-func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Logger) (*worker.Worker, error) {
+// their job kinds here: kms.rewrap (M2-4) and asset.process (M3). proc may be nil, which leaves
+// asset.process unregistered (tests that exercise only the other kinds).
+func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Logger, proc *processing) (*worker.Worker, error) {
 	reg := jobs.NewRegistry()
 	// A handler that chains the next run needs a queue to insert with. This one has no workers and
 	// shares the registry, so it only inserts.
@@ -174,6 +247,11 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 	}
 	if err := contentkey.RegisterRewrapJob(reg, contentKeys, inserter, jobs.KindConfig{}); err != nil {
 		return nil, fmt.Errorf("worker: %w", err)
+	}
+	if proc != nil {
+		if err := registerProcessing(reg, pool, contentKeys, proc, log); err != nil {
+			return nil, fmt.Errorf("worker: %w", err)
+		}
 	}
 	kinds := reg.Kinds()
 	if len(kinds) == 0 {

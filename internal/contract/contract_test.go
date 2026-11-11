@@ -106,6 +106,7 @@ type listener struct {
 	name    string
 	handler http.Handler
 	routes  []string
+	mounts  []string // handlers mounted from libraries and documented, not generated
 }
 
 // build returns both listeners wired with the given readiness checkers.
@@ -115,8 +116,8 @@ func build(checkers ...health.Checker) []listener {
 	a := api.New(api.Deps{Log: log, Ready: ready})
 	e := edge.New(edge.Deps{Log: log, Ready: ready})
 	return []listener{
-		{"api", a.Handler(), a.Routes()},
-		{"edge", e.Handler(), e.Routes()},
+		{"api", a.Handler(), a.Routes(), nil},
+		{"edge", e.Handler(), e.Routes(), e.Mounts()},
 	}
 }
 
@@ -250,7 +251,7 @@ func TestContract(t *testing.T) {
 		{"liveness with invalid request id", "GET", "/healthz", map[string]string{"X-Request-Id": "not a uuid"}, 200, "getHealthz"},
 		{"readiness ok", "GET", "/readyz", nil, 200, "getReadyz"},
 		{"unknown path", "GET", "/nope", nil, 404, ""},
-		{"unknown nested path with query", "GET", "/v1/assets/ast_x?token=abc", nil, 404, ""},
+		{"unknown nested path with query", "GET", "/v1/nope/ast_x?token=abc", nil, 404, ""},
 		{"method not allowed on healthz", "POST", "/healthz", nil, 405, ""},
 		{"method not allowed on readyz", "DELETE", "/readyz", nil, 405, ""},
 	}
@@ -337,14 +338,45 @@ func TestRouteCoverage(t *testing.T) {
 	}
 }
 
+// tusMount is the path prefix the edge mounts the tusd handler at. Its operations carry the `tus`
+// tag: they are documented in the spec but served by a library, so they are excluded from the
+// generated server and from TestRouteCoverage, and TestTusMountIsDocumented checks them instead.
+const tusMount = "/v1/uploads/tus/"
+
+// TestTusMountIsDocumented is the route-coverage exception for tus: the edge listener has exactly
+// one mounted handler, at the prefix every `tus`-tagged operation lives under, and no other
+// listener mounts anything.
+func TestTusMountIsDocumented(t *testing.T) {
+	doc := loadSpec(t)
+	tusOps := operations(doc, "tus")
+	if len(tusOps) == 0 {
+		t.Fatal("the spec documents no tus operations")
+	}
+	for _, op := range tusOps {
+		_, path, _ := strings.Cut(op, " ")
+		if !strings.HasPrefix(path, tusMount) {
+			t.Errorf("tus operation %q is outside the mount %q", op, tusMount)
+		}
+	}
+	for _, l := range build() {
+		want := []string(nil)
+		if l.name == "edge" {
+			want = []string{tusMount}
+		}
+		if !slices.Equal(l.mounts, want) {
+			t.Errorf("%s: mounts = %v, want %v", l.name, l.mounts, want)
+		}
+	}
+}
+
 // TestEveryOperationIsServed fails when a spec operation names no listener, because it would then
 // be documented but never served.
 func TestEveryOperationIsServed(t *testing.T) {
 	doc := loadSpec(t)
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
-			if !slices.Contains(op.Tags, "api") && !slices.Contains(op.Tags, "edge") {
-				t.Errorf("%s %s has neither the api nor the edge tag", method, path)
+			if !slices.Contains(op.Tags, "api") && !slices.Contains(op.Tags, "edge") && !slices.Contains(op.Tags, "tus") {
+				t.Errorf("%s %s has none of the api, edge and tus tags", method, path)
 			}
 			if op.OperationID == "" {
 				t.Errorf("%s %s has no operationId", method, path)

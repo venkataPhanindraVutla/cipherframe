@@ -102,6 +102,7 @@ func (l *loader) load() *Config {
 	c.EdgeListen = l.listen(EnvEdgeListen, defaultEdgeListen)
 	c.DatabaseURL = l.databaseURL(prod)
 	c.S3 = l.s3(prod)
+	c.Uploads = l.uploads()
 	c.Peppers = l.peppers(prod)
 	c.KMS = l.kms(prod)
 	c.Media = l.media()

@@ -122,6 +122,19 @@ seconds to finish and is otherwise retried later.
 **Health.** `GET /healthz` (liveness) and `GET /readyz` (readiness: database, source bucket,
 delivery bucket) are served on both the api and edge listeners. See [api.md](api.md).
 
+### Uploads
+
+The `api` role needs `CIPHERFRAME_EDGE_PUBLIC_URL`; the `edge` role serves the upload endpoints
+(`/v1/uploads/tus/` and `/v1/uploads/multipart/…`, see [api.md](api.md#assets-and-uploads-adr-0025-0026)).
+Both roles need the source bucket. The edge role opens a second, dedicated pool of up to 16 database
+connections for tus upload locks (one per active upload request, so at most 16 concurrent tus writes
+per edge replica; further requests wait for a lock). Size Postgres `max_connections` for the main
+pools plus 16 per edge replica, and
+tus parks incoming data on local disk until a part is complete: provide temporary space of about three
+`CIPHERFRAME_UPLOAD_PART_BYTES` per concurrent tus upload. Put a reverse proxy in front of the edge
+with request and response timeouts of at least several minutes for these paths, and do not buffer
+request bodies there.
+
 ### What running the server does not protect against
 
 - `/healthz` and `/readyz` are public by design. They reveal that the service is up and the names
@@ -188,6 +201,34 @@ pepper. The stack sets `CIPHERFRAME_ENV=development`, the only mode that accepts
   limits.
 - There is no authentication on the Cipherframe endpoints yet (API keys arrive with M1-7).
 
+### Processing and the work directory
+
+The worker role handles `asset.process` jobs (enqueued when an upload is committed). Each job
+
+- streams the source from the source bucket into `CIPHERFRAME_WORK_DIR/job-<random>/` while hashing it,
+- transcodes it with one FFmpeg process into the same directory,
+- encrypts each segment in memory and uploads it, then deletes the job directory,
+
+and finishes with the asset `ready` or `failed` with
+a `failure_code`: `invalid_media`, `transcode_failed`, `transcode_timeout`, `source_mismatch`,
+`source_missing`, or `processing_failed` (storage or database problems that outlasted every retry).
+
+**Disk.** Plan for **2 to 3 times the source size per concurrent job** in `CIPHERFRAME_WORK_DIR`:
+the downloaded source, plus the plaintext segments of all renditions, which together are about the
+size of the source for typical content (the ladder is capped at about 4.5, 2.5, 1.2, 0.7 and 0.35
+Mbit/s) and at most a few times the capped rates for the length of the video. A worker runs up to 10 jobs at
+once, so size the volume for the concurrency you allow or run fewer workers per node. The work
+directory should be a dedicated volume, not shared with other users: during a job it holds plaintext
+video.
+
+**CPU and memory.** FFmpeg uses all cores it can get, one process per job. Segments are encrypted one
+at a time in memory (a few megabytes). Set container CPU and memory limits.
+
+**Crashes.** A job removes its directory when it ends, also on failure and on shutdown. If the process
+is killed (for example `SIGKILL` or the kernel's out-of-memory killer) a `job-*` directory with
+plaintext stays behind; use an ephemeral volume (such as a Kubernetes `emptyDir`) or clear the directory
+when the worker starts.
+
 ## Media toolchain and your own FFmpeg
 
 The worker role transcodes uploads with FFmpeg and inspects them with FFprobe, each as a **separate
@@ -206,8 +247,8 @@ The FFmpeg in it is configured with `--disable-everything --disable-network --di
 and only what ADR 0024 lists: `file` and `pipe` protocols; MP4/MOV and Matroska/WebM input; H.264,
 HEVC, VP8, VP9, AV1 (through dav1d, because FFmpeg's own AV1 decoder needs a hardware accelerator),
 AAC, Opus and MP3 decoding; libx264 and AAC encoding; MP4 and HLS (fMP4) output; and the
-`scale`, `format`, `aresample`, `null`, `anull`, `setsar`, `fps`, `transpose`, `hflip` and `vflip`
-filters (the last three apply a rotated phone video's display matrix). Everything is pinned by
+`scale`, `format`, `aresample`, `null`, `anull`, `setsar`, `fps`, `split`, `transpose`, `hflip` and
+`vflip` filters (`split` fans the decoded frames out to one scaled branch per rendition) (the last three apply a rotated phone video's display matrix). Everything is pinned by
 SHA-256 or digest. `/usr/share/licenses/ffmpeg/` holds the licence texts and `SOURCE.md`, the
 written source offer with the exact sources and configure line. The image's `ENV` points
 `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH` at `/usr/local/bin`.
@@ -220,23 +261,22 @@ example `missing encoder(s): libx264; missing muxer(s): hls`.
 **Using your own FFmpeg.** Set `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH`. Your build
 needs libx264 and the native AAC encoder; the `mp4` and `hls` muxers; the `mov` and `matroska`
 demuxers; the H.264, HEVC, VP8, VP9, AAC, Opus and MP3 decoders and an AV1 decoder (`libdav1d` or
-`libaom-av1`); the `file` and `pipe` protocols; and the filters above. A distribution FFmpeg usually
+`libaom-av1`); the `file` and `pipe` protocols; and the filters above (including `split`). A distribution FFmpeg usually
 has all of them. If something is missing the worker says so at startup. A full-featured FFmpeg is
 a larger attack surface than the worker image's (see below), and H.264 patent licensing is your
 concern, not Cipherframe's.
 
-**Running the tests against real binaries.**
+**Running the tests against real binaries.** The binaries are Linux binaries, so on a Mac the tests
+run inside a Linux container; see [CONTRIBUTING.md](../CONTRIBUTING.md#media-and-pipeline-tests):
 
 ```sh
-docker build -f build/worker.Dockerfile --target tools --output type=local,dest=out/tools .
-CIPHERFRAME_TEST_FFMPEG=$PWD/out/tools/ffmpeg CIPHERFRAME_TEST_FFPROBE=$PWD/out/tools/ffprobe \
-  CIPHERFRAME_TEST_FFMPEG_FIXTURES=$PWD/out/tools/ffmpeg-fixtures \
-  go test -tags media ./internal/media/...
+sh build/test-media.sh                                            # go test -tags=integration,media ./internal/...
+sh build/test-media.sh -run TestPipeline -v ./internal/pipeline/  # only the pipeline tests
 ```
 
-The binaries are Linux binaries: run them on Linux, or cross-build the test binary and run it in a
-container. Fixtures are generated at test time by a test-only FFmpeg (the Dockerfile's `fixtures`
-stage, never shipped); no media files are committed.
+Fixtures are generated at test time by a test-only FFmpeg (the Dockerfile's `fixtures` stage, which
+also has the `ssim` and `psnr` filters for quality measurements and is never shipped); no media files
+are committed.
 
 ### What the media toolchain does not protect against
 
@@ -279,6 +319,10 @@ variable, never its value.
 | `CIPHERFRAME_S3_DELIVERY_BUCKET` | none | yes | no | Same rules; must differ from the source bucket. |
 | `CIPHERFRAME_S3_ACCESS_KEY_ID` | unset | production: yes | yes | Credential, see below. Both S3 credentials must be in the same state. |
 | `CIPHERFRAME_S3_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see below. |
+| `CIPHERFRAME_EDGE_PUBLIC_URL` | none | with the `api` role | no | Base URL browsers use to reach the edge listener, for example `https://media.example.com`: absolute `http(s)`, no path, query or credentials. The API puts it in upload instructions, and tus uses it for `Location` headers. The server refuses to start the `api` role without it. |
+| `CIPHERFRAME_MAX_SOURCE_BYTES` | `10737418240` (10 GiB) | no | no | Largest source an asset may declare, in bytes (1 MiB to 5 TiB). Checked at asset creation and again at commit. |
+| `CIPHERFRAME_UPLOAD_TOKEN_TTL` | `24h` | no | no | How long an upload token works: a Go duration from `1m` to `168h`. |
+| `CIPHERFRAME_UPLOAD_PART_BYTES` | `67108864` (64 MiB) | no | no | Part size for multipart uploads and tus chunks to the object store, in bytes (5 MiB to 5 GiB). The maximum source size divided by it may not exceed 10000 parts. |
 | `CIPHERFRAME_API_KEY_PEPPERS` | none | yes | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded pepper is at least 32 bytes (standard base64). |
 | `CIPHERFRAME_API_KEY_PEPPER_CURRENT` | none | yes | no | Positive integer naming a version in the set. |
 | `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. Docker Compose uses `local` with a `dev-placeholder-` KEK (ADR 0019, ADR 0022). |
@@ -307,7 +351,8 @@ variable, never its value.
 | `CIPHERFRAME_MAX_SOURCE_DURATION` | `4h` | no | no | Longest accepted source, a Go duration above zero and at most `168h`. Checked by the probe step before any encoding (ADR 0025). |
 | `CIPHERFRAME_MAX_SOURCE_WIDTH` | `3840` | no | no | Largest accepted picture width in pixels, 16 to 16384. Applies to the picture a viewer sees and to the stored frame, in either orientation: a `2160x3840` portrait video passes the default `3840x2160` limit. |
 | `CIPHERFRAME_MAX_SOURCE_HEIGHT` | `2160` | no | no | Largest accepted picture height, same rules. |
-| `CIPHERFRAME_TRANSCODE_TIMEOUT` | `6h` | no | no | Longest one transcode may run, a Go duration above zero and at most `168h`. |
+| `CIPHERFRAME_TRANSCODE_TIMEOUT` | `6h` | no | no | Longest one transcode may run, a Go duration above zero and at most `168h`. A transcode that exceeds it fails the asset with `transcode_timeout`. |
+| `CIPHERFRAME_WORK_DIR` | `<OS temp dir>/cipherframe` | no | no | Absolute path of the **worker's** private scratch directory. Created with mode 0700 (and tightened if it already exists with wider permissions). Each `asset.process` job works in its own subdirectory, which holds the downloaded source and the plaintext segments FFmpeg writes and is deleted when the job ends. See [Processing](#processing-and-the-work-directory). |
 
 Empty values of non-secret variables mean "use the default".
 

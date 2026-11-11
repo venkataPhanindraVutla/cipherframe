@@ -65,6 +65,12 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/keys`, `GET /v1/keys` | yes | no | `admin` |
 | `POST /v1/keys/{key_id}/rotate` | yes | no | `admin`, or the key itself |
 | `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
+| `POST /v1/assets` | yes | no | `assets:write` |
+| `GET /v1/assets`, `GET /v1/assets/{asset_id}` | yes | no | `assets:read` |
+| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort` | yes | no | `assets:write` |
+| `PUT /v1/uploads/multipart/{asset_id}/parts/{part_number}` | no | yes | upload token |
+| `GET /v1/uploads/multipart/{asset_id}/parts` | no | yes | upload token |
+| tus: `POST /v1/uploads/tus/`, `HEAD` and `PATCH /v1/uploads/tus/{asset_id}` | no | yes (tusd mount) | upload token |
 
 ### Health and readiness
 
@@ -180,6 +186,78 @@ The first admin key is created with the CLI, not the API:
 - A key's scopes cannot be changed after creation; revoke it and create another.
 - There is no endpoint to disable a client or tenant. Authentication honours the database markers,
   but they can be set only with SQL for now.
+
+## Assets and uploads (ADR 0025, 0026)
+
+Endpoint names and shapes are flagged for owner review before v1.0.0.
+
+An asset goes `created → uploading → committed → processing → ready | failed` (and `deleted` later).
+The API never receives media: the embedding application creates the asset, hands the browser the
+upload instructions, and commits when the upload is done. The source is never addressable: no
+response, header or log line contains its object key or the source bucket's name, and no presigned
+URL is ever returned.
+
+**Create.** `POST /v1/assets` with `{"size_bytes": 1073741824, "content_type": "video/mp4",
+"upload_method": "tus"}` (`tus` or `multipart`; `content_type` is optional). `size_bytes` must be
+exact and at most `CIPHERFRAME_MAX_SOURCE_BYTES` (default 10 GiB; `413 payload_too_large`). No file
+name is accepted or stored. The `201` answer, `Cache-Control: no-store`:
+
+```json
+{
+  "asset":  { "id": "ast_…", "state": "created", "size_bytes": 1073741824, "upload_method": "tus", "…": "…" },
+  "upload": { "method": "tus", "url": "https://media.example.com/v1/uploads/tus/",
+              "token": "cfu_…", "expires_at": "2026-11-12T10:00:00Z" }
+}
+```
+
+For `multipart`, `upload.url` is `https://media.example.com/v1/uploads/multipart/<asset>/parts/` and
+`upload.part_size_bytes` is the part size (default 64 MiB; the last part may be smaller).
+
+**The upload token.** `upload.token` is 256 random bits, shown only in this response, valid for one
+asset and for `CIPHERFRAME_UPLOAD_TOKEN_TTL` (default 24 h). Give it to the browser; send it to the
+edge as `Authorization: Bearer cfu_…`. Edge checks it against the database on every request, so it
+stops working at its expiry, when the asset is committed and when it is aborted. An expired,
+unknown or ended token is `401 unauthenticated`; a token used on another asset's URL is `404`. API
+keys are never accepted on upload endpoints, and upload tokens are never accepted on the API.
+
+**Resumable upload with tus.** Speak tus 1.0.0 to `upload.url` with any tus client (for example
+tus-js-client with `endpoint` set to it and an `Authorization` header). `Upload-Length` must equal
+`size_bytes`. The upload URL is `…/v1/uploads/tus/<asset_id>`: after an interruption, `HEAD` it for
+`Upload-Offset` and continue with `PATCH` from there. One upload per asset (a second creation is
+`409`); client termination, concatenation and deferred length are disabled, and `Upload-Metadata` is
+ignored. When the last byte arrives the object exists.
+
+**Resumable upload with multipart.** Cut the file into `part_size_bytes` pieces and `PUT
+<upload.url><n>` (`n` from 1) each with `Content-Length` and `Authorization: Bearer cfu_…`. Edge
+streams the part into the object store and records it. After an interruption, `GET <upload.url>`
+lists the parts received (`part_number`, `size_bytes`, `etag`) and the client sends only the missing
+ones. Sending a part again replaces it. Every part but the last must be at least 5 MiB.
+
+**Commit.** `POST /v1/assets/{asset_id}/commit` ends the upload: multipart is completed from the
+recorded parts, then the object must exist with exactly the declared size (`409` if not; with tus the
+upload must have finished). The asset becomes `committed`, the token stops working and processing is
+queued, all in one transaction. Committing again returns the asset and queues nothing.
+
+**Abort.** `POST /v1/assets/{asset_id}/abort` stops an uncommitted upload: the asset becomes `failed`
+with `failure_code` `upload_aborted`, the token ends and the partial objects are deleted. Repeating it
+repeats the cleanup; a committed asset is `409`.
+
+**Read.** `GET /v1/assets/{asset_id}` and `GET /v1/assets` (`limit`, `cursor`, oldest first). An asset
+of another tenant is `404`, never `403`.
+
+CORS: the multipart endpoints answer any origin without credentials, because the token in the
+`Authorization` header is the only authentication; tus answers with tusd's defaults.
+
+### What the asset and upload endpoints do not protect against
+
+- A token holder can upload to that one asset until the token expires, is committed or is aborted.
+  Tokens are not bound to an address, origin or device, and there is no endpoint to revoke one other
+  than committing or aborting the asset.
+- Uploads are not scanned for malware, and the bytes are untrusted until the worker probes them.
+- The size limit and token lifetime bound what one token can send; they are DoS mitigations, not
+  guarantees. Part sizes, buffering and concurrent uploads still cost edge bandwidth, CPU and disk.
+- Duration and resolution limits are enforced later, by the probe step.
+- An uploader can lie about `content_type`; it is stored as object metadata only.
 
 ## Conventions
 

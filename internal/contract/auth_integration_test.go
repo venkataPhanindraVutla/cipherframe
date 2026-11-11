@@ -18,9 +18,14 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/storagetest"
 )
 
-func TestMain(m *testing.M) { os.Exit(dbtest.Run(m)) }
+func TestMain(m *testing.M) {
+	code := dbtest.Run(m)
+	storagetest.Terminate()
+	os.Exit(code)
+}
 
 // TestManagementOperationsMatchSpec exercises every secured operation against a real database
 // through the real handler chain, and validates each request and response (success and the
@@ -116,6 +121,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
+			if strings.HasPrefix(path, "/v1/assets") || strings.HasPrefix(path, "/v1/uploads/") {
+				continue // exercised, with storage, by TestUploadLifecycleAndSourceIsNeverAddressable
+			}
 			if op.Security != nil && len(*op.Security) > 0 && !covered[op.OperationID] {
 				t.Errorf("%s %s (%s) was not exercised with a 2xx response", method, path, op.OperationID)
 			}

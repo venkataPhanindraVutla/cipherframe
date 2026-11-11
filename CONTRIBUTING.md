@@ -91,4 +91,46 @@ CIPHERFRAME_TEST_PG_IMAGE=postgres:16.15 go test -race -tags=integration ./inter
 After changing a migration or a query in `internal/db/queries/`, run `sqlc generate` and commit the
 result.
 
+### Media and pipeline tests
+
+The tests tagged `media` run the real FFmpeg and FFprobe, and the pipeline test
+(`internal/pipeline`, tags `integration,media`) also needs Postgres and SeaweedFS. FFmpeg only exists
+as static Linux binaries built by `build/worker.Dockerfile`, so on a Mac (or anywhere without
+FFmpeg) the whole `go test` runs inside a Linux container:
+
+```sh
+sh build/test-media.sh                                              # go test -tags=integration,media ./internal/...
+sh build/test-media.sh -run TestPipeline -v ./internal/pipeline/    # only the pipeline tests, verbose
+REBUILD_TOOLS=1 sh build/test-media.sh ...                          # rebuild the binaries after changing the Dockerfile
+```
+
+The script builds the Dockerfile's `tools` target into `out/tools` (the shipped `ffmpeg` and
+`ffprobe` plus `ffmpeg-fixtures`, the test-only generator that also has the `ssim` and `psnr`
+filters; those filters are never in the shipped build), then runs `go test` in the pinned `golang`
+image with the binaries mounted, the host's Docker socket mounted, and
+`TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal` so testcontainers can reach the Postgres and
+SeaweedFS containers it starts. The first run builds FFmpeg (several minutes, cached after that) and
+downloads the Go modules into two Docker volumes. The 20 second pipeline fixture takes about 25
+seconds to process and verify.
+
+On a Linux machine with Docker you can skip the container: extract the binaries, put them on `PATH`
+and run `go test` directly, which is what the `media` CI job does.
+
+```sh
+docker build -f build/worker.Dockerfile --target tools --output type=local,dest=out/tools .
+CIPHERFRAME_TEST_FFMPEG=$PWD/out/tools/ffmpeg CIPHERFRAME_TEST_FFPROBE=$PWD/out/tools/ffprobe \
+  CIPHERFRAME_TEST_FFMPEG_FIXTURES=$PWD/out/tools/ffmpeg-fixtures \
+  go test -race -tags=integration,media ./internal/...
+```
+
+The lint, vet, vulnerability and licence checks run with `-tags=integration,media` so the tagged files
+are checked too:
+
+```sh
+golangci-lint run --build-tags=integration,media ./...
+go vet -tags=integration,media ./...
+govulncheck -tags=integration,media ./...
+GOFLAGS=-tags=integration,media go-licenses check ./... --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
+```
+
 Tool versions are pinned in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).

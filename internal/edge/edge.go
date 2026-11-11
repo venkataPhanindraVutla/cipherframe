@@ -21,6 +21,9 @@ type Deps struct {
 	Ready *health.Runner
 	// ContentKeys reads content keys for the key endpoint (M4). No endpoint uses it yet.
 	ContentKeys *contentkey.Manager
+	// Uploads serves the upload endpoints (M3-2). Without it they answer 503
+	// dependency_unavailable.
+	Uploads *Uploads
 }
 
 // Edge is the data-plane HTTP handler.
@@ -36,19 +39,38 @@ func New(d Deps) *Edge {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, up: d.Uploads}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})
-	gen.HandlerWithOptions(strict, gen.StdHTTPServerOptions{
+	gen.HandlerWithOptions(guarded{ServerInterface: strict, up: d.Uploads}, gen.StdHTTPServerOptions{
 		BaseRouter:       router,
 		ErrorHandlerFunc: httpx.RequestErrorHandler,
 	})
-	return &Edge{router: router, handler: httpx.Chain(router, httpx.Standard(d.Log)...)}
+	router.Mount(TusMount, tusHandler(d.Uploads))
+	mw := append(httpx.Standard(d.Log), uploadCORS)
+	return &Edge{router: router, handler: httpx.Chain(router, mw...)}
+}
+
+// tusHandler returns the mounted tus handler, or one that answers 503 when the process has no
+// upload machinery. A tusd configuration error is a programming error and fails at startup.
+func tusHandler(up *Uploads) http.Handler {
+	if up == nil || up.Authz == nil || up.Tus == nil || up.Locker == nil {
+		return tusUnavailable()
+	}
+	h, err := newTus(up)
+	if err != nil {
+		panic("edge: tus handler: " + err.Error())
+	}
+	return h
 }
 
 // Handler returns the full handler chain, ready for an http.Server.
 func (e *Edge) Handler() http.Handler { return e.handler }
 
-// Routes returns the registered route patterns, sorted, for example "GET /healthz".
+// Routes returns the registered route patterns, sorted, for example "GET /healthz". Mounted
+// handlers that the spec documents but does not generate (tus) are in Mounts.
 func (e *Edge) Routes() []string { return e.router.Patterns() }
+
+// Mounts returns the path prefixes of handlers mounted from libraries, sorted.
+func (e *Edge) Mounts() []string { return e.router.Mounts() }

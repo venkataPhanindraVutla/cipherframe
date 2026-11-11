@@ -11,6 +11,12 @@ import (
 // server implements gen.StrictServerInterface.
 type server struct {
 	ready *health.Runner
+	up    *Uploads
+}
+
+func requestID(ctx context.Context) string {
+	id, _ := reqid.FromContext(ctx)
+	return id
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

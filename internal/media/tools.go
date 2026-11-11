@@ -61,7 +61,7 @@ var capabilities = []listing{
 	{flag: "-demuxers", kind: "demuxer", need: []requirement{one("mov"), one("matroska")}},
 	{flag: "-protocols", kind: "protocol", need: []requirement{one("file"), one("pipe")}},
 	{flag: "-filters", kind: "filter", need: []requirement{
-		one("scale"), one("format"), one("aresample"), one("null"), one("anull"), one("setsar"), one("fps"),
+		one("scale"), one("format"), one("aresample"), one("null"), one("anull"), one("setsar"), one("fps"), one("split"),
 	}},
 }
 

@@ -73,7 +73,7 @@ func seedKeys(t *testing.T, pool *pgxpool.Pool, mgr *contentkey.Manager, n int) 
 
 func TestNewWorkerRegistersRewrap(t *testing.T) {
 	pool := dbtest.NewMigrated(t)
-	w, err := newWorker(pool, managerFor(t, pool, localAt(t, 1)), slog.New(slog.DiscardHandler))
+	w, err := newWorker(pool, managerFor(t, pool, localAt(t, 1)), slog.New(slog.DiscardHandler), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRewrapWaitReportsProgress(t *testing.T) {
 	seedKeys(t, pool, managerFor(t, pool, localAt(t, 1)), 5)
 
 	v2 := localAt(t, 2)
-	w, err := newWorker(pool, managerFor(t, pool, v2), slog.New(slog.DiscardHandler))
+	w, err := newWorker(pool, managerFor(t, pool, v2), slog.New(slog.DiscardHandler), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestRewrapWaitFailsOnDeadLetter(t *testing.T) {
 	}
 
 	v2 := localAt(t, 2)
-	w, err := newWorker(pool, managerFor(t, pool, v2), slog.New(slog.DiscardHandler))
+	w, err := newWorker(pool, managerFor(t, pool, v2), slog.New(slog.DiscardHandler), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
