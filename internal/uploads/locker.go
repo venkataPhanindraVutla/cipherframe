@@ -66,6 +66,7 @@ type pgLock struct {
 
 	mu   sync.Mutex
 	conn *pgxpool.Conn
+	held bool // both locks are held; makes Unlock safe to repeat (tusd's memory lock panics on a second Unlock)
 }
 
 // Lock implements handler.Lock.
@@ -92,7 +93,7 @@ func (p *pgLock) Lock(ctx context.Context, requestUnlock func()) error {
 		}
 		if got {
 			p.mu.Lock()
-			p.conn = conn
+			p.conn, p.held = conn, true
 			p.mu.Unlock()
 			return nil
 		}
@@ -111,9 +112,12 @@ func (p *pgLock) Lock(ctx context.Context, requestUnlock func()) error {
 // is closed, which releases every session lock it holds.
 func (p *pgLock) Unlock() error {
 	p.mu.Lock()
-	conn := p.conn
-	p.conn = nil
+	conn, held := p.conn, p.held
+	p.conn, p.held = nil, false
 	p.mu.Unlock()
+	if !held {
+		return nil
+	}
 	if conn != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

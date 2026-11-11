@@ -154,7 +154,7 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 			t.Fatalf("migrate run %d: %v", i+1, err)
 		}
 	}
-	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "content_keys", "external_tasks", "river_job", "river_migration"} {
+	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "content_keys", "external_tasks", "upload_tokens", "upload_parts", "river_job", "river_migration"} {
 		var n int
 		err := pool.QueryRow(ctx,
 			"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
@@ -167,8 +167,8 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id > 0").Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 3 {
-		t.Fatalf("applied migrations = %d, want 3", applied)
+	if applied != 4 {
+		t.Fatalf("applied migrations = %d, want 4", applied)
 	}
 	// River's schema is applied by the same call and is not re-applied by a further run.
 	var riverVersions int
