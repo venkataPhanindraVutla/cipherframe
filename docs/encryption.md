@@ -16,7 +16,7 @@
 |---|---|
 | AWS KMS (`awskms`) | implemented (M2-2); see below |
 | HashiCorp Vault Transit and OpenBao (`vault`) | implemented (ADR 0021) |
-| GCP KMS | planned (M2-2) |
+| GCP Cloud KMS (`gcpkms`) | implemented (M2-2); see below |
 | Local development provider (`local`) | implemented; **development only** (ADR 0019) |
 
 ## Key providers
@@ -179,6 +179,65 @@ CIPHERFRAME_TEST_AWS_KMS_KEY_ID=alias/cipherframe-test CIPHERFRAME_TEST_AWS_REGI
 ```
 
 It uses the default credential chain and a symmetric key you can encrypt and decrypt with.
+
+## The GCP Cloud KMS provider
+
+`CIPHERFRAME_KMS_PROVIDER=gcpkms` wraps content keys with Cloud KMS symmetric `Encrypt` and `Decrypt`
+on one crypto key (`CIPHERFRAME_KMS_GCP_KEY_NAME`; see `docs/usage.md` for all settings).
+
+- **Current KEK**: `GetCryptoKey` returns the primary version. The key must have purpose
+  `ENCRYPT_DECRYPT` and an enabled primary, otherwise the provider reports `not_configured`. The KEK id
+  is the crypto key name and the KEK version is the version number (for example `3`).
+- **Wrap**: `Encrypt` on the crypto key, which uses the primary version. The envelope's associated
+  data goes in as Cloud KMS additional authenticated data. The version that made the ciphertext is
+  parsed from the response `name` (`.../cryptoKeyVersions/N`).
+- **Unwrap**: `Decrypt` on the crypto key with the same associated data. Cloud KMS reads the version
+  from the ciphertext, so keys wrapped under older versions stay readable after rotation as long as
+  those versions are enabled. A disabled or destroyed version is `not_configured`, not tampering.
+- **Integrity**: following Google's data-integrity guidance, every request carries CRC32C checksums
+  and every response is checked: `verified_plaintext_crc32c`,
+  `verified_additional_authenticated_data_crc32c` and `ciphertext_crc32c` on wrap, `plaintext_crc32c`
+  on unwrap. A mismatch fails closed with the kind `other` and yields no key.
+- **Errors** keep only the gRPC status code, never the SDK's text: `Unavailable`, `DeadlineExceeded`,
+  `ResourceExhausted`, `Internal` become `unavailable`; `PermissionDenied`, `Unauthenticated` become
+  `denied`; `InvalidArgument` on unwrap becomes `invalid`; `NotFound`, `FailedPrecondition` become
+  `not_configured`; anything else is `other`.
+- **Packaging**: build with `-tags nokms_gcp` to leave the Cloud KMS SDK out of the binary (ADR 0022).
+
+### Testing and manual verification
+
+Automated tests run the shared conformance suite against an in-process fake gRPC Cloud KMS server
+with real AES-GCM per key version, rotation, CRC32C fields and error injection (ADR 0023). Google
+provides no Cloud KMS emulator, so before each release also run the opt-in test against real Cloud KMS:
+
+1. Create a test key (software protection is enough) and a service account, or use your own ADC:
+
+   ```sh
+   gcloud kms keyrings create cipherframe-test --location=europe-west1
+   gcloud kms keys create wrap-test --keyring=cipherframe-test --location=europe-west1 \
+     --purpose=encryption
+   gcloud kms keys add-iam-policy-binding wrap-test --keyring=cipherframe-test \
+     --location=europe-west1 --member="serviceAccount:SA@PROJECT.iam.gserviceaccount.com" \
+     --role=roles/cloudkms.cryptoOperator
+   gcloud kms keys add-iam-policy-binding wrap-test --keyring=cipherframe-test \
+     --location=europe-west1 --member="serviceAccount:SA@PROJECT.iam.gserviceaccount.com" \
+     --role=roles/cloudkms.viewer
+   ```
+
+2. Run the suite with Application Default Credentials (`gcloud auth application-default login` or
+   `GOOGLE_APPLICATION_CREDENTIALS`):
+
+   ```sh
+   CIPHERFRAME_TEST_GCP_KMS_KEY_NAME=projects/PROJECT/locations/europe-west1/keyRings/cipherframe-test/cryptoKeys/wrap-test \
+     go test -count=1 -run TestRealGCPKMS -v ./internal/kms/gcpkms/
+   ```
+
+3. Check rotation by hand: `gcloud kms keys versions create --key=wrap-test --keyring=cipherframe-test
+   --location=europe-west1 --primary`, restart the service, create a new content key, and confirm it
+   records the new version while a key created before the rotation still plays.
+4. Check the outage and denial paths: remove the IAM binding (expect `denied`, API `internal_error`)
+   and block egress to `cloudkms.googleapis.com` (expect `dependency_unavailable`).
+5. Delete the test key versions when done (`gcloud kms keys versions destroy`).
 
 ## Operations
 

@@ -88,11 +88,8 @@ func TestKMSProduction(t *testing.T) {
 			}
 		})
 	}
-	for _, p := range []string{ProviderGCPKMS} { // vault and awskms have required settings: see their tests
-		if _, err := load(prod.with(EnvKMSProvider, p), nil); err != nil {
-			t.Fatalf("production with %s rejected: %v", p, err)
-		}
-	}
+	// vault, awskms and gcpkms each have required settings: see kms_vault_test.go, kms_aws_test.go
+	// and kms_gcp_test.go.
 }
 
 func TestKMSDevelopmentAcceptsPlaceholder(t *testing.T) {

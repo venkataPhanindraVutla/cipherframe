@@ -53,16 +53,6 @@ func TestFromConfigRefusesLocalInProduction(t *testing.T) {
 	}
 }
 
-func TestFromConfigReservedProvidersFailFast(t *testing.T) {
-	for _, p := range []string{config.ProviderGCPKMS} {
-		cfg := load(t, map[string]string{config.EnvKMSProvider: p})
-		_, err := registry.FromConfig(cfg, nil)
-		if err == nil || !strings.Contains(err.Error(), config.EnvKMSProvider) || !strings.Contains(err.Error(), p) {
-			t.Fatalf("%s: want a clear refusal naming the variable, got %v", p, err)
-		}
-	}
-}
-
 func TestFromConfigNil(t *testing.T) {
 	if _, err := registry.FromConfig(nil, nil); err == nil {
 		t.Fatal("nil config accepted")

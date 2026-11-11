@@ -198,7 +198,10 @@ variable, never its value.
 | `CIPHERFRAME_KMS_AWS_ACCESS_KEY_ID` | unset | production: yes | yes | Credential, same rules as the S3 pair: set = static key pair, empty = the AWS SDK default chain (preferred in production), unset = refused in production and the default chain in development. Both must be in the same state. |
 | `CIPHERFRAME_KMS_AWS_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see above. |
 | `CIPHERFRAME_KMS_AWS_TIMEOUT` | `5s` | no | no | Go duration, above zero and at most `5m`. Bounds every KMS call including SDK retries. |
-| `CIPHERFRAME_KMS_GCP_*` | | | | **Stub.** GCP KMS settings arrive with M2-2. |
+| `CIPHERFRAME_KMS_GCP_KEY_NAME` | none | with `gcpkms` | no | Cloud KMS crypto key, `projects/P/locations/L/keyRings/R/cryptoKeys/K`. A key version name is refused. The key must be a symmetric `ENCRYPT_DECRYPT` key; new wraps use its primary version. Ignored unless the provider is `gcpkms`. |
+| `CIPHERFRAME_KMS_GCP_CREDENTIALS_FILE` | unset (Application Default Credentials) | no | no | Path of a credentials JSON file (`service_account`, `authorized_user`, `external_account` or `impersonated_service_account`). It is a path, not a secret; its content is never logged. Unset means Application Default Credentials (workload identity, attached service account, `GOOGLE_APPLICATION_CREDENTIALS`). The identity needs `cloudkms.cryptoKeys.get` and `cloudkms.cryptoKeyVersions.useToEncrypt`/`useToDecrypt` (for example `roles/cloudkms.cryptoOperator` plus `roles/cloudkms.viewer`). |
+| `CIPHERFRAME_KMS_GCP_ENDPOINT` | the Cloud KMS endpoint | no | no | Optional `host:port` that replaces `cloudkms.googleapis.com:443`, for a private endpoint (Private Service Connect). The connection uses TLS. |
+| `CIPHERFRAME_KMS_GCP_TIMEOUT` | `5s` | no | no | Go duration from 1ms to 5m, applied to each Cloud KMS request (including SDK retries). |
 
 Empty values of non-secret variables mean "use the default".
 
