@@ -5,6 +5,7 @@
 package dbgen
 
 import (
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -110,6 +111,21 @@ type ExternalTask struct {
 	CompletedAt *time.Time
 }
 
+type PlaybackAccessLog struct {
+	ID             int64
+	TenantID       pgtype.UUID
+	AssetID        pgtype.UUID
+	SessionHash    []byte
+	ViewerID       *string
+	AuthMethod     *string
+	Event          string
+	At             time.Time
+	SegmentsServed *int32
+	Ip             *netip.Addr
+	UserAgent      *string
+	RequestID      *string
+}
+
 type PlaybackAuth struct {
 	TenantID                   pgtype.UUID
 	JwtEnabled                 bool
@@ -190,6 +206,13 @@ type PlaybackSetting struct {
 	TokenInUrl               bool
 	UpdatedAt                time.Time
 	Delivery                 string
+}
+
+type PrivacySetting struct {
+	TenantID       pgtype.UUID
+	StoreIp        bool
+	StoreUserAgent bool
+	UpdatedAt      time.Time
 }
 
 type Tenant struct {

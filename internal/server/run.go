@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
@@ -42,6 +43,8 @@ const (
 	ReadinessCheckTimeout = 2 * time.Second
 	// startupTimeout bounds connecting to the database and reading its version.
 	startupTimeout = 30 * time.Second
+	// accessLogFlushTimeout bounds the final write of the access trail at shutdown.
+	accessLogFlushTimeout = 5 * time.Second
 )
 
 // Options are the parsed command-line options of the serve command.
@@ -116,6 +119,19 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 
 	contentKeys := contentkey.NewManager(pool, kmsReg, log)
 
+	// The access trail (invariant I10): a best-effort queue and writer shared by the playback
+	// service and the edge routes. It is flushed after every listener has stopped, so the events of
+	// the last requests are not lost on a graceful shutdown.
+	var access *accesslog.Recorder
+	if Has(opts.Roles, RoleAPI) || Has(opts.Roles, RoleEdge) {
+		access = accesslog.New(accesslog.Options{Store: repos, Log: log})
+		defer func() {
+			fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accessLogFlushTimeout)
+			defer cancel()
+			access.Close(fctx)
+		}()
+	}
+
 	buckets, err := storage.New(ctx, cfg.S3)
 	if err != nil {
 		return fmt.Errorf("storage: %w", err)
@@ -140,7 +156,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		playbackSvc, err := newPlaybackService(pool, cfg, kmsReg)
+		playbackSvc, err := newPlaybackService(pool, cfg, kmsReg, access)
 		if err != nil {
 			cleanup()
 			return err
@@ -169,7 +185,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			return err
 		}
 		defer closeUploads()
-		play, err := newEdgePlayback(pool, repos, buckets, contentKeys, kmsReg, cfg, log)
+		play, err := newEdgePlayback(pool, repos, buckets, contentKeys, kmsReg, access, cfg, log)
 		if err != nil {
 			cleanup()
 			return err
@@ -229,12 +245,12 @@ func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.C
 // the configured keyring (ADR 0028) and tells clients where the edge serves playlists, so it needs
 // the edge's public URL (already required by the asset service). It wraps callback secrets with the
 // key providers (ADR 0029).
-func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Registry) (*playback.Service, error) {
+func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Registry, access *accesslog.Recorder) (*playback.Service, error) {
 	keyring, err := token.KeyringFromConfig(cfg.Playback)
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
-	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg})
+	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
@@ -252,7 +268,7 @@ func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Regi
 // SSRF-guarded client of package outbound, to a tenant's JWKS URL or callback URL, and needs the
 // edge's public URL to tell the player where its playlists are. Without the URL the route answers
 // 503 and the process says so at startup.
-func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Buckets, contentKeys *contentkey.Manager, kmsReg *kms.Registry, cfg *config.Config, log *slog.Logger) (*edge.Playback, error) {
+func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Buckets, contentKeys *contentkey.Manager, kmsReg *kms.Registry, access *accesslog.Recorder, cfg *config.Config, log *slog.Logger) (*edge.Playback, error) {
 	if contentKeys == nil {
 		return nil, errors.New("playback: the edge role needs the key service")
 	}
@@ -260,12 +276,12 @@ func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Bucke
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
-	viewer, err := newEdgeViewerAuth(pool, repos, keyring, kmsReg, cfg, log)
+	viewer, err := newEdgeViewerAuth(pool, repos, keyring, kmsReg, access, cfg, log)
 	if err != nil {
 		return nil, err
 	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys, Viewer: viewer,
+		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys, Viewer: viewer, Access: access,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
@@ -278,12 +294,12 @@ const jwksFetchTimeout = 3 * time.Second
 
 // newEdgeViewerAuth builds the collaborators of the browser-session route. It returns nil, with a
 // warning, when the edge's public URL is not configured.
-func newEdgeViewerAuth(pool *pgxpool.Pool, repos *db.Repos, keyring *token.Keyring, kmsReg *kms.Registry, cfg *config.Config, log *slog.Logger) (*edge.ViewerDeps, error) {
+func newEdgeViewerAuth(pool *pgxpool.Pool, repos *db.Repos, keyring *token.Keyring, kmsReg *kms.Registry, access *accesslog.Recorder, cfg *config.Config, log *slog.Logger) (*edge.ViewerDeps, error) {
 	if cfg.Uploads.EdgePublicURL == "" {
 		log.Warn("browser playback sessions are disabled: " + config.EnvEdgePublicURL + " is not set")
 		return nil, nil
 	}
-	sessions, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg})
+	sessions, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
@@ -466,7 +482,8 @@ func (s *httpService) run(ctx context.Context) error {
 
 func (s *httpService) close() { _ = s.ln.Close() }
 
-// sweepService runs the periodic cleanup of playback key-fetch counters in the edge role.
+// sweepService runs the periodic playback housekeeping in the edge role: access-log partitions,
+// key-fetch counters, used JWT ids and expired sessions.
 type sweepService struct {
 	repos *db.Repos
 	log   *slog.Logger

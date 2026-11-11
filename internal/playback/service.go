@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -22,6 +23,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
 )
 
@@ -47,6 +49,9 @@ type Deps struct {
 	// KMS wraps the callback secrets (ADR 0029). Without it RotateCallbackSecret answers
 	// dependency_unavailable; session creation does not need it.
 	KMS *kms.Registry
+	// Access receives the access-trail events of the service: session created, session denied
+	// (limit, asset not ready) and revoked. Nil records nothing.
+	Access *accesslog.Recorder
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -58,6 +63,7 @@ type Service struct {
 	keyring *token.Keyring
 	edge    string
 	secrets *viewerauth.SecretBox // nil without a KMS registry
+	access  *accesslog.Recorder   // nil records nothing
 	now     func() time.Time
 }
 
@@ -72,7 +78,7 @@ func NewService(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	svc := &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, now: d.Now}
+	svc := &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, access: d.Access, now: d.Now}
 	if d.KMS != nil {
 		svc.secrets = viewerauth.NewSecretBox(d.KMS)
 	}
@@ -128,6 +134,38 @@ func ValidateViewerID(v string) error {
 // limit, and inserts the new session. The lock makes the limit exact under concurrency. The token
 // is signed before the transaction so a signing failure leaves no row behind.
 func (s *Service) CreateSession(ctx context.Context, in CreateInput) (Created, error) {
+	c, err := s.createSession(ctx, in)
+	if err != nil {
+		var e *errs.Error
+		if errors.As(err, &e) && (e.Code == errs.SessionLimit || e.Code == errs.AssetNotReady) {
+			s.access.RecordSessionDenied(s.accessEvent(ctx, in, nil, db.AccessSessionDenied))
+		}
+		return Created{}, err
+	}
+	s.access.Record(s.accessEvent(ctx, in, db.SessionHash(c.SessionID), db.AccessSessionCreated))
+	return c, nil
+}
+
+// accessEvent builds the access-trail event of a session creation. The requester's address and
+// user agent go with it only for browser-started sessions (JWT, callback): an API-key creation is
+// made by the embedding application's server, whose address says nothing about the viewer.
+func (s *Service) accessEvent(ctx context.Context, in CreateInput, hash []byte, kind string) accesslog.Event {
+	method := in.AuthMethod
+	if method == "" {
+		method = db.AuthMethodAPIKey
+	}
+	ev := accesslog.Event{
+		TenantID: in.TenantID, AssetID: in.AssetID, SessionHash: hash, ViewerID: in.ViewerID, AuthMethod: method,
+		Kind: kind, At: s.now(),
+	}
+	ev.RequestID, _ = reqid.FromContext(ctx)
+	if method != db.AuthMethodAPIKey {
+		ev.Client = accesslog.ClientFrom(ctx)
+	}
+	return ev
+}
+
+func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, error) {
 	if err := ValidateViewerID(in.ViewerID); err != nil {
 		return Created{}, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "viewer_id", Message: err.Error()}})
 	}

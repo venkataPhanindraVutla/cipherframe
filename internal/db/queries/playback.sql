@@ -145,22 +145,24 @@ UPDATE playback_sessions SET state = 'revoked', revoked_at = sqlc.arg(now)::time
 WHERE tenant_id = sqlc.arg(tenant_id)::uuid AND id_hash = sqlc.arg(id_hash)::bytea AND state = 'active'
 RETURNING *;
 
--- name: RevokePlaybackSessionsByFilter :execrows
--- Revokes every active session of the tenant that matches the viewer and/or the asset. The caller
--- guarantees at least one filter is set.
+-- name: RevokePlaybackSessionsByFilter :many
+-- Revokes every active session of the tenant that matches the viewer and/or the asset, and returns
+-- which ones (the access log records one row each). The caller guarantees at least one filter is set.
 UPDATE playback_sessions SET state = 'revoked', revoked_at = sqlc.arg(now)::timestamptz,
     revoke_reason = sqlc.narg(reason)::text
 WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND state = 'active'
   AND (sqlc.narg(viewer_id)::text IS NULL OR viewer_id = sqlc.narg(viewer_id)::text)
-  AND (sqlc.narg(asset_id)::uuid IS NULL OR asset_id = sqlc.narg(asset_id)::uuid);
+  AND (sqlc.narg(asset_id)::uuid IS NULL OR asset_id = sqlc.narg(asset_id)::uuid)
+RETURNING id_hash, tenant_id, asset_id, viewer_id, auth_method;
 
--- name: EndExpiredPlaybackSessions :execrows
+-- name: EndExpiredPlaybackSessions :many
 -- The sweep: ends one bounded batch of active sessions that are past their expiry or idle past
 -- their tenant's idle timeout (default_idle_seconds for a tenant without stored settings). The
 -- inner filter uses the partial indexes (min_idle_seconds is the smallest idle timeout a tenant
 -- can set); the join then applies the tenant's exact value. SKIP LOCKED lets replicas sweep side by
--- side without waiting for each other.
+-- side without waiting for each other. It returns the sessions it ended (the access log records
+-- one 'expired' row each).
 WITH due AS (
     SELECT s.id_hash
     FROM playback_sessions s
@@ -175,4 +177,5 @@ WITH due AS (
     FOR UPDATE OF s SKIP LOCKED
 )
 UPDATE playback_sessions p SET state = 'ended', ended_at = sqlc.arg(now)::timestamptz
-FROM due WHERE p.id_hash = due.id_hash;
+FROM due WHERE p.id_hash = due.id_hash
+RETURNING p.id_hash, p.tenant_id, p.asset_id, p.viewer_id, p.auth_method;

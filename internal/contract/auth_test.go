@@ -153,6 +153,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"size_bytes":1,"upload_method":"tus"}`)
 				case "updatePlaybackSettings":
 					body = []byte(`{}`)
+				case "updatePrivacySettings":
+					body = []byte(`{"store_ip":false,"store_user_agent":false}`)
 				case "updatePlaybackAuth":
 					body = []byte(`{"jwt_enabled":false,"callback_enabled":false}`)
 				case "putPlaybackJwtKey":
@@ -182,8 +184,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 23 {
-		t.Fatalf("exercised %d secured operations, want 23", n)
+	if n != 27 {
+		t.Fatalf("exercised %d secured operations, want 27", n)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
@@ -136,6 +137,8 @@ type env struct {
 	keyStore func(edge.KeyStore) edge.KeyStore
 	// vx tunes the browser-session route (play_session_integration_test.go); nil means defaults.
 	vx *viewerExtras
+	// access, when set (useAccess), receives the access trail of the edge and of the services.
+	access *accesslog.Recorder
 }
 
 func newEnv(t *testing.T) *env {
@@ -183,7 +186,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Now: e.clk.Now})
+	e.svc, err = playback.NewService(playback.Deps{Pool: pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Access: e.access, Now: e.clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +281,7 @@ func (e *env) start() {
 		ks = e.keyStore(ks)
 	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Viewer: e.viewerDeps(), Now: e.clk.Now,
+		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Viewer: e.viewerDeps(), Access: e.access, Now: e.clk.Now,
 	})
 	if err != nil {
 		e.t.Fatal(err)

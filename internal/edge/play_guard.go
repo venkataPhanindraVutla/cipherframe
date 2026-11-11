@@ -255,6 +255,10 @@ func (p *Playback) guard(w http.ResponseWriter, r *http.Request, rawSession stri
 			return
 		}
 		if row.AssetID != asset || !sessionUsable(row, set, p.now()) {
+			if need == token.ScopeKey { // a verified token for a session that exists, refused
+				g := grant{tenant: tenant, asset: asset, session: sid}
+				p.access.RecordKeyDenied(p.accessEvent(r.Context(), g, db.AccessKeyDenied))
+			}
 			fail(errPlaybackUnauthenticated())
 			return
 		}

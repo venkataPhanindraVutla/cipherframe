@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbgen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
@@ -100,21 +101,45 @@ func (r *Repos) RevokePlaybackSession(ctx context.Context, tenantID id.TenantID,
 	return cur, false, err
 }
 
+// SessionRef identifies a session that a bulk statement changed, for the access log. It holds the
+// hash of the session ID, never the ID.
+type SessionRef struct {
+	IDHash     []byte
+	TenantID   id.TenantID
+	AssetID    id.AssetID
+	ViewerID   string
+	AuthMethod string
+}
+
+func sessionRef(hash []byte, tenant, asset pgtype.UUID, viewer, method string) SessionRef {
+	return SessionRef{
+		IDHash: hash, TenantID: fromPG[id.TenantKind](tenant), AssetID: fromPG[id.AssetKind](asset),
+		ViewerID: viewer, AuthMethod: method,
+	}
+}
+
 // RevokePlaybackSessionsByFilter revokes the tenant's active sessions of one viewer (viewerID not
-// empty) and/or one asset (assetID not zero) and returns how many it revoked. At least one filter
-// is required: it never revokes every session of a tenant.
-func (r *Repos) RevokePlaybackSessionsByFilter(ctx context.Context, tenantID id.TenantID, viewerID string, assetID id.AssetID, reason string, now time.Time) (int64, error) {
+// empty) and/or one asset (assetID not zero) and returns the sessions it revoked. At least one
+// filter is required: it never revokes every session of a tenant.
+func (r *Repos) RevokePlaybackSessionsByFilter(ctx context.Context, tenantID id.TenantID, viewerID string, assetID id.AssetID, reason string, now time.Time) ([]SessionRef, error) {
 	tid, err := requirePG(tenantID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if viewerID == "" && assetID.IsZero() {
-		return 0, errs.New(errs.InvalidRequest, "a viewer or an asset filter is required")
+		return nil, errs.New(errs.InvalidRequest, "a viewer or an asset filter is required")
 	}
-	n, err := r.q.RevokePlaybackSessionsByFilter(ctx, dbgen.RevokePlaybackSessionsByFilterParams{
+	rows, err := r.q.RevokePlaybackSessionsByFilter(ctx, dbgen.RevokePlaybackSessionsByFilterParams{
 		Now: now, Reason: strPtr(reason), TenantID: tid, ViewerID: strPtr(viewerID), AssetID: toPG(assetID),
 	})
-	return n, mapError(err)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]SessionRef, len(rows))
+	for i, row := range rows {
+		out[i] = sessionRef(row.IDHash, row.TenantID, row.AssetID, row.ViewerID, row.AuthMethod)
+	}
+	return out, nil
 }
 
 // MinIdleTimeoutSeconds is the smallest idle timeout a tenant can configure (see
@@ -122,15 +147,22 @@ func (r *Repos) RevokePlaybackSessionsByFilter(ctx context.Context, tenantID id.
 const MinIdleTimeoutSeconds = 30
 
 // EndExpiredPlaybackSessions ends up to batch active sessions, across tenants, that are past
-// their expiry or idle past their tenant's idle timeout, and returns how many it ended.
-func (r *Repos) EndExpiredPlaybackSessions(ctx context.Context, now time.Time, batch int) (int64, error) {
+// their expiry or idle past their tenant's idle timeout, and returns the sessions it ended.
+func (r *Repos) EndExpiredPlaybackSessions(ctx context.Context, now time.Time, batch int) ([]SessionRef, error) {
 	if batch < 1 {
-		return 0, errs.New(errs.InvalidRequest, "invalid batch size")
+		return nil, errs.New(errs.InvalidRequest, "invalid batch size")
 	}
-	n, err := r.q.EndExpiredPlaybackSessions(ctx, dbgen.EndExpiredPlaybackSessionsParams{
+	rows, err := r.q.EndExpiredPlaybackSessions(ctx, dbgen.EndExpiredPlaybackSessionsParams{
 		Now: now, MinIdleSeconds: MinIdleTimeoutSeconds,
 		DefaultIdleSeconds: int32(DefaultPlaybackSettings().IdleTimeoutSeconds), //nolint:gosec // constant
 		Batch:              int32(batch),                                        //nolint:gosec // small
 	})
-	return n, mapError(err)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]SessionRef, len(rows))
+	for i, row := range rows {
+		out[i] = sessionRef(row.IDHash, row.TenantID, row.AssetID, row.ViewerID, row.AuthMethod)
+	}
+	return out, nil
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
@@ -98,6 +99,9 @@ type PlaybackDeps struct {
 	// Viewer serves the browser-session route, POST /v1/play/tenants/{tenant_id}/sessions (ADR
 	// 0031). Without it that route answers 503 dependency_unavailable.
 	Viewer *ViewerDeps
+	// Access records the access trail (master playlists, keys, heartbeats, ends, segment counts).
+	// Nil records nothing.
+	Access *accesslog.Recorder
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -111,6 +115,7 @@ type Playback struct {
 	keyStore KeyStore
 	keys     ContentKeyReader
 	viewer   *ViewerDeps
+	access   *accesslog.Recorder
 	now      func() time.Time
 
 	settings  *ttlCache[string, db.PlaybackSettings]
@@ -135,7 +140,7 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 		d.Now = time.Now
 	}
 	return &Playback{
-		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, now: d.Now,
+		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, access: d.Access, now: d.Now,
 		settings:  newTTLCache[string, db.PlaybackSettings](settingsCacheMax, playbackCacheTTL, d.Now),
 		viewerCfg: newTTLCache[string, viewerConfig](settingsCacheMax, playbackCacheTTL, d.Now),
 		sessions:  newTTLCache[[sha256.Size]byte, sessionTenant](sessionCacheMax, playbackCacheTTL, d.Now),
@@ -147,6 +152,16 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 func fingerprint(s id.SessionID) string {
 	h := sha256.Sum256([]byte(s.String()))
 	return hex.EncodeToString(h[:4])
+}
+
+// accessEvent is an access-trail event of a granted request: the session by hash only, the request
+// ID, and the requester's address and user agent (stored only if the tenant allows it). The viewer
+// is filled in by the access-log writer from the session row.
+func (p *Playback) accessEvent(ctx context.Context, g grant, kind string) accesslog.Event {
+	return accesslog.Event{
+		TenantID: g.tenant, AssetID: g.asset, SessionHash: db.SessionHash(g.session), Kind: kind, At: p.now(),
+		RequestID: requestID(ctx), Client: accesslog.ClientFrom(ctx),
+	}
 }
 
 // tenantSettings returns the tenant's settings from the cache, or reads them.
@@ -298,6 +313,8 @@ func (s *server) GetPlaybackMaster(ctx context.Context, _ gen.GetPlaybackMasterR
 	if err != nil {
 		return nil, rewriteFailed(ctx, g, err)
 	}
+	// One row per master fetch. Media playlists and segments are not logged one by one (I10).
+	s.play.access.Record(s.play.accessEvent(ctx, g, db.AccessPlaylist))
 	return gen.GetPlaybackMaster200ApplicationvndAppleMpegurlResponse{
 		Body: strings.NewReader(out), ContentLength: int64(len(out)), Headers: playlistHeaders(ctx),
 	}, nil
@@ -370,6 +387,8 @@ func (s *server) GetPlaybackSegment(ctx context.Context, req gen.GetPlaybackSegm
 		// Only a positively identified missing object is a 404 (I11): an outage is a 503.
 		return nil, storage.ToAppError(err)
 	}
+	// Only a count per session is kept: never which segment, rendition or position.
+	s.play.access.CountSegment(g.tenant, g.asset, db.SessionHash(g.session))
 	h := gen.GetPlaybackSegment200ResponseHeaders{
 		CacheControl: segmentCacheControl, ReferrerPolicy: noReferrer, XRequestId: requestID(ctx),
 	}

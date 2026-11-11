@@ -1,12 +1,15 @@
 # Privacy
 
-> Status: skeleton (M0-4). Defaults are pending gate P11.
+> Status: the access trail and its privacy settings are implemented (M4-7). The final defaults and the
+> remaining settings (retention, original file names, asset time-to-live) are pending gate P11.
 
 ## Principles
 
 - Recordings, transcripts, subtitles and thumbnails are treated as personal data.
 - Cipherframe records an **access trail** (who, when, which session events) and nothing more. There
-  are no viewer behavioural analytics (invariant I10).
+  are no viewer behavioural analytics (invariant I10): nothing records which segment, rendition or
+  position a viewer fetched, and nothing records what the player did. Segment requests are only
+  counted per session. See [What the access trail records](#what-the-access-trail-records).
 - A playback session stores the embedding application's `viewer_id` and nothing else about the
   viewer. It must be a pseudonymous identifier, never an email address or other direct identifier
   ([api.md](api.md#playback-sessions-and-settings-adr-0028-0030)).
@@ -15,15 +18,46 @@
 - Every derived artifact is registered with the purge job and counted in the signed deletion record
   (I6).
 
-## Settings (pending P11)
+## What the access trail records
 
-| Setting | Default |
+One row per session event in `playback_access_log` ([api.md](api.md#the-access-trail-and-the-privacy-settings)
+lists the events and how to read them): a session created, refused, revoked, ended or expired, the
+master playlist fetched, the key fetched or refused, an accepted heartbeat (at most one per session per
+5 minutes), and a `segments` row with how many segment requests a session made in the last 30 seconds.
+
+| Column | What it holds |
 |---|---|
-| Asset time-to-live | pending |
-| Store viewer IP address | pending |
-| Store viewer user agent | pending |
-| Store original filename | pending |
-| Access-log retention | pending |
+| tenant, asset | Which tenant and asset the event concerns. |
+| session hash | The SHA-256 of the session ID. Never the ID or a token. Empty for a refused creation. |
+| viewer ID, auth method | The pseudonymous ID your application chose, and how the session was authorised. Empty when a refused authorization names no viewer. |
+| event, time | What happened and when (UTC). |
+| segments served | A count, on `segments` rows only. |
+| request ID | The `X-Request-Id` of the request, to correlate with your own logs. |
+| IP address | **Only if the tenant turned `store_ip` on.** The connecting peer address. |
+| user agent | **Only if the tenant turned `store_user_agent` on.** Cut to 256 characters. |
+
+The IP address and user agent are the only data about the viewer's device, and **both are off by
+default**. They are never stored for events your server caused (API-key session creation, revocation) or
+nobody did (expiry). Cipherframe does not read `X-Forwarded-For`, because a client can set it to
+anything: behind a reverse proxy the stored address is the proxy's.
+
+Turning a setting off stops storing it for later rows; it does not erase rows already written.
+The trail is best effort and can lose events under overload, so it is not a complete or tamper-evident
+record (see [api.md](api.md#the-access-trail-and-the-privacy-settings)). Reading it needs the
+`assets:read` scope of the tenant; the settings need `admin`.
+
+## Settings (defaults pending P11)
+
+Until gate P11 decides, the mechanism uses the most private values and nothing is deleted
+automatically.
+
+| Setting | Default now | Implemented |
+|---|---|---|
+| Asset time-to-live | pending | no |
+| Store viewer IP address (`store_ip`) | off | yes, per tenant: `PUT /v1/privacy-settings` |
+| Store viewer user agent (`store_user_agent`) | off | yes, per tenant |
+| Store original filename | pending (none is accepted or stored today) | no |
+| Access-log retention | pending: rows are kept until M6 | no (the monthly partitions and a tested drop function are in place, unused) |
 
 ## Deletion and retention
 

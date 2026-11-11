@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
@@ -48,7 +49,7 @@ func New(d Deps) *Edge {
 		ErrorHandlerFunc: httpx.RequestErrorHandler,
 	})
 	router.Mount(TusMount, tusHandler(d.Uploads))
-	mw := append(httpx.Standard(d.Log), playGate(d.Playback), uploadCORS)
+	mw := append(httpx.Standard(d.Log), accesslog.Middleware(), playGate(d.Playback), uploadCORS)
 	return &Edge{router: router, handler: httpx.Chain(router, mw...)}
 }
 

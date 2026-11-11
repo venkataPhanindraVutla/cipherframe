@@ -2,8 +2,11 @@ package playback
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 )
 
 const (
@@ -23,8 +26,23 @@ const (
 // Sweeper is what the playback sweeper writes to. *db.Repos implements it.
 type Sweeper interface {
 	SweepPlaybackKeyFetches(ctx context.Context, before time.Time) (int64, error)
-	EndExpiredPlaybackSessions(ctx context.Context, now time.Time, batch int) (int64, error)
+	EndExpiredPlaybackSessions(ctx context.Context, now time.Time, batch int) ([]db.SessionRef, error)
 	SweepPlaybackJWTIDs(ctx context.Context, before time.Time) (int64, error)
+	InsertAccessLog(ctx context.Context, rows []db.AccessLogRow) error
+	EnsureAccessLogPartitions(ctx context.Context, now time.Time, ahead int) (int, error)
+}
+
+// AccessLogPartitionsAhead is how many months after the current one the sweeper keeps the access
+// log's partitions created for (the current month plus two).
+const AccessLogPartitionsAhead = 2
+
+// EnsureAccessLogPartitions creates the access log's monthly partitions for the current month and
+// the next AccessLogPartitionsAhead, when missing, and returns how many it created. Without a
+// partition for the current time every access-log insert fails, so this runs first in every sweep.
+// It is idempotent, so any number of replicas may run it. Nothing ever drops a partition here:
+// access-log retention is M6-4.
+func EnsureAccessLogPartitions(ctx context.Context, s Sweeper, now time.Time) (int, error) {
+	return s.EnsureAccessLogPartitions(ctx, now, AccessLogPartitionsAhead)
 }
 
 // SweepKeyFetches deletes the counters of tokens that expired more than a few minutes before now
@@ -48,11 +66,22 @@ func SweepJWTIDs(ctx context.Context, s Sweeper, now time.Time) (int64, error) {
 // stored state, the status endpoint's ended_at and the active-session indexes honest. A run stops
 // after maxSweepPasses batches; the next tick continues. It is idempotent, so any number of
 // replicas may run it.
+//
+// Every session it ends gets an "expired" row in the access log, written directly (not through the
+// best-effort queue) right after the batch is ended. A failure to write them is returned after the
+// sweep finishes; the sessions stay ended, and their rows are lost (the trail is best effort).
 func SweepSessions(ctx context.Context, s Sweeper, now time.Time, batch int) (int64, error) {
 	var total int64
+	var logErr error
 	for range maxSweepPasses {
-		n, err := s.EndExpiredPlaybackSessions(ctx, now, batch)
+		ended, err := s.EndExpiredPlaybackSessions(ctx, now, batch)
+		n := int64(len(ended))
 		total += n
+		if n > 0 {
+			if err := s.InsertAccessLog(ctx, expiredRows(ended, now)); err != nil {
+				logErr = fmt.Errorf("access log: %w", err)
+			}
+		}
 		if err != nil {
 			return total, err
 		}
@@ -60,11 +89,26 @@ func SweepSessions(ctx context.Context, s Sweeper, now time.Time, batch int) (in
 			break
 		}
 	}
-	return total, nil
+	return total, logErr
+}
+
+// expiredRows are the access-log rows of sessions the sweep ended. They carry no address or user
+// agent: nobody made a request.
+func expiredRows(ended []db.SessionRef, at time.Time) []db.AccessLogRow {
+	at = at.UTC().Truncate(time.Microsecond)
+	rows := make([]db.AccessLogRow, len(ended))
+	for i, e := range ended {
+		rows[i] = db.AccessLogRow{
+			TenantID: e.TenantID, AssetID: e.AssetID, SessionHash: e.IDHash, ViewerID: e.ViewerID,
+			AuthMethod: e.AuthMethod, Event: db.AccessExpired, At: at,
+		}
+	}
+	return rows
 }
 
 // RunSweeper sweeps every interval until ctx is cancelled (a failure is logged and retried at the
-// next tick): key-fetch counters, used JWT ids and expired sessions. It sweeps once immediately, so a restarted
+// next tick): access-log partitions (created ahead), key-fetch counters, used JWT ids and expired
+// sessions. It sweeps once immediately, so a restarted
 // process cleans up at once.
 func RunSweeper(ctx context.Context, s Sweeper, interval time.Duration, log *slog.Logger) {
 	if interval <= 0 {
@@ -72,6 +116,15 @@ func RunSweeper(ctx context.Context, s Sweeper, interval time.Duration, log *slo
 	}
 	run := func() {
 		now := time.Now()
+		created, err := EnsureAccessLogPartitions(ctx, s, now)
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err != nil:
+			log.ErrorContext(ctx, "access log partition creation failed", slog.Any("error", err))
+		case created > 0:
+			log.InfoContext(ctx, "access log partitions created", slog.Int("created", created))
+		}
 		n, err := SweepKeyFetches(ctx, s, now)
 		switch {
 		case ctx.Err() != nil:
