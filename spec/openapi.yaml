@@ -533,6 +533,133 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/playback-sessions/revoke:
+    post:
+      operationId: revokePlaybackSessions
+      summary: Revoke sessions by filter
+      description: |
+        Revokes every active session of the caller's tenant that matches the filter: `viewer_id`,
+        `asset_id`, or both (both must match). At least one is required; an empty filter is `400`
+        (a tenant-wide revoke is deliberately not possible). Sessions of other tenants are never
+        touched. Returns how many sessions it revoked, which is 0 when none matched. Sessions
+        already ended or revoked are left as they are. Requires the `sessions:write` scope, and is
+        recorded in the audit log.
+
+        Revocation takes effect at once for playlists, the key and heartbeats. Segments already
+        covered by an issued token keep working until that token expires (at most the token
+        lifetime, 10 minutes by default), but cannot be decrypted without the key.
+      tags: [api]
+      security:
+        - bearerAuth: [sessions:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokePlaybackSessionsRequest"
+      responses:
+        "200":
+          description: The matching sessions were revoked.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevokedPlaybackSessions"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/playback-sessions/{session_id}:
+    get:
+      operationId: getPlaybackSession
+      summary: Get a playback session
+      description: |
+        Returns the status of one session of the caller's tenant. It never returns a token. A
+        session of another tenant is `404`, the same as an unknown one. Requires the
+        `sessions:write` scope.
+
+        `state` is `active`, `ended` or `revoked`. A session that is still `active` in storage but
+        has been idle past the tenant's idle timeout, or has reached its maximum age, is reported
+        as `ended` (with `ended_at` null until the background sweep records it), because it can
+        no longer be used.
+      tags: [api]
+      security:
+        - bearerAuth: [sessions:write]
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+      responses:
+        "200":
+          description: The session.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackSessionStatus"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/playback-sessions/{session_id}/revoke:
+    post:
+      operationId: revokePlaybackSession
+      summary: Revoke a playback session
+      description: |
+        Revokes one session of the caller's tenant, with an optional `reason` (at most 200
+        printable characters; do not put personal data in it: it is stored with the session and
+        shown by `getPlaybackSession`). A session of another tenant is `404`, the same as an unknown
+        one. Requires the `sessions:write` scope, and is recorded in the audit log.
+
+        The call is idempotent and returns the session's status. Revoking an already revoked
+        session changes nothing and keeps its first reason (`200`). Revoking a session that has
+        already **ended** also succeeds (`200`) and leaves it `ended`: the record keeps how it
+        really finished, and an ended session cannot be used anyway.
+
+        Revocation takes effect at once for playlists, the key and heartbeats. Segments already
+        covered by an issued token keep working until that token expires (at most the token
+        lifetime, 10 minutes by default), but cannot be decrypted without the key.
+      tags: [api]
+      security:
+        - bearerAuth: [sessions:write]
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokePlaybackSessionRequest"
+      responses:
+        "200":
+          description: The session after the call.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackSessionStatus"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/playback-settings:
     get:
       operationId: getPlaybackSettings
@@ -614,7 +741,7 @@ paths:
         **CORS.** A browser origin listed in the tenant's `allowed_origins` (exact match) gets
         `Access-Control-Allow-Origin` with that origin and `Vary: Origin`; any other origin gets no
         CORS headers. The preflight `OPTIONS` request on this path and on the two below needs no
-        token and answers `204` with `Access-Control-Allow-Methods: GET, OPTIONS` and
+        token and answers `204` with `Access-Control-Allow-Methods: GET, POST, OPTIONS` and
         `Access-Control-Allow-Headers: Authorization`, for an allowed origin only. Credentials are
         never allowed.
       tags: [edge]
@@ -815,6 +942,109 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/heartbeat:
+    post:
+      operationId: heartbeatPlayback
+      summary: Heartbeat
+      description: |
+        Keeps a session alive and returns a fresh playback token (ADR 0028). The player calls it
+        every `heartbeat_interval_seconds` and uses the new token for every later request to edge,
+        playlists, key and segments alike. Requires a token with the `manifest` scope (any token
+        the session was given); the token, its transport (`Authorization` header, or `t` when the
+        tenant allows it) and CORS follow the other playback routes. The body is empty.
+
+        In one atomic step edge records the heartbeat, only when the session is still usable:
+        active, before its maximum age and not idle (judged on the **previous** heartbeat). An
+        unusable session, whether revoked, ended, expired, idle or unknown, answers the same
+        generic `401` as a bad token. A heartbeat that follows the previous one by less than the
+        larger of a quarter of the heartbeat interval and 5 seconds is a `429 rate_limited` with
+        `Retry-After` and changes nothing, so a script cannot mint tokens in a tight loop.
+
+        The new token carries all three scopes and expires at the earlier of the token lifetime
+        from now and `session_expires_at`. The token it replaces keeps working until its own expiry
+        (tokens are stateless); only a revocation or the end of the session stops the session
+        itself. The response is `no-store`.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The heartbeat was recorded. `token` is shown only here and replaces the previous one.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackHeartbeat"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "429":
+          description: The previous heartbeat was too recent. `Retry-After` says when to try again.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Retry-After:
+              description: Seconds to wait, at least 1.
+              required: true
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/end:
+    post:
+      operationId: endPlayback
+      summary: End the session
+      description: |
+        The player calls this when the viewer closes it or the page unloads (`navigator.sendBeacon`
+        cannot set headers, so use `fetch` with `keepalive: true` and the `Authorization` header).
+        An active session becomes `ended` and stops counting toward the viewer's session limit.
+        Requires a token with the `manifest` scope, but, unlike the playlists, the session need not
+        be usable: the call is idempotent, so ending a session that is already ended, idle,
+        expired or revoked is a `204` too (a revoked session stays revoked). A bad token is the
+        generic `401`. The body is empty.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "204":
+          description: The session is ended (or was not active).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
         "503":
           $ref: "#/components/responses/Problem"
         default:
@@ -1024,6 +1254,13 @@ components:
       in: path
       required: true
       description: A session ID (`ses_` followed by 52 characters). It grants nothing without a token.
+      schema:
+        $ref: "#/components/schemas/SessionId"
+    SessionIdPath:
+      name: session_id
+      in: path
+      required: true
+      description: A session ID (`ses_` followed by 52 characters), as returned by `createPlaybackSession`.
       schema:
         $ref: "#/components/schemas/SessionId"
     PlayRendition:
@@ -1486,6 +1723,108 @@ components:
           description: |
             `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
             to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+    PlaybackHeartbeat:
+      type: object
+      additionalProperties: false
+      required: [token, token_expires_at, heartbeat_interval_seconds, session_expires_at]
+      properties:
+        token:
+          type: string
+          maxLength: 1024
+          description: |
+            A fresh playback token with the manifest, key and segment scopes, shown only here. Use
+            it for every later request; the previous token works until its own expiry.
+        token_expires_at:
+          type: string
+          format: date-time
+          description: When the token stops working. Never later than `session_expires_at`.
+        heartbeat_interval_seconds:
+          type: integer
+          description: How often to send the next heartbeat.
+        session_expires_at:
+          type: string
+          format: date-time
+          description: The session ends at this time at the latest, heartbeats or not.
+    RevokePlaybackSessionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 200
+          description: |
+            Why the session was revoked: at most 200 printable characters, no control characters.
+            Stored and returned as is. Do not put personal data in it.
+    RevokePlaybackSessionsRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        viewer_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Revoke the active sessions of this viewer.
+        asset_id:
+          $ref: "#/components/schemas/AssetIdValue"
+        reason:
+          type: string
+          maxLength: 200
+          description: As for a single revoke. Do not put personal data in it.
+      description: At least one of `viewer_id` and `asset_id` is required.
+    RevokedPlaybackSessions:
+      type: object
+      additionalProperties: false
+      required: [revoked]
+      properties:
+        revoked:
+          type: integer
+          minimum: 0
+          description: How many sessions were revoked.
+    PlaybackSessionStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - asset_id
+        - viewer_id
+        - state
+        - created_at
+        - last_heartbeat_at
+        - session_expires_at
+      properties:
+        session_id:
+          $ref: "#/components/schemas/SessionId"
+        asset_id:
+          $ref: "#/components/schemas/AssetIdValue"
+        viewer_id:
+          type: string
+        state:
+          type: string
+          enum: [active, ended, revoked]
+          description: |
+            `ended` also covers a session that is idle past the idle timeout or past its maximum
+            age but not yet recorded as ended.
+        created_at:
+          type: string
+          format: date-time
+        last_heartbeat_at:
+          type: string
+          format: date-time
+        session_expires_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          description: Present only once the session has been recorded as ended.
+        revoked_at:
+          type: string
+          format: date-time
+          description: Present only when the session was revoked.
+        revoke_reason:
+          type: string
+          description: Present only when a reason was given at revocation.
     PlaybackSettingsInput:
       description: |
         Every playback setting of a tenant (ADR 0028, 0030). This is a full replacement, so every

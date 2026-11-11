@@ -133,13 +133,14 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 
 	keyID := "key_" + strings.Repeat("0", 26)
 	assetID := "ast_" + strings.Repeat("0", 26)
+	sessionID := "ses_" + strings.Repeat("0", 52)
 	n := 0
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
 			if op.Security == nil || len(*op.Security) == 0 || !slices.Contains(op.Tags, "api") {
 				continue
 			}
-			p := strings.ReplaceAll(strings.ReplaceAll(path, "{key_id}", keyID), "{asset_id}", assetID)
+			p := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(path, "{key_id}", keyID), "{session_id}", sessionID), "{asset_id}", assetID)
 			var body []byte
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
 				body = []byte(`{"name":"x"}`)
@@ -150,6 +151,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"size_bytes":1,"upload_method":"tus"}`)
 				case "updatePlaybackSettings":
 					body = []byte(`{}`)
+				case "revokePlaybackSessions":
+					body = []byte(`{"viewer_id":"viewer"}`)
 				case "createPlaybackSession":
 					body = []byte(`{"asset_id":"` + assetID + `","viewer_id":"viewer"}`)
 				}
@@ -173,8 +176,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 15 {
-		t.Fatalf("exercised %d secured operations, want 15", n)
+	if n != 18 {
+		t.Fatalf("exercised %d secured operations, want 18", n)
 	}
 }
 

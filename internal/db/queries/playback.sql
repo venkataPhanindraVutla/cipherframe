@@ -114,3 +114,62 @@ VALUES (sqlc.arg(tenant_id)::uuid, sqlc.arg(session_hash)::bytea, sqlc.arg(asset
 
 -- name: SweepPlaybackKeyFetches :execrows
 DELETE FROM playback_key_fetches WHERE expires_at < sqlc.arg(before)::timestamptz;
+
+-- name: HeartbeatPlaybackSession :one
+-- Records a heartbeat in one statement, only for a usable session: active, before its expiry, not
+-- idle (judged on the PREVIOUS heartbeat), and whose previous heartbeat is at least min_gap old,
+-- which is the guard against a script minting tokens in a tight loop. No row means the caller has
+-- to find out which of those failed (GetPlaybackSession).
+UPDATE playback_sessions SET last_heartbeat_at = sqlc.arg(now)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id_hash = sqlc.arg(id_hash)::bytea
+  AND asset_id = sqlc.arg(asset_id)::uuid
+  AND state = 'active'
+  AND expires_at > sqlc.arg(now)::timestamptz
+  AND last_heartbeat_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(idle_seconds)::integer)
+  AND last_heartbeat_at <= sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(min_gap_seconds)::integer)
+RETURNING *;
+
+-- name: EndPlaybackSession :execrows
+-- The player's explicit end. Only an active session changes: ended and revoked stay as they are.
+UPDATE playback_sessions SET state = 'ended', ended_at = sqlc.arg(now)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid AND id_hash = sqlc.arg(id_hash)::bytea AND state = 'active';
+
+-- name: RevokePlaybackSession :one
+-- Revokes one active session of the tenant. No row means unknown, already revoked or already ended.
+UPDATE playback_sessions SET state = 'revoked', revoked_at = sqlc.arg(now)::timestamptz,
+    revoke_reason = sqlc.narg(reason)::text
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid AND id_hash = sqlc.arg(id_hash)::bytea AND state = 'active'
+RETURNING *;
+
+-- name: RevokePlaybackSessionsByFilter :execrows
+-- Revokes every active session of the tenant that matches the viewer and/or the asset. The caller
+-- guarantees at least one filter is set.
+UPDATE playback_sessions SET state = 'revoked', revoked_at = sqlc.arg(now)::timestamptz,
+    revoke_reason = sqlc.narg(reason)::text
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND state = 'active'
+  AND (sqlc.narg(viewer_id)::text IS NULL OR viewer_id = sqlc.narg(viewer_id)::text)
+  AND (sqlc.narg(asset_id)::uuid IS NULL OR asset_id = sqlc.narg(asset_id)::uuid);
+
+-- name: EndExpiredPlaybackSessions :execrows
+-- The sweep: ends one bounded batch of active sessions that are past their expiry or idle past
+-- their tenant's idle timeout (default_idle_seconds for a tenant without stored settings). The
+-- inner filter uses the partial indexes (min_idle_seconds is the smallest idle timeout a tenant
+-- can set); the join then applies the tenant's exact value. SKIP LOCKED lets replicas sweep side by
+-- side without waiting for each other.
+WITH due AS (
+    SELECT s.id_hash
+    FROM playback_sessions s
+    LEFT JOIN playback_settings ps ON ps.tenant_id = s.tenant_id
+    WHERE s.state = 'active'
+      AND (s.expires_at <= sqlc.arg(now)::timestamptz
+           OR s.last_heartbeat_at <= sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(min_idle_seconds)::integer))
+      AND (s.expires_at <= sqlc.arg(now)::timestamptz
+           OR s.last_heartbeat_at <= sqlc.arg(now)::timestamptz
+              - make_interval(secs => COALESCE(ps.idle_timeout_seconds, sqlc.arg(default_idle_seconds)::integer)))
+    LIMIT sqlc.arg(batch)::integer
+    FOR UPDATE OF s SKIP LOCKED
+)
+UPDATE playback_sessions p SET state = 'ended', ended_at = sqlc.arg(now)::timestamptz
+FROM due WHERE p.id_hash = due.id_hash;

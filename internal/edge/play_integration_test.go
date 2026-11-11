@@ -717,7 +717,7 @@ func TestCORS(t *testing.T) {
 		// Preflight: no token needed; 204 with the headers for an allowed origin only.
 		pf := e.do("OPTIONS", p, map[string]string{"Origin": testOrigin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"})
 		want(t, pf, 204)
-		if acao(pf) != testOrigin || pf.hdr.Get("Access-Control-Allow-Methods") != "GET, OPTIONS" ||
+		if acao(pf) != testOrigin || pf.hdr.Get("Access-Control-Allow-Methods") != "GET, POST, OPTIONS" ||
 			pf.hdr.Get("Access-Control-Allow-Headers") != "Authorization" || pf.hdr.Get("Access-Control-Allow-Credentials") != "" ||
 			!strings.Contains(pf.hdr.Get("Vary"), "Origin") {
 			t.Fatalf("%s: preflight headers = %v", p, pf.hdr)

@@ -65,6 +65,8 @@ type PlaybackStore interface {
 	GetPlaybackSettings(ctx context.Context, tenantID id.TenantID) (db.PlaybackSettings, error)
 	GetPlaybackSession(ctx context.Context, tenantID id.TenantID, hash []byte) (db.PlaybackSession, error)
 	PlaybackSessionTenant(ctx context.Context, hash []byte) (id.TenantID, error)
+	HeartbeatPlaybackSession(ctx context.Context, tenantID id.TenantID, hash []byte, assetID id.AssetID, now time.Time, idle, minGap time.Duration) (db.PlaybackSession, db.HeartbeatOutcome, time.Duration, error)
+	EndPlaybackSession(ctx context.Context, tenantID id.TenantID, hash []byte, now time.Time) (bool, error)
 }
 
 // KeyStore is what the key endpoint needs besides PlaybackStore: the asset state and the

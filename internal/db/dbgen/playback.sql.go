@@ -73,6 +73,69 @@ func (q *Queries) CountActivePlaybackSessions(ctx context.Context, arg CountActi
 	return count, err
 }
 
+const endExpiredPlaybackSessions = `-- name: EndExpiredPlaybackSessions :execrows
+WITH due AS (
+    SELECT s.id_hash
+    FROM playback_sessions s
+    LEFT JOIN playback_settings ps ON ps.tenant_id = s.tenant_id
+    WHERE s.state = 'active'
+      AND (s.expires_at <= $1::timestamptz
+           OR s.last_heartbeat_at <= $1::timestamptz - make_interval(secs => $2::integer))
+      AND (s.expires_at <= $1::timestamptz
+           OR s.last_heartbeat_at <= $1::timestamptz
+              - make_interval(secs => COALESCE(ps.idle_timeout_seconds, $3::integer)))
+    LIMIT $4::integer
+    FOR UPDATE OF s SKIP LOCKED
+)
+UPDATE playback_sessions p SET state = 'ended', ended_at = $1::timestamptz
+FROM due WHERE p.id_hash = due.id_hash
+`
+
+type EndExpiredPlaybackSessionsParams struct {
+	Now                time.Time
+	MinIdleSeconds     int32
+	DefaultIdleSeconds int32
+	Batch              int32
+}
+
+// The sweep: ends one bounded batch of active sessions that are past their expiry or idle past
+// their tenant's idle timeout (default_idle_seconds for a tenant without stored settings). The
+// inner filter uses the partial indexes (min_idle_seconds is the smallest idle timeout a tenant
+// can set); the join then applies the tenant's exact value. SKIP LOCKED lets replicas sweep side by
+// side without waiting for each other.
+func (q *Queries) EndExpiredPlaybackSessions(ctx context.Context, arg EndExpiredPlaybackSessionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, endExpiredPlaybackSessions,
+		arg.Now,
+		arg.MinIdleSeconds,
+		arg.DefaultIdleSeconds,
+		arg.Batch,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const endPlaybackSession = `-- name: EndPlaybackSession :execrows
+UPDATE playback_sessions SET state = 'ended', ended_at = $1::timestamptz
+WHERE tenant_id = $2::uuid AND id_hash = $3::bytea AND state = 'active'
+`
+
+type EndPlaybackSessionParams struct {
+	Now      time.Time
+	TenantID pgtype.UUID
+	IDHash   []byte
+}
+
+// The player's explicit end. Only an active session changes: ended and revoked stay as they are.
+func (q *Queries) EndPlaybackSession(ctx context.Context, arg EndPlaybackSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, endPlaybackSession, arg.Now, arg.TenantID, arg.IDHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const endStalePlaybackSessions = `-- name: EndStalePlaybackSessions :execrows
 UPDATE playback_sessions SET state = 'ended', ended_at = $1::timestamptz
 WHERE tenant_id = $2::uuid
@@ -165,6 +228,60 @@ func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID)
 		&i.AllowedOrigins,
 		&i.TokenInUrl,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const heartbeatPlaybackSession = `-- name: HeartbeatPlaybackSession :one
+UPDATE playback_sessions SET last_heartbeat_at = $1::timestamptz
+WHERE tenant_id = $2::uuid
+  AND id_hash = $3::bytea
+  AND asset_id = $4::uuid
+  AND state = 'active'
+  AND expires_at > $1::timestamptz
+  AND last_heartbeat_at > $1::timestamptz - make_interval(secs => $5::integer)
+  AND last_heartbeat_at <= $1::timestamptz - make_interval(secs => $6::integer)
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count
+`
+
+type HeartbeatPlaybackSessionParams struct {
+	Now           time.Time
+	TenantID      pgtype.UUID
+	IDHash        []byte
+	AssetID       pgtype.UUID
+	IdleSeconds   int32
+	MinGapSeconds int32
+}
+
+// Records a heartbeat in one statement, only for a usable session: active, before its expiry, not
+// idle (judged on the PREVIOUS heartbeat), and whose previous heartbeat is at least min_gap old,
+// which is the guard against a script minting tokens in a tight loop. No row means the caller has
+// to find out which of those failed (GetPlaybackSession).
+func (q *Queries) HeartbeatPlaybackSession(ctx context.Context, arg HeartbeatPlaybackSessionParams) (PlaybackSession, error) {
+	row := q.db.QueryRow(ctx, heartbeatPlaybackSession,
+		arg.Now,
+		arg.TenantID,
+		arg.IDHash,
+		arg.AssetID,
+		arg.IdleSeconds,
+		arg.MinGapSeconds,
+	)
+	var i PlaybackSession
+	err := row.Scan(
+		&i.IDHash,
+		&i.TenantID,
+		&i.ClientID,
+		&i.AssetID,
+		&i.ViewerID,
+		&i.State,
+		&i.CreatedAt,
+		&i.LastHeartbeatAt,
+		&i.ExpiresAt,
+		&i.EndedAt,
+		&i.RevokedAt,
+		&i.RevokeReason,
+		&i.KeyWindowStart,
+		&i.KeyWindowCount,
 	)
 	return i, err
 }
@@ -333,6 +450,81 @@ func (q *Queries) ReservePlaybackKeyFetch(ctx context.Context, arg ReservePlayba
 	var fetches int32
 	err := row.Scan(&fetches)
 	return fetches, err
+}
+
+const revokePlaybackSession = `-- name: RevokePlaybackSession :one
+UPDATE playback_sessions SET state = 'revoked', revoked_at = $1::timestamptz,
+    revoke_reason = $2::text
+WHERE tenant_id = $3::uuid AND id_hash = $4::bytea AND state = 'active'
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count
+`
+
+type RevokePlaybackSessionParams struct {
+	Now      time.Time
+	Reason   *string
+	TenantID pgtype.UUID
+	IDHash   []byte
+}
+
+// Revokes one active session of the tenant. No row means unknown, already revoked or already ended.
+func (q *Queries) RevokePlaybackSession(ctx context.Context, arg RevokePlaybackSessionParams) (PlaybackSession, error) {
+	row := q.db.QueryRow(ctx, revokePlaybackSession,
+		arg.Now,
+		arg.Reason,
+		arg.TenantID,
+		arg.IDHash,
+	)
+	var i PlaybackSession
+	err := row.Scan(
+		&i.IDHash,
+		&i.TenantID,
+		&i.ClientID,
+		&i.AssetID,
+		&i.ViewerID,
+		&i.State,
+		&i.CreatedAt,
+		&i.LastHeartbeatAt,
+		&i.ExpiresAt,
+		&i.EndedAt,
+		&i.RevokedAt,
+		&i.RevokeReason,
+		&i.KeyWindowStart,
+		&i.KeyWindowCount,
+	)
+	return i, err
+}
+
+const revokePlaybackSessionsByFilter = `-- name: RevokePlaybackSessionsByFilter :execrows
+UPDATE playback_sessions SET state = 'revoked', revoked_at = $1::timestamptz,
+    revoke_reason = $2::text
+WHERE tenant_id = $3::uuid
+  AND state = 'active'
+  AND ($4::text IS NULL OR viewer_id = $4::text)
+  AND ($5::uuid IS NULL OR asset_id = $5::uuid)
+`
+
+type RevokePlaybackSessionsByFilterParams struct {
+	Now      time.Time
+	Reason   *string
+	TenantID pgtype.UUID
+	ViewerID *string
+	AssetID  pgtype.UUID
+}
+
+// Revokes every active session of the tenant that matches the viewer and/or the asset. The caller
+// guarantees at least one filter is set.
+func (q *Queries) RevokePlaybackSessionsByFilter(ctx context.Context, arg RevokePlaybackSessionsByFilterParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokePlaybackSessionsByFilter,
+		arg.Now,
+		arg.Reason,
+		arg.TenantID,
+		arg.ViewerID,
+		arg.AssetID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sweepPlaybackKeyFetches = `-- name: SweepPlaybackKeyFetches :execrows

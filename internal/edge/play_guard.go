@@ -79,7 +79,7 @@ func cleanPlayPath(r *http.Request) bool {
 func playRouteSession(path string) (id.SessionID, bool) {
 	parts := strings.Split(strings.TrimPrefix(path, playPrefix), "/")
 	switch {
-	case len(parts) == 2 && (parts[1] == "master.m3u8" || parts[1] == "key"):
+	case len(parts) == 2 && (parts[1] == "master.m3u8" || parts[1] == "key" || parts[1] == "heartbeat" || parts[1] == "end"):
 	case len(parts) == 3:
 		if _, err := keys.ParseRendition(parts[1]); err != nil {
 			return id.SessionID{}, false
@@ -101,7 +101,7 @@ func (p *Playback) preflight(w http.ResponseWriter, r *http.Request, sid id.Sess
 	h.Add("Vary", "Access-Control-Request-Method")
 	h.Add("Vary", "Access-Control-Request-Headers")
 	if p.corsForSession(w, r, sid) {
-		h.Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		h.Set("Access-Control-Allow-Headers", "Authorization")
 		h.Set("Access-Control-Max-Age", "600")
 	}
@@ -179,6 +179,17 @@ func playbackToken(r *http.Request) (tok string, fromQuery bool, err error) {
 //
 // Every token or session failure is the same 401. A segment request never reads the session row.
 func (p *Playback) authorize(w http.ResponseWriter, r *http.Request, rawSession string, need token.Scope, next func(*http.Request)) {
+	p.guard(w, r, rawSession, need, need.Has(token.ScopeManifest) || need.Has(token.ScopeKey), next)
+}
+
+// authorizeStateless is authorize without the session-row check: steps 1 to 4 only. The heartbeat
+// and the end route use it because they enforce the session's state themselves, in the single
+// atomic statement that changes it (see play_lifecycle.go).
+func (p *Playback) authorizeStateless(w http.ResponseWriter, r *http.Request, rawSession string, need token.Scope, next func(*http.Request)) {
+	p.guard(w, r, rawSession, need, false, next)
+}
+
+func (p *Playback) guard(w http.ResponseWriter, r *http.Request, rawSession string, need token.Scope, checkRow bool, next func(*http.Request)) {
 	h := w.Header()
 	h.Add("Vary", "Origin")
 	h.Set("Referrer-Policy", noReferrer)
@@ -229,7 +240,7 @@ func (p *Playback) authorize(w http.ResponseWriter, r *http.Request, rawSession 
 		return
 	}
 
-	if need.Has(token.ScopeManifest) || need.Has(token.ScopeKey) {
+	if checkRow {
 		row, err := p.store.GetPlaybackSession(r.Context(), tenant, db.SessionHash(sid))
 		if err != nil {
 			var e *errs.Error
