@@ -311,7 +311,8 @@ func TestProcessArgsCarryOnlyIDs(t *testing.T) {
 }
 
 func TestAdvisoryKeyIsStableAndSpread(t *testing.T) {
-	if advisoryKey("a") != advisoryKey("a") {
+	first, second := advisoryKey("a"), advisoryKey("a")
+	if first != second {
 		t.Fatal("the key is not deterministic")
 	}
 	seen := map[int64]bool{}
