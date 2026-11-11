@@ -54,7 +54,7 @@ func TestFromConfigRefusesLocalInProduction(t *testing.T) {
 }
 
 func TestFromConfigReservedProvidersFailFast(t *testing.T) {
-	for _, p := range []string{config.ProviderVault, config.ProviderAWSKMS, config.ProviderGCPKMS} {
+	for _, p := range []string{config.ProviderAWSKMS, config.ProviderGCPKMS} {
 		cfg := load(t, map[string]string{config.EnvKMSProvider: p})
 		_, err := registry.FromConfig(cfg, nil)
 		if err == nil || !strings.Contains(err.Error(), config.EnvKMSProvider) || !strings.Contains(err.Error(), p) {
