@@ -98,7 +98,12 @@ func TestRewrapWaitReportsProgress(t *testing.T) {
 	wctx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- w.Run(wctx) }()
-	t.Cleanup(func() { stop(); <-done })
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Log("worker stop:", err)
+		}
+	})
 
 	q, err := jobs.NewQueue(pool, jobs.NewRegistry(), jobs.Config{})
 	if err != nil {
@@ -150,7 +155,12 @@ func TestRewrapWaitFailsOnDeadLetter(t *testing.T) {
 	wctx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- w.Run(wctx) }()
-	t.Cleanup(func() { stop(); <-done })
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Log("worker stop:", err)
+		}
+	})
 
 	q, err := jobs.NewQueue(pool, jobs.NewRegistry(), jobs.Config{})
 	if err != nil {
