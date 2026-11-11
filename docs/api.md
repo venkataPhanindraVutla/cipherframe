@@ -309,10 +309,16 @@ server-side only.
 | `method_not_allowed` | 405 | no | The path exists but does not support this HTTP method. |
 | `conflict` | 409 | no | The request conflicts with the current state of the object. |
 | `payload_too_large` | 413 | no | The request body exceeds the allowed size. |
+| `asset_not_ready` | 409 | no | The operation needs a `ready` asset and this one is not (yet). |
+| `session_limit` | 409 | no | The viewer already has the tenant's maximum number of active playback sessions. |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |
 | `timeout` | 504 | yes | The operation did not finish in time. |
+
+Some `invalid_request` answers also carry an `errors` array with one `{"field", "message"}` entry per
+invalid field (for example `{"field": "allowed_origins[1]", "message": "must be an origin such as
+https://example.com"}`). Messages are fixed text and never quote what was submitted.
 
 Adding a code is compatible; renaming or removing one is breaking. The registry is published as an
 enum in the OpenAPI spec.

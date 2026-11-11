@@ -21,6 +21,12 @@ const (
 	InternalError         Code = "internal_error"
 	DependencyUnavailable Code = "dependency_unavailable"
 	Timeout               Code = "timeout"
+	// AssetNotReady is a 409 for an operation that needs a ready asset (for example starting a
+	// playback session) when the asset is not ready yet, or has failed.
+	AssetNotReady Code = "asset_not_ready"
+	// SessionLimit is a 409 for a viewer that already has the tenant's maximum number of active
+	// playback sessions (ADR 0028). Existing sessions are left alone.
+	SessionLimit Code = "session_limit"
 )
 
 // Info describes a registered code.
@@ -42,6 +48,8 @@ var registry = map[Code]Info{
 	InternalError:         {Status: 500, Title: "Internal error"},
 	DependencyUnavailable: {Status: 503, Title: "Dependency unavailable", Retryable: true},
 	Timeout:               {Status: 504, Title: "Timeout", Retryable: true},
+	AssetNotReady:         {Status: 409, Title: "Asset not ready"},
+	SessionLimit:          {Status: 409, Title: "Session limit reached"},
 }
 
 // Lookup returns the registry entry for c.

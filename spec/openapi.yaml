@@ -1087,6 +1087,7 @@ components:
           type: string
           description: Stable identifier to switch on. The closed registry in `internal/errs`.
           enum:
+            - asset_not_ready
             - conflict
             - dependency_unavailable
             - forbidden
@@ -1096,6 +1097,7 @@ components:
             - not_found
             - payload_too_large
             - rate_limited
+            - session_limit
             - timeout
             - unauthenticated
         retryable:
@@ -1103,3 +1105,20 @@ components:
         request_id:
           type: string
           pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        errors:
+          type: array
+          description: |
+            Present on some `invalid_request` responses: one entry per invalid field. Messages are
+            fixed text and never quote the submitted value.
+          items:
+            $ref: "#/components/schemas/FieldError"
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: The JSON name of the field, with an index for list items, for example `allowed_origins[2]`.
+        message:
+          type: string

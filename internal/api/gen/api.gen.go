@@ -65,6 +65,7 @@ func (e HealthResponseStatus) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
+	ProblemCodeAssetNotReady         ProblemCode = "asset_not_ready"
 	ProblemCodeConflict              ProblemCode = "conflict"
 	ProblemCodeDependencyUnavailable ProblemCode = "dependency_unavailable"
 	ProblemCodeForbidden             ProblemCode = "forbidden"
@@ -74,6 +75,7 @@ const (
 	ProblemCodeNotFound              ProblemCode = "not_found"
 	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
+	ProblemCodeSessionLimit          ProblemCode = "session_limit"
 	ProblemCodeTimeout               ProblemCode = "timeout"
 	ProblemCodeUnauthenticated       ProblemCode = "unauthenticated"
 )
@@ -81,6 +83,8 @@ const (
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
+	case ProblemCodeAssetNotReady:
+		return true
 	case ProblemCodeConflict:
 		return true
 	case ProblemCodeDependencyUnavailable:
@@ -98,6 +102,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodePayloadTooLarge:
 		return true
 	case ProblemCodeRateLimited:
+		return true
+	case ProblemCodeSessionLimit:
 		return true
 	case ProblemCodeTimeout:
 		return true
@@ -335,6 +341,13 @@ type CreatedAsset struct {
 	Upload UploadInstructions `json:"upload"`
 }
 
+// FieldError defines model for FieldError.
+type FieldError struct {
+	// Field The JSON name of the field, with an index for list items, for example `allowed_origins[2]`.
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status HealthResponseStatus `json:"status"`
@@ -349,12 +362,16 @@ type Name = string
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Problem struct {
 	// Code Stable identifier to switch on. The closed registry in `internal/errs`.
-	Code      ProblemCode `json:"code"`
-	Detail    string      `json:"detail"`
-	RequestId string      `json:"request_id"`
-	Retryable bool        `json:"retryable"`
-	Status    int         `json:"status"`
-	Title     string      `json:"title"`
+	Code   ProblemCode `json:"code"`
+	Detail string      `json:"detail"`
+
+	// Errors Present on some `invalid_request` responses: one entry per invalid field. Messages are
+	// fixed text and never quote the submitted value.
+	Errors    *[]FieldError `json:"errors,omitempty"`
+	RequestId string        `json:"request_id"`
+	Retryable bool          `json:"retryable"`
+	Status    int           `json:"status"`
+	Title     string        `json:"title"`
 
 	// Type `urn:cipherframe:error:<code>`.
 	Type string `json:"type"`
