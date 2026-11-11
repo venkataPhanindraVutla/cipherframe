@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -66,6 +67,23 @@ type KindConfig struct {
 	MaxAttempts int           // default DefaultMaxAttempts
 	Backoff     BackoffFunc   // default DefaultBackoff
 	Timeout     time.Duration // per-run limit; default 1 minute
+	// Queue is the River queue the kind runs on; empty means the default queue.
+	Queue string
+}
+
+// QueueMedia is the queue of CPU-heavy media work (asset.process). A worker process runs it with
+// its own, separate worker count (Config.Queues).
+const QueueMedia = "media"
+
+// queueNameRE and maxQueueName follow River's queue-name rules, which River does not export:
+// lowercase letters and numbers, optionally separated by single underscores or hyphens, at most
+// 64 characters.
+var queueNameRE = regexp.MustCompile(`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`)
+
+const maxQueueName = 64
+
+func validQueueName(name string) bool {
+	return len(name) <= maxQueueName && queueNameRE.MatchString(name)
 }
 
 // DefaultBackoff doubles from 15 seconds and stops growing at 30 minutes.
@@ -97,11 +115,13 @@ type Registry struct {
 	mu      sync.Mutex
 	workers *river.Workers
 	kinds   map[string]KindConfig
+	// declared holds the settings of kinds this process only inserts (see Declare).
+	declared map[string]KindConfig
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{workers: river.NewWorkers(), kinds: map[string]KindConfig{}}
+	return &Registry{workers: river.NewWorkers(), kinds: map[string]KindConfig{}, declared: map[string]KindConfig{}}
 }
 
 // Kinds returns the registered job kinds, sorted.
@@ -126,6 +146,9 @@ func (r *Registry) config(kind string) KindConfig {
 	if c, ok := r.kinds[kind]; ok {
 		return c
 	}
+	if c, ok := r.declared[kind]; ok {
+		return c
+	}
 	return KindConfig{}.withDefaults()
 }
 
@@ -138,6 +161,9 @@ func Register[A Args](r *Registry, handler Handler[A], cfg KindConfig) error {
 	}
 	if handler == nil {
 		return fmt.Errorf("jobs: handler for %q is nil", kind)
+	}
+	if cfg.Queue != "" && !validQueueName(cfg.Queue) {
+		return fmt.Errorf("jobs: kind %q: invalid queue name", kind)
 	}
 	cfg = cfg.withDefaults()
 	r.mu.Lock()
@@ -152,11 +178,35 @@ func Register[A Args](r *Registry, handler Handler[A], cfg KindConfig) error {
 	return nil
 }
 
+// Declare records the settings of kind A without a handler, for a process that only inserts jobs
+// of that kind. Enqueue reads the kind's queue from the registry, and an insert-only process (the
+// api role) has no handlers, so without this its jobs would land on the default queue instead of
+// the one the worker runs the kind on. Declaring a kind that is also registered is harmless:
+// the registered settings win. Only Queue and MaxAttempts matter here.
+func Declare[A Args](r *Registry, cfg KindConfig) error {
+	var zero A
+	kind := zero.Kind()
+	if kind == "" {
+		return errors.New("jobs: kind must not be empty")
+	}
+	if cfg.Queue != "" && !validQueueName(cfg.Queue) {
+		return fmt.Errorf("jobs: kind %q: invalid queue name", kind)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.declared[kind] = cfg.withDefaults()
+	return nil
+}
+
 // Config configures a Queue.
 type Config struct {
 	// Workers is the number of jobs worked at once. Zero builds an insert-only queue that can
 	// Enqueue, ListDead and RetryDead but cannot Start.
 	Workers int
+	// Queues names extra queues and the number of jobs worked at once on each, next to the default
+	// queue (which Workers sizes). Used only when Workers is positive; every count must be
+	// positive and the default queue's name is not allowed.
+	Queues map[string]int
 	// Logger receives River's own messages (never job arguments or error text from handlers).
 	// Nil discards them.
 	Logger *slog.Logger
@@ -181,6 +231,18 @@ func NewQueue(pool *pgxpool.Pool, reg *Registry, cfg Config) (*Queue, error) {
 	rc := &river.Config{Logger: logger}
 	if cfg.Workers > 0 {
 		rc.Queues = map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: cfg.Workers}}
+		for name, n := range cfg.Queues {
+			if name == river.QueueDefault {
+				return nil, errors.New("jobs: Queues must not name the default queue; use Workers")
+			}
+			if !validQueueName(name) {
+				return nil, errors.New("jobs: Queues has an invalid queue name")
+			}
+			if n <= 0 {
+				return nil, fmt.Errorf("jobs: queue %q needs a positive worker count", name)
+			}
+			rc.Queues[name] = river.QueueConfig{MaxWorkers: n}
+		}
 		rc.Workers = reg.workers
 	}
 	client, err := river.NewClient(riverpgxv5.New(pool), rc)
@@ -231,7 +293,8 @@ func (q *Queue) Enqueue(ctx context.Context, tx pgx.Tx, args Args, opts *Enqueue
 	if tx == nil || args == nil {
 		return 0, errs.New(errs.InvalidRequest, "a transaction and job arguments are required")
 	}
-	io := &river.InsertOpts{MaxAttempts: q.registry.config(args.Kind()).MaxAttempts}
+	kc := q.registry.config(args.Kind())
+	io := &river.InsertOpts{MaxAttempts: kc.MaxAttempts, Queue: kc.Queue}
 	if opts != nil {
 		if opts.MaxAttempts > 0 {
 			io.MaxAttempts = opts.MaxAttempts
