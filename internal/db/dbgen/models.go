@@ -157,6 +157,7 @@ type PlaybackSetting struct {
 	AllowedOrigins           []string
 	TokenInUrl               bool
 	UpdatedAt                time.Time
+	Delivery                 string
 }
 
 type Tenant struct {

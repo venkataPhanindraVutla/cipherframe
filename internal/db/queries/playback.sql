@@ -5,13 +5,14 @@ SELECT * FROM playback_settings WHERE tenant_id = $1;
 INSERT INTO playback_settings (
     tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds,
     session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute,
-    allowed_origins, token_in_url, updated_at
+    allowed_origins, token_in_url, delivery, updated_at
 ) VALUES (
     sqlc.arg(tenant_id)::uuid, sqlc.arg(token_ttl_seconds)::integer,
     sqlc.arg(heartbeat_interval_seconds)::integer, sqlc.arg(idle_timeout_seconds)::integer,
     sqlc.arg(session_max_seconds)::integer, sqlc.arg(max_sessions_per_viewer)::integer,
     sqlc.arg(key_fetches_per_token)::integer, sqlc.arg(key_requests_per_minute)::integer,
-    sqlc.arg(allowed_origins)::text[], sqlc.arg(token_in_url)::boolean, sqlc.arg(at)::timestamptz
+    sqlc.arg(allowed_origins)::text[], sqlc.arg(token_in_url)::boolean, sqlc.arg(delivery)::text,
+    sqlc.arg(at)::timestamptz
 )
 ON CONFLICT (tenant_id) DO UPDATE SET
     token_ttl_seconds          = EXCLUDED.token_ttl_seconds,
@@ -23,6 +24,7 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     key_requests_per_minute    = EXCLUDED.key_requests_per_minute,
     allowed_origins            = EXCLUDED.allowed_origins,
     token_in_url               = EXCLUDED.token_in_url,
+    delivery                   = EXCLUDED.delivery,
     updated_at                 = EXCLUDED.updated_at
 RETURNING *;
 

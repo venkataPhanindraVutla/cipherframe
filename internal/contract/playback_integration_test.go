@@ -115,10 +115,10 @@ func TestPlaybackOperationsMatchSpec(t *testing.T) {
 		"token_ttl_seconds": 900, "heartbeat_interval_seconds": 30, "idle_timeout_seconds": 120,
 		"session_max_seconds": 7200, "max_sessions_per_viewer": 0, "key_fetches_per_token": 10,
 		"key_requests_per_minute": 15, "allowed_origins": []string{"https://app.example.com", "http://localhost:3000"},
-		"token_in_url": true,
+		"token_in_url": true, "delivery": "presigned",
 	}
 	put := call(admin, "PUT", "/v1/playback-settings", full, 200)
-	if _, has := put["updated_at"]; !has || put["token_in_url"] != true {
+	if _, has := put["updated_at"]; !has || put["token_in_url"] != true || put["delivery"] != "presigned" {
 		t.Fatalf("replaced settings = %v", put)
 	}
 	call(admin, "GET", "/v1/playback-settings", nil, 200)

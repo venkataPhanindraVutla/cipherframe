@@ -16,7 +16,7 @@ func fullSettings() map[string]any {
 		"token_ttl_seconds": 900, "heartbeat_interval_seconds": 30, "idle_timeout_seconds": 120,
 		"session_max_seconds": 7200, "max_sessions_per_viewer": 5, "key_fetches_per_token": 10,
 		"key_requests_per_minute": 15, "allowed_origins": []any{"https://app.example.com", "http://localhost:3000"},
-		"token_in_url": false,
+		"token_in_url": false, "delivery": "proxy",
 	}
 }
 
@@ -38,7 +38,7 @@ func TestPlaybackSettingsDefaults(t *testing.T) {
 	want := map[string]any{
 		"token_ttl_seconds": 600.0, "heartbeat_interval_seconds": 60.0, "idle_timeout_seconds": 300.0,
 		"session_max_seconds": 14400.0, "max_sessions_per_viewer": 3.0, "key_fetches_per_token": 20.0,
-		"key_requests_per_minute": 30.0, "allowed_origins": []any{}, "token_in_url": false,
+		"key_requests_per_minute": 30.0, "allowed_origins": []any{}, "token_in_url": false, "delivery": "proxy",
 	}
 	if !reflect.DeepEqual(r.m, want) {
 		t.Fatalf("defaults = %s", r.raw)
@@ -71,15 +71,15 @@ func TestPlaybackSettingsRoundTrip(t *testing.T) {
 	// A second PUT replaces everything, including emptying the origin list and switching a flag
 	// and the limit to their zero values.
 	again := fullSettings()
-	again["allowed_origins"], again["max_sessions_per_viewer"], again["token_in_url"] = []any{}, 0, true
+	again["allowed_origins"], again["max_sessions_per_viewer"], again["token_in_url"], again["delivery"] = []any{}, 0, true, "presigned"
 	r := h.mustOK(h.do(key, "PUT", "/v1/playback-settings", again), 200)
-	if !reflect.DeepEqual(r.m["allowed_origins"], []any{}) || r.m["max_sessions_per_viewer"] != 0.0 || r.m["token_in_url"] != true {
+	if !reflect.DeepEqual(r.m["allowed_origins"], []any{}) || r.m["max_sessions_per_viewer"] != 0.0 || r.m["token_in_url"] != true || r.m["delivery"] != "presigned" {
 		t.Fatalf("second PUT = %s", r.raw)
 	}
 
 	// Settings belong to the tenant.
 	other := h.mustOK(h.do(otherKey, "GET", "/v1/playback-settings", nil), 200)
-	if other.m["max_sessions_per_viewer"] != 3.0 || other.m["token_in_url"] != false {
+	if other.m["max_sessions_per_viewer"] != 3.0 || other.m["token_in_url"] != false || other.m["delivery"] != "proxy" {
 		t.Fatalf("another tenant's settings = %s", other.raw)
 	}
 	if _, ok := other.m["updated_at"]; ok {
@@ -148,6 +148,7 @@ func TestPlaybackSettingsValidation(t *testing.T) {
 		"key rpm high":       {with("key_requests_per_minute", 601), []string{"key_requests_per_minute"}},
 		"huge number":        {with("session_max_seconds", 1<<40), []string{"session_max_seconds"}},
 		"wildcard origin":    {with("allowed_origins", []any{"https://ok.example.com", "https://*.example.com"}), []string{"allowed_origins[1]"}},
+		"unknown delivery":   {with("delivery", "cdn"), []string{"delivery"}},
 		"http origin":        {with("allowed_origins", []any{"http://example.com"}), []string{"allowed_origins[0]"}},
 		"origin with path":   {with("allowed_origins", []any{"https://example.com/app"}), []string{"allowed_origins[0]"}},
 		"origin with slash":  {with("allowed_origins", []any{"https://example.com/"}), []string{"allowed_origins[0]"}},
@@ -205,12 +206,12 @@ func TestPlaybackSettingsValidation(t *testing.T) {
 	h.mustOK(h.do(key, "PUT", "/v1/playback-settings", map[string]any{
 		"token_ttl_seconds": 60, "heartbeat_interval_seconds": 10, "idle_timeout_seconds": 30,
 		"session_max_seconds": 300, "max_sessions_per_viewer": 0, "key_fetches_per_token": 1,
-		"key_requests_per_minute": 1, "allowed_origins": []any{}, "token_in_url": true,
+		"key_requests_per_minute": 1, "allowed_origins": []any{}, "token_in_url": true, "delivery": "presigned",
 	}), 200)
 	h.mustOK(h.do(key, "PUT", "/v1/playback-settings", map[string]any{
 		"token_ttl_seconds": 3600, "heartbeat_interval_seconds": 600, "idle_timeout_seconds": 3600,
 		"session_max_seconds": 86400, "max_sessions_per_viewer": 100, "key_fetches_per_token": 1000,
-		"key_requests_per_minute": 600, "allowed_origins": []any{"https://a.example.com:8443"}, "token_in_url": false,
+		"key_requests_per_minute": 600, "allowed_origins": []any{"https://a.example.com:8443"}, "token_in_url": false, "delivery": "proxy",
 	}), 200)
 }
 
@@ -220,16 +221,16 @@ func TestPlaybackSettingsMissingFields(t *testing.T) {
 
 	r := h.do(key, "PUT", "/v1/playback-settings", `{}`)
 	h.wantStatus(r, 400, "invalid_request")
-	if len(fieldErrors(r)) != 9 {
+	if len(fieldErrors(r)) != 10 {
 		t.Fatalf("empty body: field errors = %v", fieldErrors(r))
 	}
 	// A zero value is not a missing field; null and absent are.
 	s := fullSettings()
 	delete(s, "max_sessions_per_viewer")
-	s["token_in_url"], s["allowed_origins"] = nil, nil
+	s["token_in_url"], s["allowed_origins"], s["delivery"] = nil, nil, nil
 	r = h.do(key, "PUT", "/v1/playback-settings", s)
 	h.wantStatus(r, 400, "invalid_request")
-	if got, want := fieldErrors(r), []string{"max_sessions_per_viewer", "allowed_origins", "token_in_url"}; !reflect.DeepEqual(got, want) {
+	if got, want := fieldErrors(r), []string{"max_sessions_per_viewer", "allowed_origins", "token_in_url", "delivery"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("field errors = %v, want %v", got, want)
 	}
 	h.wantStatus(h.do(key, "PUT", "/v1/playback-settings", `not json`), 400, "invalid_request")
