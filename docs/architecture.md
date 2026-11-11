@@ -293,7 +293,8 @@ already uses every core) and 10 default-queue jobs; the api role inserts into `m
    average; a final segment shorter than half the target is left out of the peak), `AVERAGE-BANDWIDTH`,
    `RESOLUTION`, `CODECS` (read from the avcC and esds boxes of each init segment) and `FRAME-RATE`,
    lowest bandwidth first. `cipherframe-key` is a placeholder: stored playlists never contain a
-   token, a session or a key URL; the edge rewrites the key URI per playback session (M4).
+   token, a session or a key URL; the edge rewrites the key URI per playback session (see
+   [Playback delivery on edge](#playback-delivery-on-edge)).
 9. **Register and finish.** Every object written to the delivery bucket is recorded in
    `asset_artifacts` (asset, kind `master|playlist|init|segment|poster`, bucket role, object key,
    size, SHA-256 of the stored bytes: invariant I6, the start of the derived-artifact registry for
@@ -356,6 +357,37 @@ job runs (it was deleted), the job removes what it uploaded and ends.
 - The source file in the source bucket is not encrypted by this pipeline; it stays until deletion.
 - Segment hashes in `asset_artifacts` prove what was stored at upload time; they are not signed.
 - A source file is hostile input to a C media decoder. See the media toolkit section above.
+
+## Playback delivery on edge
+
+The edge role serves a playback session's playlists and segments (ADR 0027, 0028, 0030; the key
+endpoint is a later task). The routes and their rules are in
+[api.md](api.md#playlists-and-segments-on-edge-adr-0027-0030); this section is how they fit together.
+
+```
+player -- GET master.m3u8 / media.m3u8 -->  guard --> storage.Get(playlist) --> hls.Rewrite* --> player
+player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> io.Copy       --> player
+```
+
+- **Guard** (`internal/edge/play_guard.go`): path allowlist, token from the header (or `t` when the
+  tenant allows it), `Keyring.Open` (MAC, expiry, scope), the token's session equal to the path's,
+  then the tenant's settings for `token_in_url` and CORS. Playlists add the stateful session check.
+- **The token carries the tenant.** Claims hold session, asset and tenant, so a segment's object key
+  (`t/<tenant>/a/<asset>/hls/<rendition>/seg-N.m4s`, built by `internal/storage/keys`) comes from the
+  authenticated claims alone and a segment request needs no database round trip. The alternative
+  (a lookup of asset, then tenant) would put a query on the hottest path.
+- **Settings and the session's tenant are cached in process** (`play_cache.go`): 30 seconds, bounded
+  (1024 tenants, 4096 sessions), only successful lookups stored (plus "no such session"). The
+  steady-state cost of a segment is zero queries. A CORS preflight has no token, so it finds the tenant
+  from the session in the path through the second cache; the session-to-tenant mapping never changes.
+- **Rewriting** (`internal/hls/rewrite.go`) is a strict line rewriter, not a general parser: it accepts
+  exactly what the pipeline writes and refuses the rest. Stored playlists never change, and everything
+  session-specific (the key URI, the optional token) is added on the way out.
+- **Segments are streamed**: `storage.Get` returns a reader and the response is an `io.Copy` of it
+  with `Content-Length` from the object's size, so memory use does not depend on segment size, and a
+  client that hangs up stops the read and closes the object.
+- **Failure mapping** follows the storage port: a missing object is `404`, an outage `503`, a timeout
+  `504`, refused credentials `500` (invariant I11: an outage is never reported as "not found").
 
 ## Keys
 
