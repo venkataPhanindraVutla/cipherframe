@@ -69,9 +69,13 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `GET /v1/assets`, `GET /v1/assets/{asset_id}` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort` | yes | no | `assets:write` |
 | `POST /v1/playback-sessions` | yes | no | `sessions:write` |
+| `GET /v1/playback-sessions/{session_id}` | yes | no | `sessions:write` |
+| `POST /v1/playback-sessions/{session_id}/revoke`, `POST /v1/playback-sessions/revoke` | yes | no | `sessions:write` |
 | `GET /v1/playback-settings`, `PUT /v1/playback-settings` | yes | no | `admin` |
 | `GET /v1/play/{session_id}/master.m3u8`, `GET /v1/play/{session_id}/{rendition}/media.m3u8` | no | yes | playback token (`manifest`) |
 | `GET /v1/play/{session_id}/{rendition}/{file}` | no | yes | playback token (`segment`) |
+| `GET /v1/play/{session_id}/key` | no | yes | playback token (`key`) |
+| `POST /v1/play/{session_id}/heartbeat`, `POST /v1/play/{session_id}/end` | no | yes | playback token (`manifest`) |
 | `PUT /v1/uploads/multipart/{asset_id}/parts/{part_number}` | no | yes | upload token |
 | `GET /v1/uploads/multipart/{asset_id}/parts` | no | yes | upload token |
 | tus: `POST /v1/uploads/tus/`, `HEAD` and `PATCH /v1/uploads/tus/{asset_id}` | no | yes (tusd mount) | upload token |
@@ -266,8 +270,8 @@ CORS: the multipart endpoints answer any origin without credentials, because the
 ## Playback sessions and settings (ADR 0028, 0030)
 
 Endpoint names and shapes are flagged for owner review before v1.0.0. This section covers the
-control plane and the edge playlist, segment and key routes (below). Heartbeat and revoke arrive with
-later M4 tasks.
+control plane, the edge playlist, segment and key routes, and the session lifecycle: heartbeat, end
+and revoke (below).
 
 **Start a session.** `POST /v1/playback-sessions` (scope `sessions:write`) with
 `{"asset_id": "ast_…", "viewer_id": "u-8f3a…"}`. The asset must belong to your tenant and be `ready`.
@@ -310,7 +314,8 @@ log or sent to the browser.
 sessions. A fourth is `409 session_limit` and the existing sessions are left alone (they are not
 revoked to make room). A session counts as active until it is revoked or ended, until it has had no
 heartbeat for the idle timeout, or until it reaches its maximum age; idle and expired ones are marked
-`ended` the next time that viewer starts a session. The check and the insert run under a lock on the
+`ended` the next time that viewer starts a session, and by a background sweep (see "Cleanup" below).
+A player that ends its session on close (below) frees its slot at once. The check and the insert run under a lock on the
 (tenant, viewer) pair, so parallel requests cannot exceed the limit. `max_sessions_per_viewer` `0`
 means unlimited.
 
@@ -318,7 +323,8 @@ means unlimited.
 SHA-256 of the session ID, and neither appears in a log line or an error. The token is shown only in
 this response (the manifest URL carries it only when the tenant turned `token_in_url` on). Anyone who
 holds a token can play until it expires: tokens are not bound to an address or a device, and revoking
-a session stops key fetches only (AES-128 HLS is not DRM, ADR 0028).
+a session stops playlists, key fetches and heartbeats at once but not the segments already covered by a
+token (AES-128 HLS is not DRM, ADR 0028).
 
 **Settings.** `GET /v1/playback-settings` (scope `admin`) returns the tenant's effective settings;
 `PUT /v1/playback-settings` replaces all of them (send every field). A tenant that never set any uses
@@ -400,7 +406,7 @@ it reaches the object store. A rendition or segment that does not exist is `404`
 sets `Access-Control-Allow-Origin` to that origin. Every playback response carries `Vary: Origin`. Any
 other origin, and a request without an `Origin`, gets no CORS headers and the usual response, so the
 browser blocks the read. The preflight `OPTIONS` on the playback routes needs no token and is always
-`204`; for an allowed origin it adds `Access-Control-Allow-Methods: GET, OPTIONS`,
+`204`; for an allowed origin it adds `Access-Control-Allow-Methods: GET, POST, OPTIONS`,
 `Access-Control-Allow-Headers: Authorization` and `Access-Control-Max-Age: 600`. Credentials are never
 allowed. A `401` carries the CORS headers too, so a player can read it and refresh its token.
 
@@ -461,11 +467,105 @@ key. The edge role deletes the rows of tokens that expired more than five minute
 minutes (and once at start-up), so the table stays about as large as the tokens of the last
 `token_ttl_seconds` plus a few minutes.
 
+### Heartbeat and end: the player contract (ADR 0028)
+
+A session is kept alive by the player, which calls edge on a timer.
+
+**Heartbeat.** Every `heartbeat_interval_seconds` (60 by default; it is in the session response and in
+every heartbeat response) send `POST /v1/play/{session_id}/heartbeat` with the current token, an empty
+body and the same `Authorization: Bearer` header (or `?t=` where the tenant allows it) as for the
+playlists. The answer is `200`, `Cache-Control: no-store`:
+
+```json
+{
+  "token": "v1.…",
+  "token_expires_at": "2026-11-12T10:20:00Z",
+  "heartbeat_interval_seconds": 60,
+  "session_expires_at": "2026-11-12T14:00:00Z"
+}
+```
+
+**Swap in the new token for every later request**: playlists, key and segments alike. It carries all
+three scopes and expires one token lifetime from now, never later than `session_expires_at`. Keep the
+timer going until the player closes: the session ends 5 minutes (the idle timeout) after the last
+accepted heartbeat, and at `session_expires_at` whatever the player does (then start a new session
+through your backend). A player should also heartbeat when it resumes after a pause or a hidden tab,
+and again as soon as it sees a `401` it did not expect.
+
+| Status | When | What the player does |
+|---|---|---|
+| `200` | Heartbeat recorded. | Use the new token. |
+| `401` | Bad token, or the session is revoked, ended, expired or idle. One generic answer, so the status does not say which. | Stop playing and ask your backend for a new session. |
+| `429` `rate_limited` | The previous heartbeat was less than `max(heartbeat_interval / 4, 5 s)` ago. | Wait `Retry-After` seconds; nothing was recorded and the old token is still the current one. |
+
+The edge records the heartbeat and checks the session in one atomic database statement: the idle
+check uses the **previous** heartbeat time, so a session that has already been idle for 5 minutes
+cannot be revived by a late heartbeat. The `429` floor stops a script from minting tokens in a tight
+loop: it gets one token per gap, however many requests it sends. Edge signs these tokens with the
+HMAC key it already holds to verify them (ADR 0028), so heartbeats add no new secret to the edge role.
+
+The token a heartbeat replaces **keeps working until its own expiry** (tokens are stateless). Only a
+revoke or the end of the session stops the session itself. Drop the old token anyway: it adds nothing.
+
+**End.** When the viewer closes the player or the page unloads, send `POST /v1/play/{session_id}/end`
+with the token and an empty body (use `fetch(url, {method: "POST", keepalive: true, headers})`, since
+`navigator.sendBeacon` cannot set the `Authorization` header). The answer is `204`. The session becomes
+`ended` and stops counting against the viewer's concurrency limit, so closing a tab does not use up a
+slot for the idle timeout. It is idempotent, and it needs only a valid token for the session: ending a
+session that is already ended, idle, expired or revoked is a `204` too, and a revoked session stays
+revoked. A bad token is the generic `401`.
+
+Both routes follow the CORS rules above (the preflight allows `POST`) and, like the key endpoint, never
+log the token or the session ID.
+
+### Revoking and inspecting sessions
+
+All three operations need the `sessions:write` scope. The session ID arrives in the path in the clear;
+the server looks it up by its SHA-256, within your tenant, and never logs it or repeats it in an error.
+A session of another tenant, an unknown one and a malformed ID are the same `404 not_found`.
+
+- `GET /v1/playback-sessions/{session_id}` returns
+  `{session_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, session_expires_at, ended_at,
+  revoked_at, revoke_reason}`; the last three are present only when set. Never a token. `state` is
+  `active`, `ended` or `revoked`. A session that is still `active` in storage but idle past the idle
+  timeout, or past its maximum age, is reported as `ended` (with no `ended_at` until the sweep records
+  it), because it can no longer be used.
+- `POST /v1/playback-sessions/{session_id}/revoke` with an optional body `{"reason": "…"}` (at most 200
+  printable characters). The reason is stored with the session and returned by the status call:
+  **do not put personal data in it**. It returns the status object. The call is idempotent:
+  revoking a revoked session is a `200` that keeps the first reason and time. Revoking a session that has
+  already **ended** is also a `200` and leaves it `ended`: the record keeps how the session really
+  finished, and an ended session cannot be used anyway.
+- `POST /v1/playback-sessions/revoke` with `{"viewer_id": "…"}`, `{"asset_id": "ast_…"}` or both (both
+  must match), and an optional `reason`, revokes every `active` session of **your tenant** that matches
+  and returns `{"revoked": <count>}`. At least one filter is required: an empty body is `400`, so there
+  is no tenant-wide revoke by accident. Sessions of other tenants are never touched; an asset that is
+  not yours matches nothing. A session that is idle but not yet swept counts, because its stored state
+  is still `active`.
+
+A revoke that changes a session, and a bulk revoke that revokes at least one, write an audit event
+(`playback_session.revoke`, `playback_sessions.revoke`) with the calling key and the request ID. The
+single event names the session by a one-way label (the first 8 bytes of its SHA-256 in hex), never the
+ID; the bulk event's target holds the filters and the count. A repeated revoke that finds nothing to do
+writes nothing.
+
+**What revocation stops, and when.** Revocation is read from the session row, never cached, so it takes
+effect **at once** for playlists, the key endpoint and heartbeats: the next request gets `401`, although
+its token still verifies. It does **not** stop segments: a token already issued keeps fetching
+segments until it expires (10 minutes by default, and a heartbeat before the revoke may have made it
+newer). The segments are unreadable without the key, but a viewer who already fetched the key can
+decrypt what they download until then. If that window matters, lower `token_ttl_seconds`.
+
+**Cleanup.** The edge role also marks sessions `ended` when they are idle past their tenant's idle
+timeout or past their maximum age, in batches of 1000 (up to 20 batches per run), every ten minutes
+and at start-up. This only keeps the stored state honest (every check recomputes the same rule from
+the row's times, so nothing waits for the sweep).
+
 ### What the playback endpoints do not protect against
 
 - A token holder can fetch the playlists and segments of that one session until the token expires.
   Segments already downloaded stay decryptable by anyone who also fetched the key.
-- Revoking a session stops new playlists and key fetches at once but not segments: a revoked
+- Revoking a session stops new playlists, key fetches and heartbeats at once but not segments: a revoked
   session's token still fetches segments until it expires (see above). A viewer who fetched the key
   before the revocation can still decrypt the segments they hold; AES-128 HLS is not DRM (I8).
 - The key bounds limit how fast and how often a token can fetch the key. They do not stop an
@@ -479,8 +579,9 @@ minutes (and once at start-up), so the table stays about as large as the tokens 
   do not control can hold it, until it expires.
 - The concurrency limit counts sessions per `viewer_id`. A caller that gives each of one person's
   tabs a different `viewer_id` defeats it, so derive the ID from your own user, not per page.
-- The limit is not a licensing control: it is checked when a session starts, and heartbeats (later)
-  keep sessions alive.
+- The limit is not a licensing control: it is checked when a session starts, and heartbeats keep
+  sessions alive. A viewer who shares a token still plays only until it expires, but with a heartbeat
+  loop can play for the whole session; revoke a session you suspect.
 - Anything that can call `POST /v1/playback-sessions` with a `sessions:write` key can start sessions
   for any `viewer_id` of its tenant, up to the limit, for any ready asset of the tenant.
 
