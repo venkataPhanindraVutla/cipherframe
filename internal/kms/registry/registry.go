@@ -52,3 +52,7 @@ var factories = map[string]factory{
 }
 
 func register(name string, f factory) { factories[name] = f }
+
+// register is called from provider files that a build tag can exclude; keep the symbol referenced
+// so a build without any of them still compiles cleanly.
+var _ = register
