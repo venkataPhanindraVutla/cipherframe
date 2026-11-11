@@ -68,3 +68,17 @@ segments.
 - Encrypting in-process means the worker, not FFmpeg, touches the content key, and segments are
   buffered per segment (6 s is small); this is the same constraint the plan's integrity hashing needs.
 - HEVC/AV1 output, hardware encoders and other codecs remain M10 decisions (P17, P18).
+
+## Update (M3-3 to M3-8, implementation)
+
+- The HLS muxer writes plaintext fMP4 segments, so they **do touch disk**, in the worker's private
+  per-job work directory (`CIPHERFRAME_WORK_DIR`, mode 0700). Each is deleted as soon as the pipeline
+  has read it for encryption, and the job directory is removed when the job ends. The content key
+  never touches disk or storage. This replaces the statement above that plaintext segments never touch
+  disk.
+- The shipped FFmpeg also enables the `split` filter (one decode, one scaled branch per rendition in a
+  single process).
+- The encryption is AES-128-CBC with PKCS#7 padding and a random explicit IV per segment; init segments
+  are left unencrypted (docs/encryption.md).
+- Measured on the pipeline fixture (20 s, 1280x720, 30 fps testsrc2): the 720p rung scores SSIM 0.994
+  and PSNR 43 dB against the source at 2.7 Mbit/s. The CRF and caps are unchanged.

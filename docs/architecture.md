@@ -232,6 +232,8 @@ hostile file name can be neither an option nor a URL.
   absurd or zero dimensions, and sources over the duration or resolution limits. Errors are
   `invalid_request` with a fixed detail that names the problem and the limit, never a path.
   Resolution limits apply in either orientation to both the stored frame and the display size.
+- **`Tools.Transcode`** runs the one FFmpeg process of the processing pipeline (below) and parses
+  its `-progress` output.
 - **`Ladder(Info)`** picks the renditions: 1080, 720, 480, 360 and 240 by display height, a rung only
   if the source is at least that tall (nothing is upscaled), at least one rung always (a shorter
   source keeps its own height rounded down to even), widths from the display aspect ratio rounded to
@@ -251,6 +253,106 @@ The worker image (`build/worker.Dockerfile`) is separate from the api and edge i
 - Probe results describe what a file claims. Validation bounds the claims; it cannot bound the work
   a decoder does on a crafted stream, which is why a transcode timeout exists.
 
+## Processing pipeline
+
+`asset.process` (package `internal/pipeline`, registered in the worker role only) takes a `committed`
+asset to `ready` (ADR 0024). Job arguments are the tenant and asset IDs and nothing else.
+
+1. **Claim.** Compare-and-set `committed -> processing`. A retried job finds the asset already
+   `processing` and carries on; an asset that is `ready`, `failed` or `deleted` needs no work and the
+   job ends successfully.
+2. **Start clean.** Every HLS object under `t/<tenant>/a/<asset>/hls/` in the delivery bucket and every
+   HLS row in `asset_artifacts` left by an earlier attempt is removed (the prefix comes from
+   `storage/keys`, so objects an attempt uploaded but never registered go too). The content key is
+   kept. This is what makes the job idempotent.
+3. **Download and hash in one pass.** The source is streamed from the source bucket into the job's
+   private directory under `CIPHERFRAME_WORK_DIR` (mode 0700, removed when the job ends, whatever the
+   outcome) through an `io.TeeReader` into SHA-256: bounded memory, no second read. `source_sha256`
+   and `source_size_bytes` are stored on the asset. A size that differs from the declared
+   `size_bytes` fails the asset (`source_mismatch`); a body that ends early is a retryable error.
+4. **Probe, validate, ladder** (media toolkit above). A file that is not an acceptable video fails
+   the asset with `invalid_media`.
+5. **Content key.** Created once, here, before any rendition work, in a transaction that holds the
+   asset row lock; a retry finds and reuses it. It is never created lazily inside per-rendition work.
+6. **Transcode.** One FFmpeg process decodes the source once, splits the frames into one scaled
+   branch per rendition and encodes them all (below). A decoder failure fails the asset
+   (`transcode_failed`), exceeding `CIPHERFRAME_TRANSCODE_TIMEOUT` fails it too (`transcode_timeout`).
+   Progress (`out_time_us`) is throttled into the asset's `progress` column (0 to 90 while encoding,
+   99 after the upload, 100 when ready; a hint for clients).
+7. **Encrypt and upload.** For each rendition, each media segment is read, encrypted in memory with
+   AES-128-CBC under a fresh random IV (package `internal/hls`, [encryption.md](encryption.md)),
+   hashed as stored, and uploaded; the plaintext file is deleted as soon as it is read and the
+   plaintext buffer cleared. The init segment is uploaded as FFmpeg wrote it.
+8. **Playlists.** Go writes the canonical playlists, never FFmpeg's: per rendition a VOD media
+   playlist (`EXT-X-MAP`, then for every segment an `EXT-X-KEY:METHOD=AES-128,URI="cipherframe-key",IV=0x...`
+   and `EXTINF`), and a master playlist with `BANDWIDTH` (peak segment bitrate, never below the
+   average; a final segment shorter than half the target is left out of the peak), `AVERAGE-BANDWIDTH`,
+   `RESOLUTION`, `CODECS` (read from the avcC and esds boxes of each init segment) and `FRAME-RATE`,
+   lowest bandwidth first. `cipherframe-key` is a placeholder: stored playlists never contain a
+   token, a session or a key URL; the edge rewrites the key URI per playback session (M4).
+9. **Register and finish.** Every object written to the delivery bucket is recorded in
+   `asset_artifacts` (asset, kind `master|playlist|init|segment|poster`, bucket role, object key,
+   size, SHA-256 of the stored bytes: invariant I6, the start of the derived-artifact registry for
+   M6-1) and the asset moves `processing -> ready` with its duration and a JSON summary of the
+   renditions, in one transaction.
+
+Object keys are `hls/master.m3u8` and, per rendition, `hls/<name>/playlist.m3u8`, `init.mp4` and
+`seg-<n>.m4s` (n from 0), under `t/<tenant>/a/<asset>/`.
+
+**The FFmpeg invocation** (one process, argument array, empty environment, `file:` paths, protocols
+limited to `file,pipe`; `TranscodeArgs` in `internal/media/transcode.go`):
+
+```
+ffmpeg -hide_banner -nostdin -v error -nostats -progress pipe:1 -protocol_whitelist file,pipe -y
+  -i file:SRC
+  -filter_complex "[0:V]fps=R,split=N[s0]..[sN-1];[s0]scale=W0:H0:flags=bicubic,setsar=1,format=yuv420p[v0];..."
+  # per rendition i:
+  -map [vi] [-map 0:A]
+  -c:v libx264 -profile:v high -preset medium -crf 23 -maxrate Mk -bufsize 2Mk
+  -g G -keyint_min G -sc_threshold 0 -x264-params open-gop=0 -forced-idr 1
+  -force_key_frames expr:gte(t,n_forced*2) -fps_mode cfr
+  -c:a aac -b:a 96k -ac 2 -ar 48000
+  -f hls -hls_time 6 -hls_playlist_type vod -hls_segment_type fmp4 -hls_flags independent_segments
+  -hls_list_size 0 -start_number 1 -hls_fmp4_init_filename init.mp4
+  -hls_segment_filename file:OUT/<name>/seg_%d.m4s  file:OUT/<name>/playlist.m3u8
+```
+
+`R` is the source frame rate capped at 60 (NTSC rates stay exact rationals), so every rendition has the
+same constant frame rate; `G` is two seconds of frames. Rotation needs no argument: FFmpeg applies the
+display matrix when it decodes, and every rendition is scaled to square pixels at the rotated size.
+
+**Keyframe alignment (pitfall 4).** All renditions see the same frames at the same constant frame
+rate. Each encoder is forced to a keyframe on the first frame at or after every multiple of two seconds
+(`-force_key_frames`), cannot add scene-cut keyframes (`-sc_threshold 0`, `-keyint_min` equal to
+`-g`), and writes IDR frames with closed GOPs. The HLS muxer cuts a segment at the first keyframe after
+six seconds, which is the same frame in every rendition, so segment *n* starts at the same timestamp
+everywhere. After the run Go checks that every rendition has the same number of segments of the same
+durations (`CheckAligned`); the integration test additionally decrypts each segment and reads its
+start timestamp with FFprobe.
+
+**Failure handling.** A file that cannot be processed fails the asset with a stable code in
+`failure_code` (`invalid_media`, `transcode_failed`, `transcode_timeout`, `source_mismatch`,
+`source_missing`) and the job is cancelled (not retried); partial output is removed. A storage,
+database or key-provider outage is retried with the job's backoff; if the last attempt also fails the
+asset becomes `failed` with `processing_failed`. Shutdown or the job's own deadline interrupts the job
+without failing the asset; the next attempt starts clean. If the asset leaves `processing` while the
+job runs (it was deleted), the job removes what it uploaded and ends.
+
+### What the processing pipeline does not protect against
+
+- **Plaintext exists on the worker's disk while a job runs.** FFmpeg's HLS muxer writes unencrypted
+  segments (and the downloaded source) into the job directory; they are deleted when the job ends and
+  each segment is deleted as soon as it has been encrypted, but a crash that kills the worker process
+  (`SIGKILL`, out of memory, a lost node) can leave a `job-*` directory behind. Use a dedicated,
+  private (ideally encrypted or ephemeral) volume for `CIPHERFRAME_WORK_DIR` and clean it on start.
+  This refines ADR 0024, which said plaintext segments never touch disk.
+- The content key is in worker memory while a job runs (as on every key read) and is cleared after
+  use on a best-effort basis; a memory dump of the worker can expose it.
+- The init segment is stored unencrypted (see [encryption.md](encryption.md)).
+- The source file in the source bucket is not encrypted by this pipeline; it stays until deletion.
+- Segment hashes in `asset_artifacts` prove what was stored at upload time; they are not signed.
+- A source file is hostile input to a C media decoder. See the media toolkit section above.
+
 ## Keys
 
 Each asset has one active content key (I7), wrapped by a key-encryption key held in a key management
@@ -263,7 +365,8 @@ provider (AWS KMS, Vault Transit, GCP KMS; a development-only local provider is 
 
 Every change is a compare-and-set in the database (`UPDATE … WHERE state = $expected`) along the
 edges of one Go table, so two writers can never both win a transition (ADR 0026). Commit enqueues
-`asset.process` in the same transaction that sets `committed`; its handler arrives with M3-3.
+`asset.process` in the same transaction that sets `committed`; the worker role handles it (see
+[the processing pipeline](#processing-pipeline)).
 
 Deletion enumerates storage, destroys the content key, re-lists to confirm nothing is left, and signs
 a record. See [integrity.md](integrity.md).
