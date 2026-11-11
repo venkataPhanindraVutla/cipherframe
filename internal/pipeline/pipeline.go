@@ -169,7 +169,13 @@ func Register(reg *jobs.Registry, d Deps) error {
 	if err != nil {
 		return err
 	}
-	return jobs.Register(reg, p.Handle, jobs.KindConfig{Timeout: d.TranscodeTimeout + jobOverhead})
+	return jobs.Register(reg, p.Handle, jobs.KindConfig{Timeout: d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia})
+}
+
+// Declare tells a process that only inserts asset.process jobs (the api role) which queue the kind
+// runs on, so its inserts land on the media queue the worker role serves.
+func Declare(reg *jobs.Registry) error {
+	return jobs.Declare[uploads.ProcessArgs](reg, jobs.KindConfig{Queue: jobs.QueueMedia})
 }
 
 // permanentError marks a failure that no retry can fix. The asset is failed with code.
