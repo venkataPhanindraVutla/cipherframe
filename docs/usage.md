@@ -48,6 +48,20 @@ running `migrate` once as a separate step.
 On start the server also refuses to serve if an active API key was hashed with a pepper version
 that is not in `CIPHERFRAME_API_KEY_PEPPERS` (ADR 0016); the error names version numbers only.
 
+It also builds the key-provider registry before connecting to the database, so a misconfigured
+provider stops the process at once with a message that names the setting (see
+[Encryption](encryption.md)). For local development use the built-in `local` provider with a
+placeholder KEK (32 decoded bytes, starting with `dev-placeholder-`):
+
+```sh
+export CIPHERFRAME_KMS_PROVIDER=local
+export CIPHERFRAME_KMS_LOCAL_KEKS=1:ZGV2LXBsYWNlaG9sZGVyLTAxMjM0NTY3ODlhYmNkZWY=
+export CIPHERFRAME_KMS_LOCAL_KEK_CURRENT=1
+```
+
+The Docker Compose stack (M1-8) is not in the repository yet. When it lands, its shared environment
+block must carry these three variables, so the stack runs without a cloud account (ADR 0019).
+
 ### First tenant and admin key
 
 After migrating, create the first tenant, client and admin key (all five scopes) in one transaction:
@@ -114,6 +128,12 @@ variable, never its value.
 | `CIPHERFRAME_S3_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see below. |
 | `CIPHERFRAME_API_KEY_PEPPERS` | none | yes | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded pepper is at least 32 bytes (standard base64). |
 | `CIPHERFRAME_API_KEY_PEPPER_CURRENT` | none | yes | no | Positive integer naming a version in the set. |
+| `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. Only `local` is implemented so far; the others are reserved names that fail at startup until M2-2 (ADR 0019, ADR 0022). |
+| `CIPHERFRAME_KMS_LOCAL_KEKS` | none | with `local` | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded KEK is **exactly 32 bytes** (standard base64). `_FILE` is supported. Values starting with `dev-placeholder-` are accepted only in development. Ignored unless the provider is `local`. |
+| `CIPHERFRAME_KMS_LOCAL_KEK_CURRENT` | none | with `local` | no | Positive integer naming the version in the set that new wraps use. Older versions stay for unwrapping. |
+| `CIPHERFRAME_KMS_VAULT_*` | | | | **Stub.** Vault Transit settings arrive with M2-2 (ADR 0021). |
+| `CIPHERFRAME_KMS_AWS_*` | | | | **Stub.** AWS KMS settings arrive with M2-2. |
+| `CIPHERFRAME_KMS_GCP_*` | | | | **Stub.** GCP KMS settings arrive with M2-2. |
 
 Empty values of non-secret variables mean "use the default".
 
