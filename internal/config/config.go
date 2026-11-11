@@ -24,6 +24,7 @@ const (
 	EnvAPIKeyPeppers       = "CIPHERFRAME_API_KEY_PEPPERS"        //nolint:gosec // environment variable name, not a credential
 	EnvAPIKeyPepperCurrent = "CIPHERFRAME_API_KEY_PEPPER_CURRENT" //nolint:gosec // environment variable name, not a credential
 	EnvKMSProvider         = "CIPHERFRAME_KMS_PROVIDER"
+	EnvKMSUnwrapProviders  = "CIPHERFRAME_KMS_UNWRAP_PROVIDERS"
 	EnvKMSLocalKEKs        = "CIPHERFRAME_KMS_LOCAL_KEKS"        //nolint:gosec // environment variable name, not a credential
 	EnvKMSLocalKEKCurrent  = "CIPHERFRAME_KMS_LOCAL_KEK_CURRENT" //nolint:gosec // environment variable name, not a credential
 )
@@ -103,6 +104,7 @@ func (c *Config) LogValue() slog.Value {
 		),
 		slog.Group("kms",
 			slog.String("provider", c.KMS.Provider),
+			slog.String("unwrap_providers", strings.Join(c.KMS.UnwrapProviders, ",")),
 			slog.String("local_kek_versions", kekVersions(c.KMS.LocalKEKs)),
 			slog.Int("local_kek_current", c.KMS.LocalKEKs.current),
 			slog.String("local_kek_values", Redacted),
