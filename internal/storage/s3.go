@@ -273,7 +273,12 @@ func expires(ttl time.Duration) func(*s3.PresignOptions) {
 	return func(o *s3.PresignOptions) { o.Expires = ttl }
 }
 
-func (s *s3Store) PresignGet(ctx context.Context, key string, ttl time.Duration) (PresignedRequest, error) {
+// deliveryStore is the delivery bucket's handle. PresignGet exists on this type only, so the source
+// bucket's *s3Store cannot sign read URLs (I4).
+type deliveryStore struct{ *s3Store }
+
+// PresignGet implements GetPresigner.
+func (s deliveryStore) PresignGet(ctx context.Context, key string, ttl time.Duration) (PresignedRequest, error) {
 	const op = "presign_get"
 	if err := s.checkKey(op, key); err != nil {
 		return PresignedRequest{}, err

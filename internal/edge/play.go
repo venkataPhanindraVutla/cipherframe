@@ -87,9 +87,10 @@ type ContentKeyReader interface {
 
 // PlaybackDeps are the collaborators of Playback.
 type PlaybackDeps struct {
-	Keyring  *token.Keyring
-	Store    PlaybackStore
-	Delivery storage.Store
+	Keyring *token.Keyring
+	Store   PlaybackStore
+	// Delivery is the delivery bucket; only it can presign reads (I4).
+	Delivery storage.DeliveryStore
 	// KeyStore and ContentKeys serve the key endpoint. Without both it answers 503
 	// dependency_unavailable (the server always provides them for the edge role).
 	KeyStore    KeyStore
@@ -103,7 +104,7 @@ type PlaybackDeps struct {
 type Playback struct {
 	keyring  *token.Keyring
 	store    PlaybackStore
-	delivery storage.Store
+	delivery storage.DeliveryStore
 	keyStore KeyStore
 	keys     ContentKeyReader
 	now      func() time.Time
@@ -225,6 +226,26 @@ func segmentObject(g grant, rend keys.Rendition, file string) (key, contentType 
 	return keys.Segment(g.tenant, g.asset, rend, n), "video/iso.segment", true
 }
 
+// maxPresignTTL is the longest lifetime of a presigned segment URL (ADR 0032).
+const maxPresignTTL = 10 * time.Minute
+
+var (
+	errPresignFailed = errors.New("edge: presigning failed")
+	errPresignName   = errors.New("edge: unexpected segment name")
+)
+
+// presignTTL is how long a presigned URL lives for a token that expires at exp: until then, but at
+// most maxPresignTTL. It reports false when under a second is left, because storage cannot sign
+// for less and the player could not use it.
+func presignTTL(exp, now time.Time) (time.Duration, bool) {
+	ttl := min(exp.Sub(now), maxPresignTTL)
+	if ttl < time.Second {
+		return 0, false
+	}
+	// Whole seconds, rounded down, so a URL never outlives the token.
+	return ttl.Truncate(time.Second), true
+}
+
 // readPlaylist reads a stored playlist, at most maxPlaylistBytes, and closes it.
 func (p *Playback) readPlaylist(ctx context.Context, key string) (string, error) {
 	rc, _, err := p.delivery.Get(ctx, key, nil)
@@ -290,7 +311,29 @@ func (s *server) GetPlaybackMedia(ctx context.Context, req gen.GetPlaybackMediaR
 	if err != nil {
 		return nil, err
 	}
-	out, err := hls.RewriteMedia(src, g.urlToken)
+	var segURI hls.SegmentURIFunc
+	if g.settings.Delivery == db.DeliveryPresigned {
+		ttl, ok := presignTTL(g.tokenExpiry, s.play.now())
+		if !ok { // the token is about to expire: a URL that lives that short is no use
+			return nil, errs.New(errs.Unauthenticated, msgPlaybackUnauthenticated)
+		}
+		segURI = func(name string) (string, error) {
+			key, _, ok := segmentObject(g, rend, name)
+			if !ok {
+				return "", errPresignName
+			}
+			r, err := s.play.delivery.PresignGet(ctx, key, ttl)
+			if err != nil {
+				// storage errors carry no URL or key; still report only that signing failed.
+				return "", errPresignFailed
+			}
+			return r.URL, nil
+		}
+	}
+	out, err := hls.RewriteMediaWith(src, g.urlToken, segURI)
+	if errors.Is(err, errPresignFailed) {
+		return nil, errs.New(errs.DependencyUnavailable, "Storage is temporarily unavailable.")
+	}
 	if err != nil {
 		return nil, rewriteFailed(ctx, g, err)
 	}

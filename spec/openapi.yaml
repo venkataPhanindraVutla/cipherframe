@@ -782,6 +782,12 @@ paths:
         `../key`, which is `/v1/play/<session_id>/key` (`getPlaybackKey`). Requires a token
         with the `manifest` scope and the same session check as the master playlist. The same
         `token_in_url` and CORS rules apply.
+
+        When the tenant's `delivery` is `presigned` (ADR 0032), the init segment URI and every media
+        segment URI are absolute presigned storage URLs instead (never with `?t=`); the key URI
+        is unchanged. A URL expires with the playback token or after 10 minutes, whichever is
+        first. A token with under a second left is answered `401`. The URLs are credentials until
+        they expire and are never logged by edge.
       tags: [edge]
       security:
         - playbackToken: []
@@ -1890,6 +1896,18 @@ components:
             Put the playback token in the manifest URL as `?t=` for native HLS players that cannot
             set headers (ADR 0030). Off by default: tokens in URLs can end up in browser history
             and in proxy and CDN logs.
+        delivery:
+          type: string
+          enum: [proxy, presigned]
+          description: |
+            How segments reach the player (ADR 0032). `proxy` (the default): edge serves every
+            segment after checking the token. `presigned`: media playlists carry short-lived
+            presigned storage URLs for the init segment and each media segment, so storage or a
+            CDN serves the (encrypted) bytes directly. A URL expires when the playback token does,
+            or after 10 minutes, whichever is first. The URLs are credentials until then: they
+            can appear in playlists, browser history and the logs of intermediaries. The key
+            endpoint is always served by edge, so revocation still applies. In `presigned` mode
+            the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
     PlaybackSettings:
       description: A tenant's effective playback settings.
       type: object
@@ -1904,6 +1922,7 @@ components:
         - key_requests_per_minute
         - allowed_origins
         - token_in_url
+        - delivery
       properties:
         token_ttl_seconds:
           type: integer
@@ -1926,6 +1945,9 @@ components:
             type: string
         token_in_url:
           type: boolean
+        delivery:
+          type: string
+          enum: [proxy, presigned]
         updated_at:
           type: string
           format: date-time

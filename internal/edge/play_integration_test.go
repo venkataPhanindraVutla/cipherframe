@@ -81,7 +81,7 @@ func (c *clock) advance(d time.Duration) { c.offset.Add(int64(d)) }
 
 // countingStore counts the calls that reach the object store, and can be made to fail.
 type countingStore struct {
-	storage.Store
+	storage.DeliveryStore
 	calls atomic.Int64
 	err   atomic.Pointer[error]
 }
@@ -91,17 +91,17 @@ func (c *countingStore) Get(ctx context.Context, key string, r *storage.Range) (
 	if e := c.err.Load(); e != nil {
 		return nil, storage.ObjectInfo{}, *e
 	}
-	return c.Store.Get(ctx, key, r)
+	return c.DeliveryStore.Get(ctx, key, r)
 }
 
 func (c *countingStore) Head(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	c.calls.Add(1)
-	return c.Store.Head(ctx, key)
+	return c.DeliveryStore.Head(ctx, key)
 }
 
 func (c *countingStore) List(ctx context.Context, prefix, cursor string, limit int) (storage.Page, error) {
 	c.calls.Add(1)
-	return c.Store.List(ctx, prefix, cursor, limit)
+	return c.DeliveryStore.List(ctx, prefix, cursor, limit)
 }
 
 const (
@@ -153,7 +153,7 @@ func newEnv(t *testing.T) *env {
 	}
 	e := &env{
 		t: t, pool: pool, repos: repos, res: res, asset: asset, clk: &clock{}, logs: &syncBuf{},
-		store: &countingStore{Store: buckets.Delivery}, objects: map[string][]byte{}, plain: map[string][]byte{},
+		store: &countingStore{DeliveryStore: buckets.Delivery}, objects: map[string][]byte{}, plain: map[string][]byte{},
 	}
 	e.log = slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	lp, err := local.NewFromKeys(config.Development, map[int][]byte{1: bytes.Repeat([]byte{0x41}, config.KEKBytes)}, 1, nil)

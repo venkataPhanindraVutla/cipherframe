@@ -133,6 +133,24 @@ func RewriteMaster(src, token string) (string, error) {
 // carries "?t=<token>" when token is not empty. The playlist must hold an init segment and at
 // least one media segment.
 func RewriteMedia(src, token string) (string, error) {
+	return RewriteMediaWith(src, token, nil)
+}
+
+// SegmentURIFunc maps a stored segment name ("init.mp4" or "seg-N.m4s") to the URI a player is
+// given for it. The result is used as it is: RewriteMediaWith adds no token to it.
+type SegmentURIFunc func(name string) (string, error)
+
+// RewriteMediaWith is RewriteMedia with control over the init and media segment URIs (ADR 0032):
+// when segURI is not nil, the EXT-X-MAP URI and every segment URI come from it, and token does not
+// apply to them. The key URI is rewritten as in RewriteMedia, with token. An error from segURI is
+// returned as it is, so it must not carry anything that should not be logged.
+func RewriteMediaWith(src, token string, segURI SegmentURIFunc) (string, error) {
+	uriOf := func(name string) (string, error) {
+		if segURI == nil {
+			return withToken(name, token), nil
+		}
+		return segURI(name)
+	}
 	ls, err := lines(src)
 	if err != nil {
 		return "", err
@@ -145,7 +163,11 @@ func RewriteMedia(src, token string) (string, error) {
 		case plainMedia.MatchString(l):
 			b.WriteString(l)
 		case reMap.MatchString(l):
-			b.WriteString(`#EXT-X-MAP:URI="` + withToken("init.mp4", token) + `"`)
+			u, err := uriOf("init.mp4")
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(`#EXT-X-MAP:URI="` + u + `"`)
 			maps++
 		case reKey.MatchString(l):
 			// The IV is copied as it is; only the URI changes.
@@ -157,7 +179,11 @@ func RewriteMedia(src, token string) (string, error) {
 			}
 			b.WriteString(l)
 			b.WriteByte('\n')
-			b.WriteString(withToken(ls[i+1], token))
+			u, err := uriOf(ls[i+1])
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(u)
 			segs++
 			i++
 		default:

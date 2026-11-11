@@ -164,3 +164,41 @@ func FuzzRewrite(f *testing.F) {
 		}
 	})
 }
+
+// fakePresign is a deterministic stand-in for a storage presigner.
+func fakePresign(name string) (string, error) {
+	return "https://files.example.test/dlv/hls/720p/" + name + "?sig=fake", nil
+}
+
+func TestRewriteMediaWithGolden(t *testing.T) {
+	src := readTestdata(t, "media.m3u8.golden")
+	for _, tc := range []struct{ name, golden, token string }{
+		{"presigned header", "session_media_presigned_header.m3u8.golden", ""},
+		{"presigned url token", "session_media_presigned_url.m3u8.golden", testToken},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := hls.RewriteMediaWith(src, tc.token, fakePresign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			golden(t, tc.golden, got)
+		})
+	}
+}
+
+// A nil mapping is exactly RewriteMedia, and the mapping's error is returned as it is.
+func TestRewriteMediaWithNilAndError(t *testing.T) {
+	src := readTestdata(t, "media.m3u8.golden")
+	a, err := hls.RewriteMediaWith(src, testToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := hls.RewriteMedia(src, testToken)
+	if a != b {
+		t.Fatal("RewriteMediaWith(nil) differs from RewriteMedia")
+	}
+	boom := errors.New("boom")
+	if _, err := hls.RewriteMediaWith(src, "", func(string) (string, error) { return "", boom }); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+}

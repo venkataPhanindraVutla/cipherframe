@@ -20,6 +20,7 @@ func settingsOut(s db.PlaybackSettings) gen.PlaybackSettings {
 		KeyRequestsPerMinute:     s.KeyRequestsPerMinute,
 		AllowedOrigins:           append([]string{}, s.AllowedOrigins...),
 		TokenInUrl:               s.TokenInURL,
+		Delivery:                 gen.PlaybackSettingsDelivery(s.Delivery),
 	}
 	if !s.UpdatedAt.IsZero() {
 		t := s.UpdatedAt
@@ -61,6 +62,10 @@ func settingsIn(b *gen.PlaybackSettingsInput) (db.PlaybackSettings, error) {
 	need("token_in_url", b.TokenInUrl != nil)
 	if b.TokenInUrl != nil {
 		out.TokenInURL = *b.TokenInUrl
+	}
+	need("delivery", b.Delivery != nil)
+	if b.Delivery != nil {
+		out.Delivery = string(*b.Delivery)
 	}
 	if len(missing) > 0 {
 		return db.PlaybackSettings{}, errs.Invalid("The playback settings are incomplete.", missing)

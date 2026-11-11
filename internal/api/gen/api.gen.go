@@ -102,6 +102,42 @@ func (e PlaybackSessionStatusState) Valid() bool {
 	}
 }
 
+// Defines values for PlaybackSettingsDelivery.
+const (
+	PlaybackSettingsDeliveryPresigned PlaybackSettingsDelivery = "presigned"
+	PlaybackSettingsDeliveryProxy     PlaybackSettingsDelivery = "proxy"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackSettingsDelivery enum.
+func (e PlaybackSettingsDelivery) Valid() bool {
+	switch e {
+	case PlaybackSettingsDeliveryPresigned:
+		return true
+	case PlaybackSettingsDeliveryProxy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PlaybackSettingsInputDelivery.
+const (
+	PlaybackSettingsInputDeliveryPresigned PlaybackSettingsInputDelivery = "presigned"
+	PlaybackSettingsInputDeliveryProxy     PlaybackSettingsInputDelivery = "proxy"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackSettingsInputDelivery enum.
+func (e PlaybackSettingsInputDelivery) Valid() bool {
+	switch e {
+	case PlaybackSettingsInputDeliveryPresigned:
+		return true
+	case PlaybackSettingsInputDeliveryProxy:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	ProblemCodeAssetNotReady         ProblemCode = "asset_not_ready"
@@ -471,11 +507,12 @@ type PlaybackSessionStatusState string
 
 // PlaybackSettings A tenant's effective playback settings.
 type PlaybackSettings struct {
-	AllowedOrigins           []string `json:"allowed_origins"`
-	HeartbeatIntervalSeconds int      `json:"heartbeat_interval_seconds"`
-	IdleTimeoutSeconds       int      `json:"idle_timeout_seconds"`
-	KeyFetchesPerToken       int      `json:"key_fetches_per_token"`
-	KeyRequestsPerMinute     int      `json:"key_requests_per_minute"`
+	AllowedOrigins           []string                 `json:"allowed_origins"`
+	Delivery                 PlaybackSettingsDelivery `json:"delivery"`
+	HeartbeatIntervalSeconds int                      `json:"heartbeat_interval_seconds"`
+	IdleTimeoutSeconds       int                      `json:"idle_timeout_seconds"`
+	KeyFetchesPerToken       int                      `json:"key_fetches_per_token"`
+	KeyRequestsPerMinute     int                      `json:"key_requests_per_minute"`
 
 	// MaxSessionsPerViewer 0 means unlimited.
 	MaxSessionsPerViewer int  `json:"max_sessions_per_viewer"`
@@ -487,6 +524,9 @@ type PlaybackSettings struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
+// PlaybackSettingsDelivery defines model for PlaybackSettings.Delivery.
+type PlaybackSettingsDelivery string
+
 // PlaybackSettingsInput Every playback setting of a tenant (ADR 0028, 0030). This is a full replacement, so every
 // field is required: a missing field is `invalid_request` with an `errors` entry naming it.
 // (The schema does not mark them `required` so that a missing field can be told apart from
@@ -496,6 +536,16 @@ type PlaybackSettingsInput struct {
 	// `https://host[:port]`, or `http://localhost[:port]` for development: lower case, no
 	// path, no wildcard, and no port that is the scheme's default. Default empty.
 	AllowedOrigins *[]string `json:"allowed_origins,omitempty"`
+
+	// Delivery How segments reach the player (ADR 0032). `proxy` (the default): edge serves every
+	// segment after checking the token. `presigned`: media playlists carry short-lived
+	// presigned storage URLs for the init segment and each media segment, so storage or a
+	// CDN serves the (encrypted) bytes directly. A URL expires when the playback token does,
+	// or after 10 minutes, whichever is first. The URLs are credentials until then: they
+	// can appear in playlists, browser history and the logs of intermediaries. The key
+	// endpoint is always served by edge, so revocation still applies. In `presigned` mode
+	// the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
+	Delivery *PlaybackSettingsInputDelivery `json:"delivery,omitempty"`
 
 	// HeartbeatIntervalSeconds How often the player sends a heartbeat. Must be less than `token_ttl_seconds` and less
 	// than `idle_timeout_seconds`. Default 60.
@@ -525,6 +575,16 @@ type PlaybackSettingsInput struct {
 	// TokenTtlSeconds How long a playback token works. Default 600.
 	TokenTtlSeconds *int `json:"token_ttl_seconds,omitempty"`
 }
+
+// PlaybackSettingsInputDelivery How segments reach the player (ADR 0032). `proxy` (the default): edge serves every
+// segment after checking the token. `presigned`: media playlists carry short-lived
+// presigned storage URLs for the init segment and each media segment, so storage or a
+// CDN serves the (encrypted) bytes directly. A URL expires when the playback token does,
+// or after 10 minutes, whichever is first. The URLs are credentials until then: they
+// can appear in playlists, browser history and the logs of intermediaries. The key
+// endpoint is always served by edge, so revocation still applies. In `presigned` mode
+// the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
+type PlaybackSettingsInputDelivery string
 
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Problem struct {
