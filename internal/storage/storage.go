@@ -51,9 +51,6 @@ type Store interface {
 	// chunk.
 	DeleteBatch(ctx context.Context, keys []string) error
 
-	// PresignGet returns a request that reads key until ttl has passed.
-	PresignGet(ctx context.Context, key string, ttl time.Duration) (PresignedRequest, error)
-
 	// PresignPut returns a request that writes key until ttl has passed. The client must send the
 	// returned Header (it includes Content-Type).
 	PresignPut(ctx context.Context, key string, ttl time.Duration, contentType string) (PresignedRequest, error)
@@ -76,6 +73,20 @@ type Store interface {
 
 	// AbortMultipart discards an upload. An unknown upload ID is a NotFound error.
 	AbortMultipart(ctx context.Context, key, uploadID string) error
+}
+
+// GetPresigner signs read URLs. Only the delivery bucket has one (invariant I4): a URL that
+// reads the source bucket must not be creatable, so the source Store type has no PresignGet
+// method and cannot satisfy this interface.
+type GetPresigner interface {
+	// PresignGet returns a request that reads key until ttl has passed (1 second to MaxPresignTTL).
+	PresignGet(ctx context.Context, key string, ttl time.Duration) (PresignedRequest, error)
+}
+
+// DeliveryStore is the delivery bucket: a Store that can also presign reads.
+type DeliveryStore interface {
+	Store
+	GetPresigner
 }
 
 // Range is a byte range. Offset is the first byte; Length is the number of bytes, or 0 for "to the
