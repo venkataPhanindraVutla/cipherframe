@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbgen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
@@ -54,9 +55,12 @@ const (
 // PlaybackSession is the stored form of a session. The session ID is not part of it: only its
 // hash is stored (see SessionHash).
 type PlaybackSession struct {
-	IDHash          []byte
-	TenantID        id.TenantID
+	IDHash   []byte
+	TenantID id.TenantID
+	// ClientID is the API client that made the session; it is the zero ID unless AuthMethod is
+	// AuthMethodAPIKey.
 	ClientID        id.ClientID
+	AuthMethod      string
 	AssetID         id.AssetID
 	ViewerID        string
 	State           string
@@ -67,6 +71,14 @@ type PlaybackSession struct {
 	RevokedAt       *time.Time
 	RevokeReason    string
 }
+
+// How a playback session was authorised (ADR 0029, 0031). The playback_sessions table enforces
+// that a session has a client exactly when its method is AuthMethodAPIKey.
+const (
+	AuthMethodAPIKey   = "api_key"
+	AuthMethodJWT      = "jwt"
+	AuthMethodCallback = "callback"
+)
 
 // SessionHash returns the SHA-256 of the session ID's text form. It is the primary key of
 // playback_sessions: the ID is a capability, so the table never holds it.
@@ -95,6 +107,7 @@ func sessionFromRow(r dbgen.PlaybackSession) PlaybackSession {
 		IDHash:          slices.Clone(r.IDHash),
 		TenantID:        fromPG[id.TenantKind](r.TenantID),
 		ClientID:        fromPG[id.ClientKind](r.ClientID),
+		AuthMethod:      r.AuthMethod,
 		AssetID:         fromPG[id.AssetKind](r.AssetID),
 		ViewerID:        r.ViewerID,
 		State:           r.State,
@@ -194,13 +207,16 @@ func (r *Repos) CountActivePlaybackSessions(ctx context.Context, tenantID id.Ten
 
 // NewPlaybackSession is the input for InsertPlaybackSession.
 type NewPlaybackSession struct {
-	ID        id.SessionID
-	TenantID  id.TenantID
-	ClientID  id.ClientID
-	AssetID   id.AssetID
-	ViewerID  string
-	Now       time.Time
-	ExpiresAt time.Time
+	ID       id.SessionID
+	TenantID id.TenantID
+	// ClientID is required for AuthMethodAPIKey and must be the zero ID for the other methods.
+	ClientID id.ClientID
+	// AuthMethod is one of the AuthMethod constants; empty means AuthMethodAPIKey.
+	AuthMethod string
+	AssetID    id.AssetID
+	ViewerID   string
+	Now        time.Time
+	ExpiresAt  time.Time
 }
 
 // InsertPlaybackSession stores an active session under the hash of its ID. The asset must belong
@@ -211,9 +227,21 @@ func (r *Repos) InsertPlaybackSession(ctx context.Context, in NewPlaybackSession
 	if err != nil {
 		return PlaybackSession{}, err
 	}
-	cid, err := requirePG(in.ClientID)
-	if err != nil {
-		return PlaybackSession{}, err
+	if in.AuthMethod == "" {
+		in.AuthMethod = AuthMethodAPIKey
+	}
+	var cid pgtype.UUID
+	switch in.AuthMethod {
+	case AuthMethodAPIKey:
+		if cid, err = requirePG(in.ClientID); err != nil {
+			return PlaybackSession{}, err
+		}
+	case AuthMethodJWT, AuthMethodCallback:
+		if !in.ClientID.IsZero() {
+			return PlaybackSession{}, errs.New(errs.InvalidRequest, "invalid playback session")
+		}
+	default:
+		return PlaybackSession{}, errs.New(errs.InvalidRequest, "invalid playback session")
 	}
 	aid, err := requirePG(in.AssetID)
 	if err != nil {
@@ -223,7 +251,7 @@ func (r *Repos) InsertPlaybackSession(ctx context.Context, in NewPlaybackSession
 		return PlaybackSession{}, errs.New(errs.InvalidRequest, "invalid playback session")
 	}
 	row, err := r.q.InsertPlaybackSession(ctx, dbgen.InsertPlaybackSessionParams{
-		IDHash: SessionHash(in.ID), ClientID: cid, ViewerID: in.ViewerID, Now: in.Now,
+		IDHash: SessionHash(in.ID), ClientID: cid, AuthMethod: in.AuthMethod, ViewerID: in.ViewerID, Now: in.Now,
 		ExpiresAt: in.ExpiresAt, AssetID: aid, TenantID: tid,
 	})
 	if err != nil {

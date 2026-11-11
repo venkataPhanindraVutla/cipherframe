@@ -24,6 +24,7 @@ const (
 type Sweeper interface {
 	SweepPlaybackKeyFetches(ctx context.Context, before time.Time) (int64, error)
 	EndExpiredPlaybackSessions(ctx context.Context, now time.Time, batch int) (int64, error)
+	SweepPlaybackJWTIDs(ctx context.Context, before time.Time) (int64, error)
 }
 
 // SweepKeyFetches deletes the counters of tokens that expired more than a few minutes before now
@@ -31,6 +32,14 @@ type Sweeper interface {
 // that ever asked for a key. It is idempotent, so any number of replicas may run it.
 func SweepKeyFetches(ctx context.Context, s Sweeper, now time.Time) (int64, error) {
 	return s.SweepPlaybackKeyFetches(ctx, now.Add(-sweepGrace))
+}
+
+// SweepJWTIDs deletes the single-use JWT ids (ADR 0029) whose expiry has passed and returns how
+// many it deleted. A row's expiry is the token's exp plus the clock skew allowance, so a token
+// whose id was deleted can no longer verify: its exp is in the past even with the allowance. It is
+// idempotent, so any number of replicas may run it.
+func SweepJWTIDs(ctx context.Context, s Sweeper, now time.Time) (int64, error) {
+	return s.SweepPlaybackJWTIDs(ctx, now)
 }
 
 // SweepSessions marks active sessions ended when they are past their expiry or idle past their
@@ -55,7 +64,7 @@ func SweepSessions(ctx context.Context, s Sweeper, now time.Time, batch int) (in
 }
 
 // RunSweeper sweeps every interval until ctx is cancelled (a failure is logged and retried at the
-// next tick): key-fetch counters and expired sessions. It sweeps once immediately, so a restarted
+// next tick): key-fetch counters, used JWT ids and expired sessions. It sweeps once immediately, so a restarted
 // process cleans up at once.
 func RunSweeper(ctx context.Context, s Sweeper, interval time.Duration, log *slog.Logger) {
 	if interval <= 0 {
@@ -71,6 +80,15 @@ func RunSweeper(ctx context.Context, s Sweeper, interval time.Duration, log *slo
 			log.WarnContext(ctx, "key fetch sweep failed", slog.Any("error", err))
 		case n > 0:
 			log.DebugContext(ctx, "key fetch counters swept", slog.Int64("deleted", n))
+		}
+		jtis, err := SweepJWTIDs(ctx, s, now)
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err != nil:
+			log.WarnContext(ctx, "jwt id sweep failed", slog.Any("error", err))
+		case jtis > 0:
+			log.DebugContext(ctx, "jwt ids swept", slog.Int64("deleted", jtis))
 		}
 		ended, err := SweepSessions(ctx, s, now, SweepBatch)
 		switch {
