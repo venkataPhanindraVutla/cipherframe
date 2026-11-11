@@ -88,11 +88,12 @@ func TestKMSProduction(t *testing.T) {
 			}
 		})
 	}
-	for _, p := range []string{ProviderVault, ProviderAWSKMS, ProviderGCPKMS} {
+	for _, p := range []string{ProviderVault, ProviderAWSKMS} {
 		if _, err := load(prod.with(EnvKMSProvider, p), nil); err != nil {
 			t.Fatalf("production with %s rejected: %v", p, err)
 		}
 	}
+	// gcpkms needs its key name (see kms_gcp_test.go).
 }
 
 func TestKMSDevelopmentAcceptsPlaceholder(t *testing.T) {
