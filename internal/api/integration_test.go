@@ -19,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
@@ -102,7 +103,10 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pb, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: testEdgeURL, KMS: reg, Now: clk.Now})
+	pb, err := playback.NewService(playback.Deps{
+		Pool: pool, Keyring: keyring, EdgeURL: testEdgeURL, KMS: reg, Now: clk.Now,
+		Anomalies: anomaly.New(anomaly.Deps{Pool: pool, Log: log, Now: clk.Now}),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

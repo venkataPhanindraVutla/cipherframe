@@ -41,6 +41,7 @@ var operationScopes = map[string][]db.Scope{
 	"GetPlaybackSettings":    {db.ScopeAdmin},
 	"UpdatePlaybackSettings": {db.ScopeAdmin},
 
+	"ListPlaybackEvents":          {db.ScopeAssetsRead},
 	"GetAssetAccessLog":           {db.ScopeAssetsRead},
 	"GetPlaybackSessionAccessLog": {db.ScopeAssetsRead},
 	"GetPrivacySettings":          {db.ScopeAdmin},
@@ -236,6 +237,10 @@ func (g guarded) GetPlaybackSessionAccessLog(w http.ResponseWriter, r *http.Requ
 	g.a.run("GetPlaybackSessionAccessLog", w, r, func(r *http.Request) {
 		g.ServerInterface.GetPlaybackSessionAccessLog(w, r, sessionID, params)
 	})
+}
+
+func (g guarded) ListPlaybackEvents(w http.ResponseWriter, r *http.Request, params gen.ListPlaybackEventsParams) {
+	g.a.run("ListPlaybackEvents", w, r, func(r *http.Request) { g.ServerInterface.ListPlaybackEvents(w, r, params) })
 }
 
 func (g guarded) GetPrivacySettings(w http.ResponseWriter, r *http.Request) {
