@@ -52,6 +52,9 @@ var base = env{ //nolint:gosec // test fixture
 var prod = base.with(
 	EnvEnv, "production",
 	EnvKMSProvider, ProviderVault,
+	EnvKMSVaultAddr, "https://vault.example.com:8200",
+	EnvKMSVaultToken, "hvs.prod-fixture-token",
+	EnvKMSVaultKeyName, "cipherframe",
 	EnvS3AccessKeyID, "",
 	EnvS3SecretAccessKey, "",
 )

@@ -88,7 +88,7 @@ func TestKMSProduction(t *testing.T) {
 			}
 		})
 	}
-	for _, p := range []string{ProviderVault, ProviderAWSKMS, ProviderGCPKMS} {
+	for _, p := range []string{ProviderAWSKMS, ProviderGCPKMS} { // vault has required settings: see kms_vault_test.go
 		if _, err := load(prod.with(EnvKMSProvider, p), nil); err != nil {
 			t.Fatalf("production with %s rejected: %v", p, err)
 		}
