@@ -387,11 +387,23 @@ func testDeleteBatchLarge(t *testing.T, s storage.Store, p string) {
 	}
 }
 
+// presigner returns the store's read presigner, or skips the test: only the delivery bucket has
+// one (I4), and a Store built for the source role does not.
+func presigner(t *testing.T, s storage.Store) storage.GetPresigner {
+	t.Helper()
+	gp, ok := s.(storage.GetPresigner)
+	if !ok {
+		t.Skip("the store cannot presign reads (not a delivery store)")
+	}
+	return gp
+}
+
 func testPresignedGet(t *testing.T, s storage.Store, p string) {
 	key := p + "presigned-get"
 	data := payload(t, 4096)
 	mustPut(t, s, key, data, "application/octet-stream")
-	req, err := s.PresignGet(ctxFor(t), key, time.Minute)
+	gp := presigner(t, s)
+	req, err := gp.PresignGet(ctxFor(t), key, time.Minute)
 	if err != nil {
 		t.Fatalf("presign get: %v", err)
 	}
@@ -400,7 +412,7 @@ func testPresignedGet(t *testing.T, s storage.Store, p string) {
 		t.Fatalf("plain HTTP GET: status %d, %d bytes", status, len(body))
 	}
 	// The signature covers the key: another object must not be readable with this URL's signature.
-	missing, err := s.PresignGet(ctxFor(t), p+"presigned-missing", time.Minute)
+	missing, err := gp.PresignGet(ctxFor(t), p+"presigned-missing", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +450,7 @@ func testPresignedPut(t *testing.T, s storage.Store, p string) {
 func testPresignedExpiry(t *testing.T, s storage.Store, p string) {
 	key := p + "presigned-expiry"
 	mustPut(t, s, key, []byte("soon gone"), "")
-	req, err := s.PresignGet(ctxFor(t), key, time.Second)
+	req, err := presigner(t, s).PresignGet(ctxFor(t), key, time.Second)
 	if err != nil {
 		t.Fatalf("presign: %v", err)
 	}

@@ -27,8 +27,16 @@ type PlaybackSettings struct {
 	KeyRequestsPerMinute     int
 	AllowedOrigins           []string
 	TokenInURL               bool
-	UpdatedAt                time.Time
+	// Delivery is DeliveryProxy or DeliveryPresigned (ADR 0032).
+	Delivery  string
+	UpdatedAt time.Time
 }
+
+// The delivery strategies (ADR 0032).
+const (
+	DeliveryProxy     = "proxy"
+	DeliveryPresigned = "presigned"
+)
 
 // DefaultPlaybackSettings returns the settings of a tenant that has none stored. They equal the
 // column defaults of the playback_settings table; a test keeps the two in step.
@@ -42,6 +50,7 @@ func DefaultPlaybackSettings() PlaybackSettings {
 		KeyFetchesPerToken:       20,
 		KeyRequestsPerMinute:     30,
 		AllowedOrigins:           []string{},
+		Delivery:                 DeliveryProxy,
 	}
 }
 
@@ -98,6 +107,7 @@ func settingsFromRow(r dbgen.PlaybackSetting) PlaybackSettings {
 		KeyRequestsPerMinute:     int(r.KeyRequestsPerMinute),
 		AllowedOrigins:           append([]string{}, r.AllowedOrigins...),
 		TokenInURL:               r.TokenInUrl,
+		Delivery:                 r.Delivery,
 		UpdatedAt:                r.UpdatedAt.UTC(),
 	}
 }
@@ -159,6 +169,7 @@ func (r *Repos) PutPlaybackSettings(ctx context.Context, tenantID id.TenantID, s
 		KeyRequestsPerMinute:     int32(s.KeyRequestsPerMinute),
 		AllowedOrigins:           origins,
 		TokenInUrl:               s.TokenInURL,
+		Delivery:                 s.Delivery,
 		At:                       at,
 	})
 	if err != nil {

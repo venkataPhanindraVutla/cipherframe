@@ -1,0 +1,17 @@
+#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:6
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXT-X-MAP:URI="https://files.example.test/dlv/hls/720p/init.mp4?sig=fake"
+#EXT-X-KEY:METHOD=AES-128,URI="../key",IV=0x000102030405060708090A0B0C0D0E0F
+#EXTINF:6.000,
+https://files.example.test/dlv/hls/720p/seg-0.m4s?sig=fake
+#EXT-X-KEY:METHOD=AES-128,URI="../key",IV=0xF0E1D2C3B4A5968778695A4B3C2D1E0F
+#EXTINF:6.000,
+https://files.example.test/dlv/hls/720p/seg-1.m4s?sig=fake
+#EXT-X-KEY:METHOD=AES-128,URI="../key",IV=0x00000000000000000000000000000001
+#EXTINF:2.002,
+https://files.example.test/dlv/hls/720p/seg-2.m4s?sig=fake
+#EXT-X-ENDLIST

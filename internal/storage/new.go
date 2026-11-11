@@ -18,7 +18,7 @@ type Buckets struct {
 	// Source holds uploaded originals. Nothing served to viewers references it.
 	Source Store
 	// Delivery holds encrypted segments, playlists and derived artifacts.
-	Delivery Store
+	Delivery DeliveryStore
 }
 
 // New builds both stores from the configuration. It makes no network call.
@@ -39,13 +39,14 @@ func New(ctx context.Context, cfg config.S3) (*Buckets, error) {
 	}
 	return &Buckets{
 		Source:   &s3Store{api: c.internal, pre: c.presign, bucket: cfg.SourceBucket, role: keys.Source},
-		Delivery: &s3Store{api: c.internal, pre: c.presign, bucket: cfg.DeliveryBucket, role: keys.Delivery},
+		Delivery: deliveryStore{&s3Store{api: c.internal, pre: c.presign, bucket: cfg.DeliveryBucket, role: keys.Delivery}},
 	}, nil
 }
 
 // NewStore builds a single Store on bucket, for example to run the conformance suite against a real
 // provider with one bucket. role only labels errors. The bucket name comes from the argument; cfg's
-// bucket names are ignored.
+// bucket names are ignored. With role keys.Delivery the returned value also implements
+// GetPresigner; with any other role it does not (I4).
 func NewStore(ctx context.Context, cfg config.S3, bucket string, role keys.Bucket) (Store, error) {
 	if bucket == "" {
 		return nil, errors.New("storage: bucket name is required")
@@ -54,7 +55,11 @@ func NewStore(ctx context.Context, cfg config.S3, bucket string, role keys.Bucke
 	if err != nil {
 		return nil, err
 	}
-	return &s3Store{api: c.internal, pre: c.presign, bucket: bucket, role: role}, nil
+	st := &s3Store{api: c.internal, pre: c.presign, bucket: bucket, role: role}
+	if role == keys.Delivery {
+		return deliveryStore{st}, nil
+	}
+	return st, nil
 }
 
 // NewS3Client returns the internal S3 client for server-side calls, configured exactly like the

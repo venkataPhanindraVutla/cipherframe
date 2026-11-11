@@ -103,7 +103,7 @@ func TestPlaybackTokenExtraction(t *testing.T) {
 // zeroStore serves a segment of the given size as a lazy stream and records how much of it was
 // read, so a test can tell whether the handler buffered the object.
 type zeroStore struct {
-	storage.Store
+	storage.DeliveryStore
 	size int64
 	read atomic.Int64
 	done chan struct{}
@@ -212,5 +212,32 @@ func TestSegmentIsStreamed(t *testing.T) {
 	}
 	if n := store.read.Load(); n > 256<<20 {
 		t.Fatalf("handler read %d bytes of a %d byte object for a client that took 64 KiB", n, int64(size))
+	}
+}
+
+func TestPresignTTL(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 500_000_000, time.UTC)
+	for _, tc := range []struct {
+		name string
+		exp  time.Time
+		want time.Duration
+		ok   bool
+	}{
+		{"long token is capped", now.Add(time.Hour), 10 * time.Minute, true},
+		{"exactly the cap", now.Add(10 * time.Minute), 10 * time.Minute, true},
+		{"short token", now.Add(90*time.Second + 700*time.Millisecond), 90 * time.Second, true},
+		{"one second", now.Add(time.Second), time.Second, true},
+		{"under a second", now.Add(999 * time.Millisecond), 0, false},
+		{"expired", now.Add(-time.Second), 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := presignTTL(tc.exp, now)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("presignTTL = %s, %v; want %s, %v", got, ok, tc.want, tc.ok)
+			}
+			if ok && now.Add(got).After(tc.exp) {
+				t.Fatal("the URL would outlive the token")
+			}
+		})
 	}
 }

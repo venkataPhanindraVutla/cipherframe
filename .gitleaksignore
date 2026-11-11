@@ -20,3 +20,7 @@ fcb428fde29ef91f72b1f1e6a25e5df7822ce477:internal/config/kms_vault_test.go:gener
 # internal/hls golden playlist: an HLS key tag with its public IV (0x...) next to the URI "../key". The IV is
 # written in every playlist in the clear by design; no secret.
 6514a5f83ec3c2561e5c0be060b899aac26492d7:internal/hls/testdata/session_media_header.m3u8.golden:generic-api-key:11
+
+# internal/hls presigned-mode golden playlist: an HLS key tag with its public IV (0x...) next to the URI "../key". The IV is
+# written in every playlist in the clear by design; no secret.
+931a49d2dbf2b82d11a57aff60b1ea0a36b22fa5:internal/hls/testdata/session_media_presigned_header.m3u8.golden:generic-api-key:11

@@ -211,7 +211,7 @@ func (q *Queries) GetPlaybackSessionTenant(ctx context.Context, idHash []byte) (
 }
 
 const getPlaybackSettings = `-- name: GetPlaybackSettings :one
-SELECT tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at FROM playback_settings WHERE tenant_id = $1
+SELECT tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery FROM playback_settings WHERE tenant_id = $1
 `
 
 func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID) (PlaybackSetting, error) {
@@ -229,6 +229,7 @@ func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID)
 		&i.AllowedOrigins,
 		&i.TokenInUrl,
 		&i.UpdatedAt,
+		&i.Delivery,
 	)
 	return i, err
 }
@@ -550,13 +551,14 @@ const upsertPlaybackSettings = `-- name: UpsertPlaybackSettings :one
 INSERT INTO playback_settings (
     tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds,
     session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute,
-    allowed_origins, token_in_url, updated_at
+    allowed_origins, token_in_url, delivery, updated_at
 ) VALUES (
     $1::uuid, $2::integer,
     $3::integer, $4::integer,
     $5::integer, $6::integer,
     $7::integer, $8::integer,
-    $9::text[], $10::boolean, $11::timestamptz
+    $9::text[], $10::boolean, $11::text,
+    $12::timestamptz
 )
 ON CONFLICT (tenant_id) DO UPDATE SET
     token_ttl_seconds          = EXCLUDED.token_ttl_seconds,
@@ -568,8 +570,9 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     key_requests_per_minute    = EXCLUDED.key_requests_per_minute,
     allowed_origins            = EXCLUDED.allowed_origins,
     token_in_url               = EXCLUDED.token_in_url,
+    delivery                   = EXCLUDED.delivery,
     updated_at                 = EXCLUDED.updated_at
-RETURNING tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at
+RETURNING tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery
 `
 
 type UpsertPlaybackSettingsParams struct {
@@ -583,6 +586,7 @@ type UpsertPlaybackSettingsParams struct {
 	KeyRequestsPerMinute     int32
 	AllowedOrigins           []string
 	TokenInUrl               bool
+	Delivery                 string
 	At                       time.Time
 }
 
@@ -598,6 +602,7 @@ func (q *Queries) UpsertPlaybackSettings(ctx context.Context, arg UpsertPlayback
 		arg.KeyRequestsPerMinute,
 		arg.AllowedOrigins,
 		arg.TokenInUrl,
+		arg.Delivery,
 		arg.At,
 	)
 	var i PlaybackSetting
@@ -613,6 +618,7 @@ func (q *Queries) UpsertPlaybackSettings(ctx context.Context, arg UpsertPlayback
 		&i.AllowedOrigins,
 		&i.TokenInUrl,
 		&i.UpdatedAt,
+		&i.Delivery,
 	)
 	return i, err
 }

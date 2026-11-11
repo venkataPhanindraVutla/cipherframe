@@ -30,8 +30,8 @@ Whether these are separate binaries or one binary with roles is **pending (P4)**
 ### The storage port
 
 All object access goes through `internal/storage` (ADR 0014). `storage.New` returns `Buckets{Source,
-Delivery}`, each a `Store`: put, get (optionally a byte range), head, list with a continuation cursor,
-batch delete, presigned GET and PUT, and multipart upload (presigned parts for servers, and `UploadPart`,
+Delivery}`, each a `Store` (the delivery one is a `DeliveryStore`, see below): put, get (optionally a byte range), head, list with a continuation cursor,
+batch delete, presigned PUT, and multipart upload (presigned parts for servers, and `UploadPart`,
 which streams a part from a request body). Bodies are streamed;
 library code never holds a whole object in memory. Creating buckets, ACLs, lifecycle rules and
 versioning are not part of the port; they belong to deployment.
@@ -41,6 +41,11 @@ versioning are not part of the port; they belong to deployment.
 URLs, because a presigned URL's signature covers the host and a browser cannot use an internal
 address. Credentials follow the three configuration states: a static key pair, the SDK default chain
 (an empty variable), or anonymous (development only).
+
+**Presigned reads exist only for delivery (I4).** `PresignGet` is not on `Store`. It is on
+`GetPresigner`, which only the delivery bucket's handle implements (`DeliveryStore = Store +
+GetPresigner`), so no code that holds the source bucket can sign a read URL; a test asserts the
+source handle does not implement it.
 
 **Key layout.** `internal/storage/keys` is the only code that builds keys. They hold typed IDs and fixed
 names, never user-supplied text:
@@ -380,6 +385,13 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
   (1024 tenants, 4096 sessions), only successful lookups stored (plus "no such session"). The
   steady-state cost of a segment is zero queries. A CORS preflight has no token, so it finds the tenant
   from the session in the path through the second cache; the session-to-tenant mapping never changes.
+- **Delivery strategy** (ADR 0032): with the tenant setting `delivery = presigned`, the media-playlist
+  handler passes `hls.RewriteMediaWith` a mapping from `init.mp4` / `seg-N.m4s` to the delivery
+  bucket's presigned GET URL for the key built by `internal/storage/keys`. The lifetime is
+  `min(token expiry - now, 10 minutes)` in whole seconds (so a URL never outlives its token), and a
+  token with under a second left is refused as unauthorized. The setting comes from the same 30
+  second cache as `token_in_url`. Signing is local (no storage call), URLs are never logged, and
+  `proxy` output is byte-identical to before.
 - **Rewriting** (`internal/hls/rewrite.go`) is a strict line rewriter, not a general parser: it accepts
   exactly what the pipeline writes and refuses the rest. Stored playlists never change, and everything
   session-specific (the key URI, the optional token) is added on the way out.

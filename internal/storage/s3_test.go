@@ -343,10 +343,11 @@ func TestMultipartValidation(t *testing.T) {
 	if _, err := s.PresignPart(ctx, "k", "up", 10001, time.Minute); !errors.Is(err, ErrInvalid) {
 		t.Errorf("part 10001: %v", err)
 	}
-	if _, err := s.PresignGet(ctx, "k", 0); !errors.Is(err, ErrInvalid) {
+	d := deliveryStore{s}
+	if _, err := d.PresignGet(ctx, "k", 0); !errors.Is(err, ErrInvalid) {
 		t.Errorf("ttl 0: %v", err)
 	}
-	if _, err := s.PresignGet(ctx, "k", 8*24*time.Hour); !errors.Is(err, ErrInvalid) {
+	if _, err := d.PresignGet(ctx, "k", 8*24*time.Hour); !errors.Is(err, ErrInvalid) {
 		t.Errorf("ttl 8d: %v", err)
 	}
 }
@@ -409,7 +410,7 @@ func TestPublicEndpointFallsBackToInternal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := b.Source.PresignGet(context.Background(), "k", time.Minute)
+	p, err := b.Delivery.PresignGet(context.Background(), "k", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,4 +510,27 @@ func TestPresignedRequestNeverPrintsURL(t *testing.T) {
 	if strings.Contains(out, "SECRET") || strings.Contains(out, "X-Amz") {
 		t.Fatalf("presigned URL leaked: %s", out)
 	}
+}
+
+// I4: only the delivery bucket can sign read URLs. The source bucket's type has no PresignGet
+// method, so this is a compile-time property; the assertions document it.
+func TestOnlyTheDeliveryBucketCanPresignReads(t *testing.T) {
+	b, err := New(context.Background(), staticCfg("http://s3.example.test:9000", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.Source.(GetPresigner); ok {
+		t.Fatal("the source bucket must not implement GetPresigner")
+	}
+	if _, ok := b.Delivery.(GetPresigner); !ok {
+		t.Fatal("the delivery bucket must implement GetPresigner")
+	}
+	st, err := NewStore(context.Background(), staticCfg("http://s3.example.test:9000", ""), "b", keys.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.(GetPresigner); ok {
+		t.Fatal("a source-role store must not implement GetPresigner")
+	}
+	var _ GetPresigner = deliveryStore{}
 }

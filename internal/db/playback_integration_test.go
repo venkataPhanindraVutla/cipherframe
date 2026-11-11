@@ -109,6 +109,8 @@ func TestPlaybackSettingsChecks(t *testing.T) {
 		"too many origins":   "allowed_origins = (SELECT array_agg('https://h' || i || '.example.com') FROM generate_series(1, 21) i)",
 		"null origins":       "allowed_origins = NULL",
 		"null url transport": "token_in_url = NULL",
+		"unknown delivery":   "delivery = 'cdn'",
+		"null delivery":      "delivery = NULL",
 	} {
 		_, err := pool.Exec(ctx, "INSERT INTO playback_settings (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING", f.tenant.ID.UUID())
 		if err != nil {
