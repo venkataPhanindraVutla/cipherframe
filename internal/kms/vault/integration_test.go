@@ -79,7 +79,7 @@ func startServer(t *testing.T, image, rootEnv string) *transit {
 // admin sends a management request and fails the test unless it succeeds. It returns the body.
 func (s *transit) admin(t *testing.T, token, method, path, body string) []byte {
 	t.Helper()
-	req, err := http.NewRequest(method, s.addr+path, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), method, s.addr+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func (s *transit) admin(t *testing.T, token, method, path, body string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("%s %s: status %d", method, path, resp.StatusCode)
@@ -160,7 +160,7 @@ type forwarder struct {
 func newForwarder(t *testing.T, target string) *forwarder {
 	t.Helper()
 	f := &forwarder{target: target}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := listen(t, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func (f *forwarder) serve(ln net.Listener) {
 			if err != nil {
 				return
 			}
-			up, err := net.Dial("tcp", f.target)
+			up, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", f.target)
 			if err != nil {
 				_ = c.Close()
 				continue
@@ -209,7 +209,7 @@ func (f *forwarder) stop() {
 
 func (f *forwarder) start(t *testing.T) {
 	t.Helper()
-	ln, err := net.Listen("tcp", f.addr)
+	ln, err := listen(t, f.addr)
 	if err != nil {
 		t.Fatalf("cannot restore the relay: %v", err)
 	}
@@ -283,7 +283,7 @@ func behaviour(t *testing.T, s *transit) {
 			t.Fatalf("Wrap: want NotConfigured, got %v", err)
 		}
 		// Transit encrypts to a missing key by creating it; the provider must never trigger that.
-		req, _ := http.NewRequest(http.MethodGet, s.addr+"/v1/transit/keys/"+key, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.addr+"/v1/transit/keys/"+key, nil)
 		req.Header.Set("X-Vault-Token", rootToken)
 		resp, err := s.http.Do(req)
 		if err != nil {
@@ -380,7 +380,7 @@ func behaviour(t *testing.T, s *transit) {
 	})
 
 	t.Run("closed port is unavailable", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := listen(t, "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -391,4 +391,8 @@ func behaviour(t *testing.T, s *transit) {
 			t.Fatalf("want Unavailable, got %v", err)
 		}
 	})
+}
+
+func listen(_ *testing.T, addr string) (net.Listener, error) {
+	return (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
 }

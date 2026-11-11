@@ -324,7 +324,7 @@ func (p *Provider) do(ctx context.Context, op, method, path string, in, out any)
 		}
 		return kms.New(kms.Unavailable, Name, op, "the Transit server could not be reached")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {

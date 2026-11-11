@@ -13,7 +13,7 @@ import (
 // Environment variable names of the Vault Transit provider (M2-2, ADR 0021).
 const (
 	EnvKMSVaultAddr         = "CIPHERFRAME_KMS_VAULT_ADDR"
-	EnvKMSVaultToken        = "CIPHERFRAME_KMS_VAULT_TOKEN"
+	EnvKMSVaultToken        = "CIPHERFRAME_KMS_VAULT_TOKEN" //nolint:gosec // environment variable name, not a credential
 	EnvKMSVaultTransitMount = "CIPHERFRAME_KMS_VAULT_TRANSIT_MOUNT"
 	EnvKMSVaultKeyName      = "CIPHERFRAME_KMS_VAULT_KEY_NAME"
 	EnvKMSVaultNamespace    = "CIPHERFRAME_KMS_VAULT_NAMESPACE"

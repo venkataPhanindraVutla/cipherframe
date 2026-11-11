@@ -331,7 +331,7 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 	}))
 	defer target.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect) //nolint:gosec // test server redirects to its own fixture
 	}))
 	defer srv.Close()
 	_, err := newProvider(t, cfgFor(srv.URL)).Current(context.Background())
@@ -565,7 +565,7 @@ func TestPrintedFormsAreRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forms := []string{fmt.Sprint(p), fmt.Sprintf("%v", p), fmt.Sprintf("%+v", p), fmt.Sprintf("%#v", p), fmt.Sprintf("%s", p), string(b), logs.String()} //nolint:gosimple // every verb is the point
+	forms := []string{fmt.Sprint(p), fmt.Sprintf("%v", p), fmt.Sprintf("%+v", p), fmt.Sprintf("%#v", p), fmt.Sprintf("%s", p), string(b), logs.String()}
 	for _, f := range forms {
 		if strings.Contains(f, testToken) {
 			t.Fatalf("a printed form leaks the token: %.80s", f)
