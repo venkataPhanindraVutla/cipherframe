@@ -293,3 +293,24 @@ func TestSecretBoxBindsTenantAndVersion(t *testing.T) {
 		t.Fatal("sealed a short secret")
 	}
 }
+
+// An allow that arrives as the budget runs out must still be a timeout. The server answers the
+// moment the client gives up, which is when the transport can hand the response over anyway; run
+// it many times so the race is hit.
+func TestCallbackAnswerRacingTheDeadlineIsATimeout(t *testing.T) {
+	secret, _ := viewerauth.GenerateSecret()
+	srv, pool := callbackServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// Reading the body lets the server notice the client leaving (net/http only watches the
+		// connection once the body is consumed), so the answer is written into the race window.
+		_, _ = io.ReadAll(r.Body)
+		<-r.Context().Done()
+		_, _ = w.Write([]byte(`{"allow": true, "viewer_id": "v"}`))
+	})
+	a := newAuthorizer(t, pool, 20*time.Millisecond)
+	for i := range 200 {
+		viewer, err := a.Authorize(context.Background(), srv.URL, [][]byte{secret}, testReq)
+		if err == nil || viewer != "" {
+			t.Fatalf("attempt %d: a late allow was accepted", i)
+		}
+	}
+}

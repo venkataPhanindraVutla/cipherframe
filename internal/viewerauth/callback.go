@@ -148,6 +148,11 @@ func (a *Authorizer) Authorize(ctx context.Context, url string, secrets [][]byte
 	if err != nil {
 		return "", deny(ReasonCallbackResponse)
 	}
+	// The budget is strict: an answer that arrives as the deadline passes is a timeout, even if
+	// the transport handed it over (it can, when the response races the cancellation).
+	if ctx.Err() != nil {
+		return "", deny(ReasonCallbackFailed)
+	}
 	return a.parseAnswer(raw)
 }
 
