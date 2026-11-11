@@ -14,7 +14,7 @@
 
 | Provider | Status |
 |---|---|
-| AWS KMS | planned (M2-2) |
+| AWS KMS (`awskms`) | implemented (M2-2); see below |
 | HashiCorp Vault Transit and OpenBao (`vault`) | implemented (ADR 0021) |
 | GCP KMS | planned (M2-2) |
 | Local development provider (`local`) | implemented; **development only** (ADR 0019) |
@@ -135,6 +135,50 @@ against both servers (ADR 0021). Settings are in the `CIPHERFRAME_KMS_VAULT_*` r
   category, never the server's text, because Vault can echo request input.
 - **TLS**: production requires `https`. `CIPHERFRAME_KMS_VAULT_CA_FILE` replaces the system roots;
   TLS 1.2 is the minimum.
+
+## The AWS KMS provider
+
+`awskms` wraps content keys with the KMS `Encrypt` and `Decrypt` operations under one symmetric
+encryption key, so the KEK never leaves KMS. It is built into the standard binary and image; a build
+with the `nokms_aws` tag leaves it out and refuses to start when it is configured (ADR 0022).
+
+- **Key identity.** `CIPHERFRAME_KMS_AWS_KEY_ID` is a key ARN, an alias ARN or `alias/name`. `Current`
+  resolves it with `DescribeKey` to the key's ARN, and every wrapped key records that ARN as its KEK
+  id. `Unwrap` sends the stored ARN to KMS, so a ciphertext opens only under the key that wrapped it,
+  and keeps working after an alias is pointed at another key. Keep the old key enabled until no
+  content key refers to it.
+- **No visible version.** AWS rotates the backing key material transparently (automatic rotation) and
+  keeps old material for decryption, so there is nothing for a caller to choose. The recorded KEK
+  version is the constant `managed`. Rotation by AWS needs no action and no re-wrap; moving to a
+  different KMS key is the M2-4 re-wrap.
+- **Associated data.** KMS has no separate associated-data input. The associated data is sent as the
+  encryption context, base64-encoded under the context key `cf-aad`, and KMS fails `Decrypt` when it
+  differs. It contains the asset id and content key id, so those ids appear in CloudTrail entries for
+  the key. Plaintext keys never do.
+- **Credentials.** `CIPHERFRAME_KMS_AWS_ACCESS_KEY_ID` and `..._SECRET_ACCESS_KEY` follow the S3
+  rules (see `docs/usage.md`): both set means a static key pair, both empty means the AWS SDK default
+  credential chain (environment, shared config, container or instance role; preferred in
+  production), and production refuses to start with the variables absent. Absent in development also
+  uses the default chain, because KMS has no anonymous access.
+- **Permissions.** The identity needs `kms:DescribeKey`, `kms:Encrypt` and `kms:Decrypt` on the key.
+- **Errors.** A disabled, pending-deletion or missing key is `ErrNotConfigured`; access denied or
+  rejected credentials is `ErrDenied`; a tampered ciphertext, a different associated data or a
+  mismatched key is `ErrInvalid`; throttling, 5xx, network failures and timeouts are `ErrUnavailable`
+  (the SDK retries them within `CIPHERFRAME_KMS_AWS_TIMEOUT`); everything else is `Other`. Errors carry
+  only the AWS error code and HTTP status, never the SDK's text, which can include ARNs.
+- **Limits.** KMS `Encrypt` accepts at most 4096 bytes; content keys are 16 bytes.
+
+Testing: normal CI runs the conformance suite against a pinned `moto` server (ADR 0023). moto differs
+from AWS in places (it does not enforce disabled keys on `Encrypt`/`Decrypt`, answers a mismatched
+pinned key with `AccessDeniedException`, and does not rotate key material visibly), so before a
+release run the opt-in suite against a real key:
+
+```sh
+CIPHERFRAME_TEST_AWS_KMS_KEY_ID=alias/cipherframe-test CIPHERFRAME_TEST_AWS_REGION=eu-west-1 \
+  go test -count=1 -tags=integration -run TestRealAWSKMS ./internal/kms/awskms/
+```
+
+It uses the default credential chain and a symmetric key you can encrypt and decrypt with.
 
 ## Operations
 
