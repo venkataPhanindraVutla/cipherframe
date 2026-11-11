@@ -596,6 +596,145 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/master.m3u8:
+    get:
+      operationId: getPlaybackMaster
+      summary: Session master playlist
+      description: |
+        The master playlist of the session's asset, rewritten for this session (ADR 0027, 0030):
+        each variant URI is `<rendition>/media.m3u8`, relative to the session path. Requires a
+        playback token with the `manifest` scope (see `playbackToken`). Unlike segments, a playlist
+        request also checks the session row: a session that is revoked, ended, past its maximum age
+        or idle past the idle timeout answers `401`, the same as a bad token, so the status does not
+        reveal why.
+
+        When the tenant has `token_in_url` on, every URI in the playlist carries `?t=<token>`;
+        otherwise none does. The response is `no-store` and carries `Referrer-Policy: no-referrer`.
+
+        **CORS.** A browser origin listed in the tenant's `allowed_origins` (exact match) gets
+        `Access-Control-Allow-Origin` with that origin and `Vary: Origin`; any other origin gets no
+        CORS headers. The preflight `OPTIONS` request on this path and on the two below needs no
+        token and answers `204` with `Access-Control-Allow-Methods: GET, OPTIONS` and
+        `Access-Control-Allow-Headers: Authorization`, for an allowed origin only. Credentials are
+        never allowed.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The rewritten master playlist.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/{rendition}/media.m3u8:
+    get:
+      operationId: getPlaybackMedia
+      summary: Session media playlist
+      description: |
+        The media playlist of one rendition, rewritten for this session: the init segment and
+        every media segment are file names relative to the rendition, and the key URI is
+        `../key`, which is `/v1/play/<session_id>/key` (served by a later task). Requires a token
+        with the `manifest` scope and the same session check as the master playlist. The same
+        `token_in_url` and CORS rules apply.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayRendition"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The rewritten media playlist.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/{rendition}/{file}:
+    get:
+      operationId: getPlaybackSegment
+      summary: Init or media segment
+      description: |
+        Streams the rendition's init segment (`init.mp4`, `video/mp4`) or one encrypted media
+        segment (`seg-<n>.m4s`, `video/iso.segment`) from the delivery bucket, with `Content-Length`.
+        Requires a token with the `segment` scope. This path is stateless: it checks the token (MAC,
+        expiry, scope, session) and never reads the session row, so a revoked session can still
+        fetch segments until its token expires; the content stays unreadable without the key
+        (ADR 0028). The asset comes from the token, never from the request. `file` outside the two
+        shapes, or a rendition or segment that does not exist, is `404`.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayRendition"
+        - $ref: "#/components/parameters/PlayFile"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The segment bytes.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              description: "Always `private, max-age=300`: the bytes are immutable and useless without the key."
+              required: true
+              schema:
+                type: string
+                enum: ["private, max-age=300"]
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            video/iso.segment:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/uploads/multipart/{asset_id}/parts:
     get:
       operationId: listUploadParts
@@ -758,6 +897,16 @@ components:
         `createAsset`. It is bound to one asset, stored hashed, checked against the database on
         every request and refused after its expiry, after commit and after abort. API keys are never
         accepted on upload endpoints.
+    playbackToken:
+      type: http
+      scheme: bearer
+      bearerFormat: Cipherframe playback token (v1.<payload>.<kid>.<mac>)
+      description: |
+        A playback token (ADR 0028, 0030) from `createPlaybackSession`, checked statelessly: MAC,
+        expiry, scope and session. It goes in `Authorization: Bearer <token>`. Only when the tenant
+        has `token_in_url` on may it go in the query parameter `t` instead, for native HLS players
+        that cannot set headers. Sending it both ways is `400 invalid_request`; sending it in the
+        query when the setting is off is `401`. Any token failure is the same `401`.
   parameters:
     Limit:
       name: limit
@@ -786,6 +935,39 @@ components:
       schema:
         type: string
         maxLength: 64
+    PlaySessionId:
+      name: session_id
+      in: path
+      required: true
+      description: A session ID (`ses_` followed by 52 characters). It grants nothing without a token.
+      schema:
+        $ref: "#/components/schemas/SessionId"
+    PlayRendition:
+      name: rendition
+      in: path
+      required: true
+      description: A rendition name from the master playlist, 1 to 16 characters from `[a-z0-9_]`.
+      schema:
+        type: string
+        pattern: "^[a-z0-9_]{1,16}$"
+    PlayFile:
+      name: file
+      in: path
+      required: true
+      description: "`init.mp4` or `seg-<n>.m4s` with `<n>` a number without leading zeros."
+      schema:
+        type: string
+        pattern: "^(init\\.mp4|seg-(0|[1-9][0-9]{0,8})\\.m4s)$"
+    PlayTokenQuery:
+      name: t
+      in: query
+      required: false
+      description: |
+        The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+        sent together with `Authorization`.
+      schema:
+        type: string
+        maxLength: 1024
     KeyId:
       name: key_id
       in: path
@@ -809,11 +991,35 @@ components:
       schema:
         type: string
         enum: [no-store]
+    ReferrerPolicyNoReferrer:
+      description: Always `no-referrer`, so a token in a URL cannot leak through `Referer`.
+      required: true
+      schema:
+        type: string
+        enum: [no-referrer]
   responses:
     Unauthenticated:
       description: |
         The API key is missing, malformed, unknown, revoked or expired. One generic detail covers
         every case.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+        WWW-Authenticate:
+          description: Always `Bearer`.
+          required: true
+          schema:
+            type: string
+            enum: [Bearer]
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PlaybackUnauthenticated:
+      description: |
+        The playback token is missing, malformed, invalid, expired, for another session or without
+        the scope the request needs; the token was sent in the query while `token_in_url` is off; or
+        (playlists only) the session is no longer active. One generic detail covers every case.
       headers:
         X-Request-Id:
           $ref: "#/components/headers/XRequestId"

@@ -12,6 +12,7 @@ import (
 type server struct {
 	ready *health.Runner
 	up    *Uploads
+	play  *Playback
 }
 
 func requestID(ctx context.Context) string {

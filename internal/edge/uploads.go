@@ -75,7 +75,8 @@ type contentLengthKey struct{}
 // upload token before their handler (or body decoding) runs. Health and readiness pass through.
 type guarded struct {
 	gen.ServerInterface
-	up *Uploads
+	up   *Uploads
+	play *Playback
 }
 
 func (g guarded) run(w http.ResponseWriter, r *http.Request, next func(*http.Request)) {

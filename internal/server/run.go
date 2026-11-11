@@ -166,7 +166,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			return err
 		}
 		defer closeUploads()
-		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, ContentKeys: contentKeys, Uploads: up}).Handler(), log)
+		play, err := newEdgePlayback(repos, buckets, cfg)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, ContentKeys: contentKeys, Uploads: up, Playback: play}).Handler(), log)
 		if err != nil {
 			cleanup()
 			return err
@@ -230,6 +235,21 @@ func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config) (*playback.Servi
 		return nil, fmt.Errorf("playback: %w", err)
 	}
 	return svc, nil
+}
+
+// newEdgePlayback builds the playlist and segment routes of the edge role: it verifies playback
+// tokens with the configured keyring (ADR 0028), reads sessions and settings from the database and
+// streams segments from the delivery bucket.
+func newEdgePlayback(repos *db.Repos, buckets *storage.Buckets, cfg *config.Config) (*edge.Playback, error) {
+	keyring, err := token.KeyringFromConfig(cfg.Playback)
+	if err != nil {
+		return nil, fmt.Errorf("playback: %w", err)
+	}
+	p, err := edge.NewPlayback(edge.PlaybackDeps{Keyring: keyring, Store: repos, Delivery: buckets.Delivery})
+	if err != nil {
+		return nil, fmt.Errorf("playback: %w", err)
+	}
+	return p, nil
 }
 
 // newEdgeUploads builds the upload endpoints of the edge role: the token check, the multipart
