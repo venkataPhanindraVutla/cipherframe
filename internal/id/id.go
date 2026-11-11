@@ -27,12 +27,15 @@ type (
 	APIKeyKind struct{}
 	// AssetKind marks asset IDs.
 	AssetKind struct{}
+	// ContentKeyKind marks content key IDs.
+	ContentKeyKind struct{}
 )
 
-func (TenantKind) prefix() string { return "ten" }
-func (ClientKind) prefix() string { return "cli" }
-func (APIKeyKind) prefix() string { return "key" }
-func (AssetKind) prefix() string  { return "ast" }
+func (TenantKind) prefix() string     { return "ten" }
+func (ClientKind) prefix() string     { return "cli" }
+func (APIKeyKind) prefix() string     { return "key" }
+func (AssetKind) prefix() string      { return "ast" }
+func (ContentKeyKind) prefix() string { return "cky" }
 
 // Aliases for the concrete ID types.
 type (
@@ -40,6 +43,8 @@ type (
 	ClientID = ID[ClientKind]
 	APIKeyID = ID[APIKeyKind]
 	AssetID  = ID[AssetKind]
+	// ContentKeyID identifies a content key row. It is not secret.
+	ContentKeyID = ID[ContentKeyKind]
 )
 
 const uuidTextLen = 26
