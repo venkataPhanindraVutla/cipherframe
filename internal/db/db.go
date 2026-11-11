@@ -29,6 +29,13 @@ var ErrUnsupportedServer = errors.New("db: unsupported PostgreSQL server version
 // Open creates a connection pool from cfg.DatabaseURL and verifies it with a ping. The URL is
 // revealed only here, and no returned error contains it or any text derived from it.
 func Open(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
+	return OpenSized(ctx, cfg, 0)
+}
+
+// OpenSized is Open with a cap on the pool's connections; zero keeps the driver default. The edge
+// uses a second, larger pool for the advisory locks that tus uploads hold on a connection for as
+// long as a request lasts, so uploads cannot starve ordinary queries.
+func OpenSized(ctx context.Context, cfg *config.Config, maxConns int32) (*pgxpool.Pool, error) {
 	if cfg == nil || cfg.DatabaseURL.IsEmpty() {
 		return nil, errs.New(errs.InternalError, "database is not configured")
 	}
@@ -37,6 +44,9 @@ func Open(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
 		// pgx parse errors can quote parts of the URL; drop the text entirely.
 		return nil, errs.Wrap(errs.InternalError, "database URL is invalid",
 			errors.New("db: database URL could not be parsed"))
+	}
+	if maxConns > 0 {
+		poolCfg.MaxConns = maxConns
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

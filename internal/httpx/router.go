@@ -26,6 +26,7 @@ type Router struct {
 
 	mu       sync.Mutex
 	patterns []string
+	mounts   []string
 }
 
 // NewRouter returns an empty Router.
@@ -37,6 +38,25 @@ func (rt *Router) HandleFunc(pattern string, handler func(http.ResponseWriter, *
 	rt.mu.Lock()
 	rt.patterns = append(rt.patterns, pattern)
 	rt.mu.Unlock()
+}
+
+// Mount registers a handler that is not generated from the spec (for example a protocol library
+// that owns a whole path prefix) for every method under pattern, which must end in a slash. It is
+// listed by Mounts, not Patterns, so route-coverage tests can treat the two separately.
+func (rt *Router) Mount(pattern string, h http.Handler) {
+	rt.mux.Handle(pattern, h)
+	rt.mu.Lock()
+	rt.mounts = append(rt.mounts, pattern)
+	rt.mu.Unlock()
+}
+
+// Mounts returns the patterns registered with Mount, sorted.
+func (rt *Router) Mounts() []string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	out := append([]string(nil), rt.mounts...)
+	sort.Strings(out)
+	return out
 }
 
 // Patterns returns the registered patterns, sorted. Tests compare it with the spec.

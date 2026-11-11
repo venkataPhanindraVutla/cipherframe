@@ -7,12 +7,14 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
 
 // server implements gen.StrictServerInterface.
 type server struct {
-	ready *health.Runner
-	mgr   *auth.Manager
+	ready  *health.Runner
+	mgr    *auth.Manager
+	assets *uploads.Service
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

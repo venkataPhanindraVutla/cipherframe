@@ -64,6 +64,11 @@ func (f *fakeAPI) CreateMultipartUpload(context.Context, *s3.CreateMultipartUplo
 	return nil, nil
 }
 
+func (f *fakeAPI) UploadPart(context.Context, *s3.UploadPartInput, ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+	f.t.Fatal("unexpected UploadPart")
+	return nil, nil
+}
+
 func (f *fakeAPI) CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput, ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
 	f.t.Fatal("unexpected CompleteMultipartUpload")
 	return nil, nil

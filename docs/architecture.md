@@ -31,7 +31,8 @@ Whether these are separate binaries or one binary with roles is **pending (P4)**
 
 All object access goes through `internal/storage` (ADR 0014). `storage.New` returns `Buckets{Source,
 Delivery}`, each a `Store`: put, get (optionally a byte range), head, list with a continuation cursor,
-batch delete, presigned GET and PUT, and multipart upload with presigned parts. Bodies are streamed;
+batch delete, presigned GET and PUT, and multipart upload (presigned parts for servers, and `UploadPart`,
+which streams a part from a request body). Bodies are streamed;
 library code never holds a whole object in memory. Creating buckets, ACLs, lifecycle rules and
 versioning are not part of the port; they belong to deployment.
 
@@ -46,7 +47,7 @@ names, never user-supplied text:
 
 | Bucket | Key |
 |---|---|
-| source | `t/<tenant>/a/<asset>/source/original` |
+| source | `t/<tenant>/a/<asset>/source/<128 random bits, hex>` (stored on the asset row, never derivable from IDs) |
 | delivery | `t/<tenant>/a/<asset>/…` (playlists, init and media segments, poster) |
 
 `keys.AssetPrefixes` returns the prefix deletion must enumerate in each bucket. It lives beside the
@@ -73,6 +74,40 @@ keys per request and fails if S3 reports any per-key error inside a successful r
   when you provide credentials, against real S3 or R2; passing it is the only evidence of
   compatibility. `Head` cannot tell a missing bucket from a missing object, because S3 sends no body
   on HEAD.
+
+### Upload data flow (ADR 0025, 0026)
+
+```text
+embedding app --API key--> api   POST /v1/assets        creates the asset (created), the S3 multipart
+                                                         upload (multipart only) and an upload token
+browser ------upload token--> edge  tus  POST/HEAD/PATCH /v1/uploads/tus/...          (tusd, S3 store)
+browser ------upload token--> edge  PUT  /v1/uploads/multipart/{asset}/parts/{n}      (streamed UploadPart)
+                              edge  ----S3----> source bucket   <source key>[.info|.part]
+embedding app --API key--> api   POST /v1/assets/{id}/commit    multipart: complete the upload; both:
+                                                                 Head the object, check the size, then in
+                                                                 one transaction: committed + enqueue
+                                                                 asset.process {tenant_id, asset_id}
+```
+
+All upload bytes pass through `edge`; no response, header or log line names the source object key,
+the source bucket or an object-store upload ID, and no presigned URL is ever returned. An upload
+token is 256 random bits bound to one asset, stored hashed and checked against the database on every
+request; it ends at its expiry, at commit and at abort. tusd stores its upload object and its
+`.info` and `.part` objects under the asset's source prefix (the tus resource ID clients see is the
+asset ID), and Postgres advisory locks keep one writer per upload across edge replicas. tusd parks
+incoming data on local disk until a part is complete, so edge needs temporary disk of about three
+part sizes per active tus upload.
+
+**What the upload path does not protect against.**
+
+- A token holder can upload to that one asset until the token expires, is committed or is aborted.
+  Tokens are not bound to an address or an origin.
+- Uploads are not scanned for malware. The size limit (`CIPHERFRAME_MAX_SOURCE_BYTES`) and the token
+  lifetime bound what a token holder can send; they are DoS mitigations, not guarantees. Duration and
+  resolution limits are enforced by the probe step, not here.
+- Abandoned uploads that nobody aborts leave incomplete multipart uploads until the storage purge or
+  a bucket lifecycle rule removes them. An abort that races a tus chunk in flight can leave a partial
+  object behind for the same purge.
 
 ## State
 
@@ -225,6 +260,10 @@ provider (AWS KMS, Vault Transit, GCP KMS; a development-only local provider is 
 ## Lifecycle
 
 `created → uploading → committed → processing → ready | failed → deleted`
+
+Every change is a compare-and-set in the database (`UPDATE … WHERE state = $expected`) along the
+edges of one Go table, so two writers can never both win a transition (ADR 0026). Commit enqueues
+`asset.process` in the same transaction that sets `committed`; its handler arrives with M3-3.
 
 Deletion enumerates storage, destroys the content key, re-lists to confirm nothing is left, and signs
 a record. See [integrity.md](integrity.md).

@@ -43,6 +43,7 @@ func Run(t *testing.T, newStore func(t *testing.T) storage.Store) {
 		{"PresignedGetExpires", testPresignedExpiry},
 		{"MultipartViaPresignedParts", testMultipart},
 		{"MultipartAbort", testMultipartAbort},
+		{"MultipartViaUploadPart", testMultipartUploadPart},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -509,5 +510,46 @@ func testMultipartAbort(t *testing.T, s storage.Store, p string) {
 	}
 	if _, err := s.Head(ctxFor(t), key); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("aborted upload left an object: %v", err)
+	}
+}
+
+// oneWay hides the Seek method of a bytes.Reader, like a request body.
+type oneWay struct{ r io.Reader }
+
+func (o oneWay) Read(p []byte) (int, error) { return o.r.Read(p) }
+
+func testMultipartUploadPart(t *testing.T, s storage.Store, p string) {
+	key := p + "streamed"
+	const partSize = 5 * 1024 * 1024
+	parts := [][]byte{payload(t, partSize), payload(t, 777)}
+
+	uploadID, err := s.CreateMultipart(ctxFor(t), key, "video/mp4")
+	if err != nil {
+		t.Fatalf("create multipart: %v", err)
+	}
+	var done []storage.CompletedPart
+	for i, data := range parts {
+		num := int32(i + 1)
+		etag, err := s.UploadPart(ctxFor(t), key, uploadID, num, oneWay{bytes.NewReader(data)}, int64(len(data)))
+		if err != nil || etag == "" {
+			t.Fatalf("upload part %d: etag %q, %v", num, etag, err)
+		}
+		done = append(done, storage.CompletedPart{PartNumber: num, ETag: etag})
+	}
+	// Uploading a part again replaces it; the newest ETag is the one to complete with.
+	etag, err := s.UploadPart(ctxFor(t), key, uploadID, 2, oneWay{bytes.NewReader(parts[1])}, int64(len(parts[1])))
+	if err != nil {
+		t.Fatalf("re-upload part 2: %v", err)
+	}
+	done[1].ETag = etag
+	if err := s.CompleteMultipart(ctxFor(t), key, uploadID, done); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	want := bytes.Join(parts, nil)
+	if got := mustGetAll(t, s, key); sha256.Sum256(got) != sha256.Sum256(want) {
+		t.Fatal("assembled object differs from the uploaded parts")
+	}
+	if _, err := s.UploadPart(ctxFor(t), key, uploadID, 3, oneWay{bytes.NewReader(parts[1])}, 1); err == nil {
+		t.Fatal("uploading a part to a completed upload succeeded")
 	}
 }

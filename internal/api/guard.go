@@ -27,6 +27,12 @@ var operationScopes = map[string][]db.Scope{
 	"ListKeys":     {db.ScopeAdmin},
 	"RotateKey":    {},
 	"RevokeKey":    {db.ScopeAdmin},
+
+	"CreateAsset": {db.ScopeAssetsWrite},
+	"ListAssets":  {db.ScopeAssetsRead},
+	"GetAsset":    {db.ScopeAssetsRead},
+	"CommitAsset": {db.ScopeAssetsWrite},
+	"AbortAsset":  {db.ScopeAssetsWrite},
 }
 
 // publicOperations are served without authentication.
@@ -138,4 +144,24 @@ func (g guarded) RotateKey(w http.ResponseWriter, r *http.Request, keyID gen.Key
 
 func (g guarded) RevokeKey(w http.ResponseWriter, r *http.Request, keyID gen.KeyId) {
 	g.a.run("RevokeKey", w, r, func(r *http.Request) { g.ServerInterface.RevokeKey(w, r, keyID) })
+}
+
+func (g guarded) CreateAsset(w http.ResponseWriter, r *http.Request) {
+	g.a.run("CreateAsset", w, r, func(r *http.Request) { g.ServerInterface.CreateAsset(w, r) })
+}
+
+func (g guarded) ListAssets(w http.ResponseWriter, r *http.Request, params gen.ListAssetsParams) {
+	g.a.run("ListAssets", w, r, func(r *http.Request) { g.ServerInterface.ListAssets(w, r, params) })
+}
+
+func (g guarded) GetAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("GetAsset", w, r, func(r *http.Request) { g.ServerInterface.GetAsset(w, r, assetID) })
+}
+
+func (g guarded) CommitAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("CommitAsset", w, r, func(r *http.Request) { g.ServerInterface.CommitAsset(w, r, assetID) })
+}
+
+func (g guarded) AbortAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("AbortAsset", w, r, func(r *http.Request) { g.ServerInterface.AbortAsset(w, r, assetID) })
 }

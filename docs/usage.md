@@ -122,6 +122,19 @@ seconds to finish and is otherwise retried later.
 **Health.** `GET /healthz` (liveness) and `GET /readyz` (readiness: database, source bucket,
 delivery bucket) are served on both the api and edge listeners. See [api.md](api.md).
 
+### Uploads
+
+The `api` role needs `CIPHERFRAME_EDGE_PUBLIC_URL`; the `edge` role serves the upload endpoints
+(`/v1/uploads/tus/` and `/v1/uploads/multipart/…`, see [api.md](api.md#assets-and-uploads-adr-0025-0026)).
+Both roles need the source bucket. The edge role opens a second, dedicated pool of up to 16 database
+connections for tus upload locks (one per active upload request, so at most 16 concurrent tus writes
+per edge replica; further requests wait for a lock). Size Postgres `max_connections` for the main
+pools plus 16 per edge replica, and
+tus parks incoming data on local disk until a part is complete: provide temporary space of about three
+`CIPHERFRAME_UPLOAD_PART_BYTES` per concurrent tus upload. Put a reverse proxy in front of the edge
+with request and response timeouts of at least several minutes for these paths, and do not buffer
+request bodies there.
+
 ### What running the server does not protect against
 
 - `/healthz` and `/readyz` are public by design. They reveal that the service is up and the names
@@ -279,6 +292,10 @@ variable, never its value.
 | `CIPHERFRAME_S3_DELIVERY_BUCKET` | none | yes | no | Same rules; must differ from the source bucket. |
 | `CIPHERFRAME_S3_ACCESS_KEY_ID` | unset | production: yes | yes | Credential, see below. Both S3 credentials must be in the same state. |
 | `CIPHERFRAME_S3_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see below. |
+| `CIPHERFRAME_EDGE_PUBLIC_URL` | none | with the `api` role | no | Base URL browsers use to reach the edge listener, for example `https://media.example.com`: absolute `http(s)`, no path, query or credentials. The API puts it in upload instructions, and tus uses it for `Location` headers. The server refuses to start the `api` role without it. |
+| `CIPHERFRAME_MAX_SOURCE_BYTES` | `10737418240` (10 GiB) | no | no | Largest source an asset may declare, in bytes (1 MiB to 5 TiB). Checked at asset creation and again at commit. |
+| `CIPHERFRAME_UPLOAD_TOKEN_TTL` | `24h` | no | no | How long an upload token works: a Go duration from `1m` to `168h`. |
+| `CIPHERFRAME_UPLOAD_PART_BYTES` | `67108864` (64 MiB) | no | no | Part size for multipart uploads and tus chunks to the object store, in bytes (5 MiB to 5 GiB). The maximum source size divided by it may not exceed 10000 parts. |
 | `CIPHERFRAME_API_KEY_PEPPERS` | none | yes | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded pepper is at least 32 bytes (standard base64). |
 | `CIPHERFRAME_API_KEY_PEPPER_CURRENT` | none | yes | no | Positive integer naming a version in the set. |
 | `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. Docker Compose uses `local` with a `dev-placeholder-` KEK (ADR 0019, ADR 0022). |

@@ -18,6 +18,36 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AssetState.
+const (
+	Committed  AssetState = "committed"
+	Created    AssetState = "created"
+	Failed     AssetState = "failed"
+	Processing AssetState = "processing"
+	Ready      AssetState = "ready"
+	Uploading  AssetState = "uploading"
+)
+
+// Valid indicates whether the value is a known member of the AssetState enum.
+func (e AssetState) Valid() bool {
+	switch e {
+	case Committed:
+		return true
+	case Created:
+		return true
+	case Failed:
+		return true
+	case Processing:
+		return true
+	case Ready:
+		return true
+	case Uploading:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
@@ -141,6 +171,24 @@ func (e Scope) Valid() bool {
 	}
 }
 
+// Defines values for UploadMethod.
+const (
+	Multipart UploadMethod = "multipart"
+	Tus       UploadMethod = "tus"
+)
+
+// Valid indicates whether the value is a known member of the UploadMethod enum.
+func (e UploadMethod) Valid() bool {
+	switch e {
+	case Multipart:
+		return true
+	case Tus:
+		return true
+	default:
+		return false
+	}
+}
+
 // ApiKey defines model for ApiKey.
 type ApiKey struct {
 	ClientId  ClientId  `json:"client_id"`
@@ -169,6 +217,43 @@ type ApiKeyList struct {
 	NextCursor *string  `json:"next_cursor,omitempty"`
 }
 
+// Asset defines model for Asset.
+type Asset struct {
+	CommittedAt *time.Time `json:"committed_at,omitempty"`
+	ContentType *string    `json:"content_type,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	FailedAt    *time.Time `json:"failed_at,omitempty"`
+
+	// FailureCode Why the asset failed, for example `upload_aborted`. A stable lower_snake_case code.
+	FailureCode         *string      `json:"failure_code,omitempty"`
+	Id                  AssetIdValue `json:"id"`
+	ProcessingStartedAt *time.Time   `json:"processing_started_at,omitempty"`
+	ReadyAt             *time.Time   `json:"ready_at,omitempty"`
+	SizeBytes           int64        `json:"size_bytes"`
+
+	// State The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`
+	// (`deleted` assets are not returned).
+	State     AssetState `json:"state"`
+	UpdatedAt time.Time  `json:"updated_at"`
+
+	// UploadExpiresAt When the upload token expires.
+	UploadExpiresAt *time.Time   `json:"upload_expires_at,omitempty"`
+	UploadMethod    UploadMethod `json:"upload_method"`
+}
+
+// AssetIdValue defines model for AssetIdValue.
+type AssetIdValue = string
+
+// AssetList defines model for AssetList.
+type AssetList struct {
+	Items      []Asset `json:"items"`
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AssetState The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`
+// (`deleted` assets are not returned).
+type AssetState string
+
 // Client defines model for Client.
 type Client struct {
 	CreatedAt time.Time `json:"created_at"`
@@ -190,6 +275,16 @@ type ClientList struct {
 
 	// NextCursor Present when more items follow; pass it as `cursor`.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// CreateAssetRequest defines model for CreateAssetRequest.
+type CreateAssetRequest struct {
+	// ContentType Optional lower-case media type such as `video/mp4`. Stored as object metadata only.
+	ContentType *string `json:"content_type,omitempty"`
+
+	// SizeBytes The exact size of the source in bytes. Edge and commit both enforce it.
+	SizeBytes    int64        `json:"size_bytes"`
+	UploadMethod UploadMethod `json:"upload_method"`
 }
 
 // CreateClientRequest defines model for CreateClientRequest.
@@ -232,6 +327,12 @@ type CreatedApiKey struct {
 	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
 	RotatedAt          *time.Time `json:"rotated_at,omitempty"`
 	Scopes             []Scope    `json:"scopes"`
+}
+
+// CreatedAsset defines model for CreatedAsset.
+type CreatedAsset struct {
+	Asset  Asset              `json:"asset"`
+	Upload UploadInstructions `json:"upload"`
 }
 
 // HealthResponse defines model for HealthResponse.
@@ -290,6 +391,27 @@ type RotateKeyRequest struct {
 // Scope An API key scope (ADR 0009).
 type Scope string
 
+// UploadInstructions defines model for UploadInstructions.
+type UploadInstructions struct {
+	ExpiresAt time.Time    `json:"expires_at"`
+	Method    UploadMethod `json:"method"`
+
+	// PartSizeBytes Multipart only. Send parts of exactly this size (the last may be smaller).
+	PartSizeBytes *int64 `json:"part_size_bytes,omitempty"`
+
+	// Token The upload token, sent as `Authorization: Bearer <token>` to edge only. It is shown
+	// here once, works for this asset only and stops working at `expires_at`, on commit and
+	// on abort.
+	Token string `json:"token"`
+
+	// Url For `tus`, the tus creation endpoint on edge. For `multipart`, the base URL of the
+	// parts: PUT `<url><part_number>` for each part, GET `<url>` to list them.
+	Url string `json:"url"`
+}
+
+// UploadMethod defines model for UploadMethod.
+type UploadMethod string
+
 // Whoami defines model for Whoami.
 type Whoami struct {
 	ClientId ClientId `json:"client_id"`
@@ -297,6 +419,9 @@ type Whoami struct {
 	Scopes   []Scope  `json:"scopes"`
 	TenantId string   `json:"tenant_id"`
 }
+
+// AssetId defines model for AssetId.
+type AssetId = string
 
 // Cursor defines model for Cursor.
 type Cursor = string
@@ -309,6 +434,15 @@ type Limit = int
 
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
+
+// ListAssetsParams defines parameters for ListAssets.
+type ListAssetsParams struct {
+	// Limit Page size, 1 to 100 (default 50).
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Treat it as opaque.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
 
 // ListClientsParams defines parameters for ListClients.
 type ListClientsParams struct {
@@ -328,6 +462,9 @@ type ListKeysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// CreateAssetJSONRequestBody defines body for CreateAsset for application/json ContentType.
+type CreateAssetJSONRequestBody = CreateAssetRequest
+
 // CreateClientJSONRequestBody defines body for CreateClient for application/json ContentType.
 type CreateClientJSONRequestBody = CreateClientRequest
 
@@ -345,6 +482,21 @@ type ServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// ListAssets List assets
+	// (GET /v1/assets)
+	ListAssets(w http.ResponseWriter, r *http.Request, params ListAssetsParams)
+	// CreateAsset Create an asset and start an upload
+	// (POST /v1/assets)
+	CreateAsset(w http.ResponseWriter, r *http.Request)
+	// GetAsset Get an asset
+	// (GET /v1/assets/{asset_id})
+	GetAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// AbortAsset Abort an upload
+	// (POST /v1/assets/{asset_id}/abort)
+	AbortAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// CommitAsset Finish the upload and start processing
+	// (POST /v1/assets/{asset_id}/commit)
+	CommitAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(w http.ResponseWriter, r *http.Request, params ListClientsParams)
@@ -396,6 +548,144 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAssets operation middleware
+func (siw *ServerInterfaceWrapper) ListAssets(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAssetsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAssets(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAsset operation middleware
+func (siw *ServerInterfaceWrapper) CreateAsset(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAsset(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAsset operation middleware
+func (siw *ServerInterfaceWrapper) GetAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAsset(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AbortAsset operation middleware
+func (siw *ServerInterfaceWrapper) AbortAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AbortAsset(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CommitAsset operation middleware
+func (siw *ServerInterfaceWrapper) CommitAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CommitAsset(w, r, assetId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -720,6 +1010,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/keys", wrapper.CreateKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/keys/{key_id}/rotate", wrapper.RotateKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/keys/{key_id}/revoke", wrapper.RevokeKey)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets", wrapper.ListAssets)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets", wrapper.CreateAsset)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.GetAsset)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
 
 	return m
 }
@@ -849,6 +1144,602 @@ type GetReadyzdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetReadyzdefaultApplicationProblemPlusJSONResponse) VisitGetReadyzResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetsRequestObject struct {
+	Params ListAssetsParams
+}
+
+type ListAssetsResponseObject interface {
+	VisitListAssetsResponse(w http.ResponseWriter) error
+}
+
+type ListAssets200ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAssets200JSONResponse struct {
+	Body    AssetList
+	Headers ListAssets200ResponseHeaders
+}
+
+func (response ListAssets200JSONResponse) VisitListAssetsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssets401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAssets401ApplicationProblemPlusJSONResponse) VisitListAssetsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssets403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListAssets403ApplicationProblemPlusJSONResponse) VisitListAssetsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAssetsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListAssetsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListAssetsdefaultApplicationProblemPlusJSONResponse) VisitListAssetsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetRequestObject struct {
+	Body *CreateAssetJSONRequestBody
+}
+
+type CreateAssetResponseObject interface {
+	VisitCreateAssetResponse(w http.ResponseWriter) error
+}
+
+type CreateAsset201ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type CreateAsset201JSONResponse struct {
+	Body    CreatedAsset
+	Headers CreateAsset201ResponseHeaders
+}
+
+func (response CreateAsset201JSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAsset401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAsset401ApplicationProblemPlusJSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAsset403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAsset403ApplicationProblemPlusJSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAsset413ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAsset413ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateAsset413ResponseHeaders
+}
+
+func (response CreateAsset413ApplicationProblemPlusJSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    CreateAssetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response CreateAssetdefaultApplicationProblemPlusJSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type GetAssetResponseObject interface {
+	VisitGetAssetResponse(w http.ResponseWriter) error
+}
+
+type GetAsset200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAsset200JSONResponse struct {
+	Body    Asset
+	Headers GetAsset200ResponseHeaders
+}
+
+func (response GetAsset200JSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAsset401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAsset401ApplicationProblemPlusJSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAsset403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetAsset403ApplicationProblemPlusJSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAsset404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAsset404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAsset404ResponseHeaders
+}
+
+func (response GetAsset404ApplicationProblemPlusJSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetAssetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetAssetdefaultApplicationProblemPlusJSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortAssetRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type AbortAssetResponseObject interface {
+	VisitAbortAssetResponse(w http.ResponseWriter) error
+}
+
+type AbortAsset200ResponseHeaders struct {
+	XRequestId string
+}
+
+type AbortAsset200JSONResponse struct {
+	Body    Asset
+	Headers AbortAsset200ResponseHeaders
+}
+
+func (response AbortAsset200JSONResponse) VisitAbortAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortAsset401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response AbortAsset401ApplicationProblemPlusJSONResponse) VisitAbortAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortAsset403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response AbortAsset403ApplicationProblemPlusJSONResponse) VisitAbortAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortAsset404ResponseHeaders struct {
+	XRequestId string
+}
+
+type AbortAsset404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers AbortAsset404ResponseHeaders
+}
+
+func (response AbortAsset404ApplicationProblemPlusJSONResponse) VisitAbortAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortAsset409ResponseHeaders struct {
+	XRequestId string
+}
+
+type AbortAsset409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers AbortAsset409ResponseHeaders
+}
+
+func (response AbortAsset409ApplicationProblemPlusJSONResponse) VisitAbortAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortAssetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type AbortAssetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    AbortAssetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response AbortAssetdefaultApplicationProblemPlusJSONResponse) VisitAbortAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CommitAssetRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type CommitAssetResponseObject interface {
+	VisitCommitAssetResponse(w http.ResponseWriter) error
+}
+
+type CommitAsset200ResponseHeaders struct {
+	XRequestId string
+}
+
+type CommitAsset200JSONResponse struct {
+	Body    Asset
+	Headers CommitAsset200ResponseHeaders
+}
+
+func (response CommitAsset200JSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CommitAsset401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response CommitAsset401ApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CommitAsset403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CommitAsset403ApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CommitAsset404ResponseHeaders struct {
+	XRequestId string
+}
+
+type CommitAsset404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CommitAsset404ResponseHeaders
+}
+
+func (response CommitAsset404ApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CommitAsset409ResponseHeaders struct {
+	XRequestId string
+}
+
+type CommitAsset409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CommitAsset409ResponseHeaders
+}
+
+func (response CommitAsset409ApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CommitAsset413ResponseHeaders struct {
+	XRequestId string
+}
+
+type CommitAsset413ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CommitAsset413ResponseHeaders
+}
+
+func (response CommitAsset413ApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CommitAssetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type CommitAssetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    CommitAssetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response CommitAssetdefaultApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -1534,6 +2425,21 @@ type StrictServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(ctx context.Context, request GetReadyzRequestObject) (GetReadyzResponseObject, error)
+	// ListAssets List assets
+	// (GET /v1/assets)
+	ListAssets(ctx context.Context, request ListAssetsRequestObject) (ListAssetsResponseObject, error)
+	// CreateAsset Create an asset and start an upload
+	// (POST /v1/assets)
+	CreateAsset(ctx context.Context, request CreateAssetRequestObject) (CreateAssetResponseObject, error)
+	// GetAsset Get an asset
+	// (GET /v1/assets/{asset_id})
+	GetAsset(ctx context.Context, request GetAssetRequestObject) (GetAssetResponseObject, error)
+	// AbortAsset Abort an upload
+	// (POST /v1/assets/{asset_id}/abort)
+	AbortAsset(ctx context.Context, request AbortAssetRequestObject) (AbortAssetResponseObject, error)
+	// CommitAsset Finish the upload and start processing
+	// (POST /v1/assets/{asset_id}/commit)
+	CommitAsset(ctx context.Context, request CommitAssetRequestObject) (CommitAssetResponseObject, error)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(ctx context.Context, request ListClientsRequestObject) (ListClientsResponseObject, error)
@@ -1637,6 +2543,141 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetReadyzResponseObject); ok {
 		if err := validResponse.VisitGetReadyzResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAssets operation middleware
+func (sh *strictHandler) ListAssets(w http.ResponseWriter, r *http.Request, params ListAssetsParams) {
+	var request ListAssetsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAssets(ctx, request.(ListAssetsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAssets")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAssetsResponseObject); ok {
+		if err := validResponse.VisitListAssetsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateAsset operation middleware
+func (sh *strictHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
+	var request CreateAssetRequestObject
+
+	var body CreateAssetJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateAsset(ctx, request.(CreateAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateAssetResponseObject); ok {
+		if err := validResponse.VisitCreateAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAsset operation middleware
+func (sh *strictHandler) GetAsset(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request GetAssetRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAsset(ctx, request.(GetAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetResponseObject); ok {
+		if err := validResponse.VisitGetAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AbortAsset operation middleware
+func (sh *strictHandler) AbortAsset(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request AbortAssetRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AbortAsset(ctx, request.(AbortAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AbortAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AbortAssetResponseObject); ok {
+		if err := validResponse.VisitAbortAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CommitAsset operation middleware
+func (sh *strictHandler) CommitAsset(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request CommitAssetRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CommitAsset(ctx, request.(CommitAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CommitAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CommitAssetResponseObject); ok {
+		if err := validResponse.VisitCommitAssetResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
