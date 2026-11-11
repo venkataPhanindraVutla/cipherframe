@@ -17,6 +17,7 @@ const (
 	EnvMaxSourceHeight   = "CIPHERFRAME_MAX_SOURCE_HEIGHT"
 	EnvTranscodeTimeout  = "CIPHERFRAME_TRANSCODE_TIMEOUT"
 	EnvWorkDir           = "CIPHERFRAME_WORK_DIR"
+	EnvMediaConcurrency  = "CIPHERFRAME_WORKER_MEDIA_CONCURRENCY"
 )
 
 // Media defaults and ceilings. The ceilings keep a typo from disabling a limit.
@@ -29,6 +30,8 @@ const (
 	defaultTranscodeTimeout  = 6 * time.Hour
 	maxSourceDurationCeiling = 7 * 24 * time.Hour
 	transcodeTimeoutCeiling  = 7 * 24 * time.Hour
+	defaultMediaConcurrency  = 1
+	maxMediaConcurrency      = 64
 	minSourceDimension       = 16
 	maxSourceDimension       = 16384
 )
@@ -51,6 +54,9 @@ type Media struct {
 	// for the downloaded source and the plaintext segments FFmpeg writes. The worker creates it
 	// with mode 0700 and removes a job's subdirectory when the job ends.
 	WorkDir string
+	// Concurrency is how many asset.process jobs one worker process runs at once (the media
+	// queue). Each FFmpeg run already uses every core, so the default is 1.
+	Concurrency int
 }
 
 func (l *loader) media() Media {
@@ -62,6 +68,7 @@ func (l *loader) media() Media {
 		MaxSourceHeight:   l.dimension(EnvMaxSourceHeight, defaultMaxSourceHeight),
 		TranscodeTimeout:  l.positiveDuration(EnvTranscodeTimeout, defaultTranscodeTimeout, transcodeTimeoutCeiling),
 		WorkDir:           l.workDir(),
+		Concurrency:       l.mediaConcurrency(),
 	}
 }
 
@@ -112,6 +119,19 @@ func (l *loader) dimension(name string, def int) int {
 	if err != nil || n < minSourceDimension || n > maxSourceDimension {
 		l.errf("%s must be a whole number of pixels from %d to %d", name, minSourceDimension, maxSourceDimension)
 		return def
+	}
+	return n
+}
+
+func (l *loader) mediaConcurrency() int {
+	v := l.plain(EnvMediaConcurrency, "")
+	if v == "" {
+		return defaultMediaConcurrency
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > maxMediaConcurrency {
+		l.errf("%s must be a whole number from 1 to %d", EnvMediaConcurrency, maxMediaConcurrency)
+		return defaultMediaConcurrency
 	}
 	return n
 }

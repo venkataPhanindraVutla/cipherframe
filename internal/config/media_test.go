@@ -15,7 +15,7 @@ func TestMediaDefaults(t *testing.T) {
 	}
 	m := c.Media
 	if m.FFmpegPath != "ffmpeg" || m.FFprobePath != "ffprobe" || m.MaxSourceDuration != 4*time.Hour ||
-		m.MaxSourceWidth != 3840 || m.MaxSourceHeight != 2160 || m.TranscodeTimeout != 6*time.Hour {
+		m.MaxSourceWidth != 3840 || m.MaxSourceHeight != 2160 || m.TranscodeTimeout != 6*time.Hour || m.Concurrency != 1 {
 		t.Fatalf("unexpected media defaults: %+v", m)
 	}
 	if want := filepath.Join(os.TempDir(), "cipherframe"); m.WorkDir != want {
@@ -28,6 +28,7 @@ func TestMediaOverrides(t *testing.T) {
 		EnvFFmpegPath, "/opt/ff/ffmpeg", EnvFFprobePath, "/opt/ff/ffprobe",
 		EnvMaxSourceDuration, "90m", EnvMaxSourceWidth, "1920", EnvMaxSourceHeight, "1080",
 		EnvTranscodeTimeout, "2h30m", EnvWorkDir, "/var/lib/cipherframe/work/",
+		EnvMediaConcurrency, "4",
 	), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +36,7 @@ func TestMediaOverrides(t *testing.T) {
 	m := c.Media
 	if m.FFmpegPath != "/opt/ff/ffmpeg" || m.FFprobePath != "/opt/ff/ffprobe" || m.MaxSourceDuration != 90*time.Minute ||
 		m.MaxSourceWidth != 1920 || m.MaxSourceHeight != 1080 || m.TranscodeTimeout != 150*time.Minute ||
-		m.WorkDir != "/var/lib/cipherframe/work" {
+		m.WorkDir != "/var/lib/cipherframe/work" || m.Concurrency != 4 {
 		t.Fatalf("unexpected media config: %+v", m)
 	}
 }
@@ -54,6 +55,10 @@ func TestMediaInvalid(t *testing.T) {
 		{EnvMaxSourceHeight, "99999"},
 		{EnvTranscodeTimeout, "0"},
 		{EnvTranscodeTimeout, "1y"},
+		{EnvMediaConcurrency, "0"},
+		{EnvMediaConcurrency, "65"},
+		{EnvMediaConcurrency, "-1"},
+		{EnvMediaConcurrency, "two"},
 		{EnvWorkDir, "relative/dir"},
 		{EnvWorkDir, " /tmp/x"},
 		{EnvWorkDir, "/tmp/x\ny"},
