@@ -55,6 +55,18 @@ type Client struct {
 	DisabledAt *time.Time
 }
 
+type ContentKey struct {
+	ID              pgtype.UUID
+	AssetID         pgtype.UUID
+	Provider        string
+	KekKeyID        string
+	KekVersion      string
+	EnvelopeVersion int16
+	Wrapped         []byte
+	CreatedAt       time.Time
+	RewrappedAt     *time.Time
+}
+
 type ExternalTask struct {
 	ID          pgtype.UUID
 	Kind        string
