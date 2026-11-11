@@ -126,8 +126,10 @@ delivery bucket) are served on both the api and edge listeners. See [api.md](api
 
 The `api` role needs `CIPHERFRAME_EDGE_PUBLIC_URL`; the `edge` role serves the upload endpoints
 (`/v1/uploads/tus/` and `/v1/uploads/multipart/…`, see [api.md](api.md#assets-and-uploads-adr-0025-0026)).
-Both roles need the source bucket. The edge role opens a second, dedicated pool of up to 64 database
-connections for tus upload locks (one per active upload request), so size `max_connections` for it, and
+Both roles need the source bucket. The edge role opens a second, dedicated pool of up to 16 database
+connections for tus upload locks (one per active upload request, so at most 16 concurrent tus writes
+per edge replica; further requests wait for a lock). Size Postgres `max_connections` for the main
+pools plus 16 per edge replica, and
 tus parks incoming data on local disk until a part is complete: provide temporary space of about three
 `CIPHERFRAME_UPLOAD_PART_BYTES` per concurrent tus upload. Put a reverse proxy in front of the edge
 with request and response timeouts of at least several minutes for these paths, and do not buffer

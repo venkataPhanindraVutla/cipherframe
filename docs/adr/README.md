@@ -29,9 +29,11 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0021](0021-vault-transit-test-servers.md) | Vault Transit test servers | none | Accepted | 2026-11-11 |
 | [0022](0022-key-provider-packaging.md) | Key provider packaging | none | Accepted | 2026-11-11 |
 | [0023](0023-kms-provider-test-strategy.md) | KMS provider test strategy | none | Accepted | 2026-11-11 |
+| [0024](0024-encoding-defaults-and-ffmpeg-build.md) | Encoding defaults and FFmpeg build | P8 | Accepted | 2026-11-11 |
+| [0025](0025-resumable-uploads-and-media-limits.md) | Resumable uploads and media limits | none | Accepted | 2026-11-11 |
 | [0026](0026-asset-and-upload-api.md) | Asset and upload API | none | Accepted (flagged for owner review before v1.0.0) | 2026-11-11 |
 
 ## Open gates
 
-P6, P7 (JWT and signed callback), P8 to P14, P16 to P20, P21 (worker). See the build plan's
+P6, P7 (JWT and signed callback), P9 to P14, P16 to P20, P21 (worker). See the build plan's
 decision register.

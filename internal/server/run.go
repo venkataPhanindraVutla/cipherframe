@@ -166,7 +166,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 }
 
 // lockPoolConns caps the connections that hold tus upload locks (one per active upload request).
-const lockPoolConns = 64
+const lockPoolConns = 16
 
 // newAssetService builds the asset service of the api role. The api role needs the edge's public
 // URL to tell clients where to upload; it refuses to start without it.
