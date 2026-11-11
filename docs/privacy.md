@@ -1,6 +1,7 @@
 # Privacy
 
-> Status: the access trail and its privacy settings are implemented (M4-7). The final defaults and the
+> Status: the access trail and its privacy settings are implemented (M4-7), and the anomaly signals
+> that read only the same data (M4-9). The final defaults and the
 > remaining settings (retention, original file names, asset time-to-live) are pending gate P11.
 
 ## Principles
@@ -45,6 +46,31 @@ Turning a setting off stops storing it for later rows; it does not erase rows al
 The trail is best effort and can lose events under overload, so it is not a complete or tamper-evident
 record (see [api.md](api.md#the-access-trail-and-the-privacy-settings)). Reading it needs the
 `assets:read` scope of the tenant; the settings need `admin`.
+
+## The anomaly signals use only the access-trail data
+
+Cipherframe raises anomaly signals ([api.md](api.md#anomaly-signals-m4-9)): a token or session asking
+for the key too often, a viewer refused for the session limit, many sessions created for one viewer,
+segments served to a session that never fetched the key. They are not viewer analytics, and they do not
+change invariant I10:
+
+- Every signal is a comparison of a **count or a time** against a threshold the tenant set: how many
+  key requests a token or session made, how many sessions a viewer created in 10 minutes, how many
+  segment requests a session made against whether it ever got the key. The inputs are the counters
+  playback already keeps to enforce its limits and the same segment count the access trail keeps. No
+  new data about the viewer is collected for them.
+- Nothing is learned about **what** was watched: not which segment, rendition, position or title, and
+  nothing the player did. There is no profile, no history across sessions beyond the viewer ID the tenant
+  chose, and no scoring.
+- An event (`playback_events`) holds the tenant, the asset, the viewer ID your application chose, the
+  SHA-256 of the session ID, the time and a few integers (the threshold and the observed count). It
+  holds no token, no session ID, no IP address and no user agent. The events API shows a session only as
+  the same 8-character fingerprint the access trail uses.
+- The viewer ID in an event is the same pseudonymous ID as in the trail, so the same advice applies: never
+  an email address or other direct identifier. Events are kept until retention is decided (P11, with the
+  webhook outbox in M7); deleting a viewer's data must cover this table as well as the trail.
+- Auto-revoke acts on a viewer's session on the strength of a counter. It is off by default, and the
+  tenant, not Cipherframe, decides which kinds may do it.
 
 ## Settings (defaults pending P11)
 

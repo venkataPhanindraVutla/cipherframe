@@ -344,6 +344,9 @@ the defaults, and `updated_at` is absent until the first `PUT`.
 | `allowed_origins` | `[]` | at most 20 | Browser origins allowed to play (CORS on edge, see below). |
 | `token_in_url` | `false` | | Put the token in the manifest URL for native HLS players. |
 | `delivery` | `proxy` | `proxy`, `presigned` | How segments reach the player (see below). |
+| `anomaly_sessions_per_viewer_10m` | 10 | 0 to 1000 | More sessions than this created for one viewer in 10 minutes raises `rapid_session_creation`; 0 turns it off ([anomaly signals](#anomaly-signals-m4-9)). |
+| `anomaly_segments_without_key` | 30 | 0 to 100000 | More segments than this served to a session that never fetched the key raises `segments_without_key`; 0 turns it off. `proxy` delivery only. |
+| `auto_revoke` | `[]` | any of `key_replay`, `key_rate`, `rapid_session_creation`, `segments_without_key` | Kinds whose signal also revokes the session (the viewer's sessions for `rapid_session_creation`). Empty is off. |
 
 `allowed_origins` entries are exact origins as a browser writes them: `https://host[:port]`, or
 `http://localhost[:port]` for development. Lower case, no path, no trailing slash, no wildcard, no
@@ -478,16 +481,80 @@ against that bound (and a `429` never carries the key). It does count in the per
 client that keeps hammering stays rejected. A request that fails because the key service or the
 database is down does not use up one of the token's fetches either.
 
-**Anomaly events.** The first time a token is over its bound, one `key_replay` event is recorded; the
-first request past the per-minute bound in a window records one `key_rate` event. Later rejected
-requests for the same token or window record nothing. An event holds the tenant, the SHA-256 of the
-session ID, the asset ID, the time and the bound; no token and no session ID. (Reading events is a
-later task, M4-9.)
+**Anomaly events.** The first time a token is over its bound, a `key_replay` signal is raised; the
+first request past the per-minute bound in a window raises a `key_rate` signal. Later rejected
+requests for the same token or window raise nothing. What a signal does is described under
+[Anomaly signals](#anomaly-signals-m4-9).
 
 **Cleanup.** The per-token counters live in `playback_key_fetches`, one row per token that asked for a
 key. The edge role deletes the rows of tokens that expired more than five minutes ago, every ten
 minutes (and once at start-up), so the table stays about as large as the tokens of the last
 `token_ttl_seconds` plus a few minutes.
+
+### Anomaly signals (M4-9)
+
+Cipherframe raises a small set of **signals** for patterns that look like scraping or token sharing. A
+signal is an **event** you can read (`GET /v1/playback-events`) and, if you ask for it, a
+revocation. A signal is a hint and not a verdict: every one of them can be triggered by an unusual but
+honest player, which is why revoking automatically is off by default.
+
+| Kind | Raised when | Raised at most | `detail` |
+|---|---|---|---|
+| `key_replay` | One playback token asked for the key more than `key_fetches_per_token` times. | once per session per 10 minutes | `limit` |
+| `key_rate` | One session asked for the key more than `key_requests_per_minute` times in a minute. | once per session per 10 minutes | `limit` |
+| `session_limit` | A session creation was refused with `session_limit`. | once per viewer per 10 minutes | none |
+| `rapid_session_creation` | More than `anomaly_sessions_per_viewer_10m` sessions were created for one viewer in a sliding 10 minutes. | once per viewer per 10 minutes | `limit`, `sessions` |
+| `segments_without_key` | A session was served more than `anomaly_segments_without_key` segments without ever being served the key. | once per session | `limit`, `segments` |
+
+- **Thresholds** are playback settings, per tenant: `anomaly_sessions_per_viewer_10m` (0 to 1000,
+  default 10) and `anomaly_segments_without_key` (0 to 100000, default 30). `0` turns that signal off.
+  The two key signals use the existing bounds, which cannot be switched off (`key_fetches_per_token`
+  and `key_requests_per_minute`, minimum 1); `session_limit` follows `max_sessions_per_viewer`, where
+  0 means unlimited and so never refuses. A normal viewer stays far from every default: a player
+  fetches the key a handful of times a session, a person rarely starts more than a few sessions in ten
+  minutes, and a player fetches the key before its first segment.
+- **How they are counted.** The key and session-creation signals use the counters those endpoints
+  already keep (the per-token and per-minute key counters, the session rows' `created_at`), so they
+  are exact and shared by every replica. `segments_without_key` is counted on the session row: every
+  edge replica adds its segment counts to the session at each segment-count flush (about every 30
+  seconds, one batched statement per replica), and the key endpoint stamps the session the first time
+  it serves the key. It does not read the access trail, which is best effort and could drop a `key` row
+  and so accuse a viewer who did fetch the key. **It only works with `proxy` delivery:** with
+  `presigned` delivery storage serves the segments, edge never counts them and the signal never
+  fires. Detection runs about 30 seconds after the segments were served, not in the request.
+- **Duplicates.** One event per subject (a session, or a viewer for the viewer-level kinds) and kind per
+  10 minutes, so a scraper that keeps going does not fill the table; `segments_without_key` is once
+  per session for the life of the session, because the condition never clears.
+- **Auto-revoke** (`auto_revoke`, a list of kinds, default empty = off). When the signal of a listed
+  kind is detected the session is revoked with the reason `auto:<kind>`, the access trail gets a
+  `revoked` row, and an audit event `playback_session.auto_revoke` is written (no client or key: nobody
+  asked for it). For `rapid_session_creation` every active session of the viewer is revoked, including
+  the one that crossed the line. Allowed kinds: `key_replay`, `key_rate`, `rapid_session_creation`,
+  `segments_without_key`. `session_limit` is not allowed: a refused creation has no session to revoke
+  and a retrying player would lose its viewer. A revoked session's key endpoint answers `401` at once;
+  segments follow the token, as for any revocation (below). The revocation is applied whenever the
+  condition is detected, even when the event itself was suppressed as a duplicate, so a scraper that
+  starts a new session after the first was revoked is revoked again. It is also done in the same
+  database transaction as the event, so there is no revocation without its event.
+- **Failures are never abuse (I11).** If the event cannot be stored, or the tenant's settings cannot be
+  read, nothing is revoked, the failure is logged (kind and a session fingerprint, nothing else) and
+  the viewer's request is answered as usual.
+
+**Reading events.** `GET /v1/playback-events` (scope `assets:read`) returns `{items, next_cursor}`,
+**newest first**. Filters: `kind`, `asset_id`, `viewer_id`, `from` (inclusive) and `to` (exclusive) as
+RFC 3339 times, `limit` (1 to 500, default 100) and `cursor` (the opaque `next_cursor` of the previous
+page). A bad filter is `400` with an `errors` entry; an asset ID of another tenant matches nothing. An
+item is `{id, kind, at, asset_id, viewer_id, session, detail}`: `session` is the 8-hex-character
+fingerprint the access trail shows, so the two can be matched; it is absent for viewer-level kinds, and
+no response holds a session ID, a token or the hash of a session ID. `detail` holds small integers only
+(the limit and the count). A tenant only ever sees its own events.
+
+**Webhooks.** Webhook delivery arrives with milestone M7 and is not implemented: nothing is sent
+anywhere today, so read the events endpoint (poll it with `from`). The `playback_events` table is built
+as the outbox for it: every row has a nullable `delivered_at` and an index of the undelivered rows; M7's
+delivery worker will read them oldest first, post them and stamp `delivered_at`. The event `id` is
+stable, so a delivery can carry it. Retention of the table is decided with M7 and the privacy gate (P11);
+until then events are kept.
 
 ### Heartbeat and end: the player contract (ADR 0028)
 
@@ -687,6 +754,10 @@ but is not called by anything: M6 will.
   for any `viewer_id` of its tenant, up to the limit, for any ready asset of the tenant.
 - The access trail is best effort (see above): under overload or a database outage events are dropped,
   so a missing row is not proof that something did not happen.
+- The anomaly signals catch a client that behaves unlike a player. They do not catch a careful scraper
+  that fetches the key like a player, paces its requests and uses one session per viewer ID; nor a
+  viewer who fetched the key once and shares it. `segments_without_key` does nothing in `presigned`
+  delivery. See [threat-model.md](threat-model.md#what-the-anomaly-signals-catch-and-miss).
 - The access trail records who and when, not what was watched, and its `ip` is the connecting peer,
   which is a proxy's address behind one.
 
