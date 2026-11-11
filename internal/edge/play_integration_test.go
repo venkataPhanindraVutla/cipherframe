@@ -24,11 +24,15 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/hls"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/kmstest"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
@@ -118,8 +122,18 @@ type env struct {
 	clk     *clock
 	logs    *syncBuf
 	srv     *httptest.Server
-	// objects holds the bytes stored per object name ("240p/init.mp4", "240p/seg-1.m4s").
+	// objects holds the bytes stored per object name ("240p/init.mp4", "240p/seg-1.m4s"): the
+	// encrypted segments. plain holds the plaintext each segment was encrypted from.
 	objects map[string][]byte
+	plain   map[string][]byte
+	// kms is the key provider under the content key manager, with fault injection.
+	kms *kmstest.Faulty
+	// key is the asset's content key, for the test to decrypt with.
+	key []byte
+	mgr *contentkey.Manager
+	log *slog.Logger
+	// keyStore, when set, wraps the database-backed key store the edge uses (fault injection).
+	keyStore func(edge.KeyStore) edge.KeyStore
 }
 
 func newEnv(t *testing.T) *env {
@@ -139,8 +153,28 @@ func newEnv(t *testing.T) *env {
 	}
 	e := &env{
 		t: t, pool: pool, repos: repos, res: res, asset: asset, clk: &clock{}, logs: &syncBuf{},
-		store: &countingStore{Store: buckets.Delivery}, objects: map[string][]byte{},
+		store: &countingStore{Store: buckets.Delivery}, objects: map[string][]byte{}, plain: map[string][]byte{},
 	}
+	e.log = slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	lp, err := local.NewFromKeys(config.Development, map[int][]byte{1: bytes.Repeat([]byte{0x41}, config.KEKBytes)}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.kms = kmstest.NewFaulty(lp)
+	reg, err := kms.NewRegistry(e.kms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.mgr = contentkey.NewManager(pool, reg, e.log)
+	var ck contentkey.ContentKey
+	if err := db.Tx(ctx, pool, func(tx *db.Repos) (err error) {
+		ck, err = e.mgr.Create(ctx, tx, res.Tenant.ID, asset.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.key = ck.Bytes()
+	ck.Zero()
 	e.publish(ctx)
 
 	e.keyring, err = token.NewKeyring(map[int][]byte{1: []byte("test-fixture-playback-token-key-0123456789")}, 1)
@@ -194,10 +228,16 @@ func (e *env) publish(ctx context.Context) {
 		put(keys.InitSegment(tn, as, r), initBytes)
 		pl := hls.MediaPlaylist{InitURI: "init.mp4"}
 		for n := range segCount {
-			b := randBytes(e.t, segSize)
+			iv := hls.IV{byte(n + 1)}
+			plain := randBytes(e.t, segSize)
+			b, err := hls.EncryptSegment(e.key, iv, plain)
+			if err != nil {
+				e.t.Fatal(err)
+			}
 			e.objects[fmt.Sprintf("%s/seg-%d.m4s", name, n)] = b
+			e.plain[fmt.Sprintf("%s/seg-%d.m4s", name, n)] = plain
 			put(keys.Segment(tn, as, r, n), b)
-			pl.Segments = append(pl.Segments, hls.Segment{URI: fmt.Sprintf("seg-%d.m4s", n), Duration: 6 * time.Second, IV: hls.IV{byte(n + 1)}})
+			pl.Segments = append(pl.Segments, hls.Segment{URI: fmt.Sprintf("seg-%d.m4s", n), Duration: 6 * time.Second, IV: iv})
 		}
 		text, err := hls.RenderMedia(pl)
 		if err != nil {
@@ -231,12 +271,17 @@ func (e *env) start() {
 	if e.srv != nil {
 		e.srv.Close()
 	}
-	p, err := edge.NewPlayback(edge.PlaybackDeps{Keyring: e.keyring, Store: e.repos, Delivery: e.store, Now: e.clk.Now})
+	var ks edge.KeyStore = e.repos
+	if e.keyStore != nil {
+		ks = e.keyStore(ks)
+	}
+	p, err := edge.NewPlayback(edge.PlaybackDeps{
+		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Now: e.clk.Now,
+	})
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	e.srv = httptest.NewServer(edge.New(edge.Deps{Log: log, Playback: p}).Handler())
+	e.srv = httptest.NewServer(edge.New(edge.Deps{Log: e.log, Playback: p}).Handler())
 	e.t.Cleanup(e.srv.Close)
 }
 
@@ -634,8 +679,8 @@ func TestPathAllowlistNeverReachesStorage(t *testing.T) {
 	for _, c := range []string{p + "/360p/init.mp4", p + "/240p/seg-99.m4s", p + "/360p/media.m3u8"} {
 		want(t, e.get(c, s.token), 404)
 	}
-	// The key route belongs to the next task: not served yet.
-	want(t, e.get(p+"/key", s.token), 404)
+	// "key" is a route of its own, not a rendition: with a rendition and a file it is not served.
+	want(t, e.get(p+"/key/init.mp4", s.token), 404)
 }
 
 func TestCORS(t *testing.T) {

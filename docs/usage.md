@@ -119,6 +119,8 @@ up to 25 seconds, then closes the rest and exits. A second signal terminates imm
 `worker` role works the `kms.rewrap` job kind; a job that is running when shutdown starts gets 20
 seconds to finish and is otherwise retried later.
 
+**Keys on edge.** The `edge` role serves the content key to players (`GET /v1/play/{session_id}/key`, see [api.md](api.md#the-key-endpoint-adr-0027-0028)), so it needs the same key provider settings as the other roles (`CIPHERFRAME_KMS_*`, below) and refuses to start without them. It also needs `CIPHERFRAME_PLAYBACK_TOKEN_KEYS`.
+
 **Health.** `GET /healthz` (liveness) and `GET /readyz` (readiness: database, source bucket,
 delivery bucket) are served on both the api and edge listeners. See [api.md](api.md).
 

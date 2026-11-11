@@ -166,17 +166,17 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			return err
 		}
 		defer closeUploads()
-		play, err := newEdgePlayback(repos, buckets, cfg)
+		play, err := newEdgePlayback(repos, buckets, contentKeys, cfg)
 		if err != nil {
 			cleanup()
 			return err
 		}
-		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, ContentKeys: contentKeys, Uploads: up, Playback: play}).Handler(), log)
+		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, Uploads: up, Playback: play}).Handler(), log)
 		if err != nil {
 			cleanup()
 			return err
 		}
-		services = append(services, s)
+		services = append(services, s, sweepService{repos: repos, log: log})
 	}
 	if Has(opts.Roles, RoleWorker) {
 		w, err := newWorker(pool, contentKeys, log, &processing{Buckets: buckets, Config: cfg})
@@ -237,15 +237,22 @@ func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config) (*playback.Servi
 	return svc, nil
 }
 
-// newEdgePlayback builds the playlist and segment routes of the edge role: it verifies playback
-// tokens with the configured keyring (ADR 0028), reads sessions and settings from the database and
-// streams segments from the delivery bucket.
-func newEdgePlayback(repos *db.Repos, buckets *storage.Buckets, cfg *config.Config) (*edge.Playback, error) {
+// newEdgePlayback builds the playlist, segment and key routes of the edge role: it verifies
+// playback tokens with the configured keyring (ADR 0028), reads sessions and settings from the
+// database, streams segments from the delivery bucket and unwraps content keys through the key
+// service. The key service is built for every role before this point, so an edge process with a
+// missing or broken KMS configuration has already refused to start.
+func newEdgePlayback(repos *db.Repos, buckets *storage.Buckets, contentKeys *contentkey.Manager, cfg *config.Config) (*edge.Playback, error) {
+	if contentKeys == nil {
+		return nil, errors.New("playback: the edge role needs the key service")
+	}
 	keyring, err := token.KeyringFromConfig(cfg.Playback)
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
-	p, err := edge.NewPlayback(edge.PlaybackDeps{Keyring: keyring, Store: repos, Delivery: buckets.Delivery})
+	p, err := edge.NewPlayback(edge.PlaybackDeps{
+		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
@@ -411,6 +418,18 @@ func (s *httpService) run(ctx context.Context) error {
 }
 
 func (s *httpService) close() { _ = s.ln.Close() }
+
+// sweepService runs the periodic cleanup of playback key-fetch counters in the edge role.
+type sweepService struct {
+	repos *db.Repos
+	log   *slog.Logger
+}
+
+func (s sweepService) run(ctx context.Context) error {
+	playback.RunKeyFetchSweeper(ctx, s.repos, playback.SweepInterval, s.log)
+	return nil
+}
+func (sweepService) close() {}
 
 type workerService struct{ w *worker.Worker }
 

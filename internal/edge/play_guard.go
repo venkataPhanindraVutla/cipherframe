@@ -35,7 +35,7 @@ func errPlaybackNotFound() error { return errs.New(errs.NotFound, "No such resou
 //     a rendition and a file name are plain ASCII), and refusing them here means an encoded slash
 //     or a traversal attempt never reaches a handler, let alone the object store. The standard
 //     library's router would otherwise answer a raw ".." with a redirect.
-//  2. CORS preflight. An OPTIONS request for one of the three routes is answered here, because a
+//  2. CORS preflight. An OPTIONS request for one of the playback routes is answered here, because a
 //     preflight carries no token. It is a 204 in every case; the CORS headers are added only when
 //     the Origin is exactly one the session's tenant allows.
 func playGate(p *Playback) httpx.Middleware {
@@ -74,12 +74,12 @@ func cleanPlayPath(r *http.Request) bool {
 	return true
 }
 
-// playRouteSession reports whether path is one of the three playback routes (by shape; the
+// playRouteSession reports whether path is one of the playback routes (by shape; the
 // rendition and file are checked by the allowlists) and returns its session ID.
 func playRouteSession(path string) (id.SessionID, bool) {
 	parts := strings.Split(strings.TrimPrefix(path, playPrefix), "/")
 	switch {
-	case len(parts) == 2 && parts[1] == "master.m3u8":
+	case len(parts) == 2 && (parts[1] == "master.m3u8" || parts[1] == "key"):
 	case len(parts) == 3:
 		if _, err := keys.ParseRendition(parts[1]); err != nil {
 			return id.SessionID{}, false
@@ -174,7 +174,8 @@ func playbackToken(r *http.Request) (tok string, fromQuery bool, err error) {
 //  3. the session in the token must be the session in the path (constant-time comparison);
 //  4. the tenant's settings (cached): t is accepted only with token_in_url, and the Origin is
 //     checked for CORS;
-//  5. playlists only (scope manifest): the session row must be active, unexpired and not idle.
+//  5. playlists and the key (scope manifest or key): the session row must be active, unexpired
+//     and not idle. The read is never cached, so a revocation applies on the next request.
 //
 // Every token or session failure is the same 401. A segment request never reads the session row.
 func (p *Playback) authorize(w http.ResponseWriter, r *http.Request, rawSession string, need token.Scope, next func(*http.Request)) {
@@ -228,7 +229,7 @@ func (p *Playback) authorize(w http.ResponseWriter, r *http.Request, rawSession 
 		return
 	}
 
-	if need.Has(token.ScopeManifest) {
+	if need.Has(token.ScopeManifest) || need.Has(token.ScopeKey) {
 		row, err := p.store.GetPlaybackSession(r.Context(), tenant, db.SessionHash(sid))
 		if err != nil {
 			var e *errs.Error
@@ -244,7 +245,10 @@ func (p *Playback) authorize(w http.ResponseWriter, r *http.Request, rawSession 
 		}
 	}
 
-	g := grant{tenant: tenant, asset: asset, session: sid}
+	g := grant{
+		tenant: tenant, asset: asset, session: sid, settings: set,
+		tokenHash: db.TokenHash(tok), tokenExpiry: claims.Expiry,
+	}
 	if set.TokenInURL {
 		g.urlToken = tok
 	}
@@ -258,7 +262,7 @@ func sessionUsable(s db.PlaybackSession, set db.PlaybackSettings, now time.Time)
 	return s.State == db.PlaybackActive && now.Before(s.ExpiresAt) && now.Before(s.LastHeartbeatAt.Add(idle))
 }
 
-// The three guarded routes. The generated wrapper has already bound the path values.
+// The guarded routes. The generated wrapper has already bound the path values.
 
 func (g guarded) GetPlaybackMaster(w http.ResponseWriter, r *http.Request, sessionID gen.PlaySessionId, params gen.GetPlaybackMasterParams) {
 	g.play.authorize(w, r, sessionID, token.ScopeManifest, func(r *http.Request) {
@@ -283,6 +287,12 @@ func (g guarded) GetPlaybackSegment(w http.ResponseWriter, r *http.Request, sess
 	}
 	g.play.authorize(w, r, sessionID, token.ScopeSegment, func(r *http.Request) {
 		g.ServerInterface.GetPlaybackSegment(w, r, sessionID, rendition, file, params)
+	})
+}
+
+func (g guarded) GetPlaybackKey(w http.ResponseWriter, r *http.Request, sessionID gen.PlaySessionId, params gen.GetPlaybackKeyParams) {
+	g.play.authorize(w, r, sessionID, token.ScopeKey, func(r *http.Request) {
+		g.ServerInterface.GetPlaybackKey(w, r, sessionID, params)
 	})
 }
 

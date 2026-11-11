@@ -12,6 +12,39 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bumpPlaybackKeyWindow = `-- name: BumpPlaybackKeyWindow :one
+UPDATE playback_sessions SET
+    key_window_start = CASE
+        WHEN key_window_start IS NULL OR key_window_start <= $1::timestamptz - interval '1 minute'
+        THEN $1::timestamptz ELSE key_window_start END,
+    key_window_count = CASE
+        WHEN key_window_start IS NULL OR key_window_start <= $1::timestamptz - interval '1 minute'
+        THEN 1 ELSE LEAST(key_window_count + 1, 1000000) END
+WHERE tenant_id = $2::uuid AND id_hash = $3::bytea
+RETURNING key_window_start, key_window_count
+`
+
+type BumpPlaybackKeyWindowParams struct {
+	Now      time.Time
+	TenantID pgtype.UUID
+	IDHash   []byte
+}
+
+type BumpPlaybackKeyWindowRow struct {
+	KeyWindowStart *time.Time
+	KeyWindowCount int32
+}
+
+// Counts one key request in the session's fixed one-minute window, in one statement: a window
+// that is unset or at least a minute old restarts at now with a count of 1. The count is capped so
+// a flood cannot overflow it. Rejected requests are counted too (they cap hammering).
+func (q *Queries) BumpPlaybackKeyWindow(ctx context.Context, arg BumpPlaybackKeyWindowParams) (BumpPlaybackKeyWindowRow, error) {
+	row := q.db.QueryRow(ctx, bumpPlaybackKeyWindow, arg.Now, arg.TenantID, arg.IDHash)
+	var i BumpPlaybackKeyWindowRow
+	err := row.Scan(&i.KeyWindowStart, &i.KeyWindowCount)
+	return i, err
+}
+
 const countActivePlaybackSessions = `-- name: CountActivePlaybackSessions :one
 SELECT count(*) FROM playback_sessions
 WHERE tenant_id = $1::uuid
@@ -71,7 +104,7 @@ func (q *Queries) EndStalePlaybackSessions(ctx context.Context, arg EndStalePlay
 }
 
 const getPlaybackSession = `-- name: GetPlaybackSession :one
-SELECT id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason FROM playback_sessions WHERE tenant_id = $1 AND id_hash = $2
+SELECT id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count FROM playback_sessions WHERE tenant_id = $1 AND id_hash = $2
 `
 
 type GetPlaybackSessionParams struct {
@@ -95,6 +128,8 @@ func (q *Queries) GetPlaybackSession(ctx context.Context, arg GetPlaybackSession
 		&i.EndedAt,
 		&i.RevokedAt,
 		&i.RevokeReason,
+		&i.KeyWindowStart,
+		&i.KeyWindowCount,
 	)
 	return i, err
 }
@@ -134,6 +169,33 @@ func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID)
 	return i, err
 }
 
+const insertPlaybackEvent = `-- name: InsertPlaybackEvent :exec
+INSERT INTO playback_events (tenant_id, session_hash, asset_id, kind, at, detail)
+VALUES ($1::uuid, $2::bytea, $3::uuid,
+        $4::text, $5::timestamptz, $6::jsonb)
+`
+
+type InsertPlaybackEventParams struct {
+	TenantID    pgtype.UUID
+	SessionHash []byte
+	AssetID     pgtype.UUID
+	Kind        string
+	At          time.Time
+	Detail      []byte
+}
+
+func (q *Queries) InsertPlaybackEvent(ctx context.Context, arg InsertPlaybackEventParams) error {
+	_, err := q.db.Exec(ctx, insertPlaybackEvent,
+		arg.TenantID,
+		arg.SessionHash,
+		arg.AssetID,
+		arg.Kind,
+		arg.At,
+		arg.Detail,
+	)
+	return err
+}
+
 const insertPlaybackSession = `-- name: InsertPlaybackSession :one
 INSERT INTO playback_sessions (
     id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at
@@ -142,7 +204,7 @@ SELECT $1::bytea, a.tenant_id, $2::uuid, a.id, $3::text,
        'active', $4::timestamptz, $4::timestamptz, $5::timestamptz
 FROM assets a
 WHERE a.id = $6::uuid AND a.tenant_id = $7::uuid AND a.state = 'ready'
-RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count
 `
 
 type InsertPlaybackSessionParams struct {
@@ -180,6 +242,8 @@ func (q *Queries) InsertPlaybackSession(ctx context.Context, arg InsertPlaybackS
 		&i.EndedAt,
 		&i.RevokedAt,
 		&i.RevokeReason,
+		&i.KeyWindowStart,
+		&i.KeyWindowCount,
 	)
 	return i, err
 }
@@ -194,6 +258,93 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 func (q *Queries) LockPlaybackViewer(ctx context.Context, lockKey string) error {
 	_, err := q.db.Exec(ctx, lockPlaybackViewer, lockKey)
 	return err
+}
+
+const recordKeyReplay = `-- name: RecordKeyReplay :execrows
+WITH marked AS (
+    UPDATE playback_key_fetches SET exceeded_at = $3::timestamptz
+    WHERE token_hash = $5::bytea AND exceeded_at IS NULL
+    RETURNING session_hash
+)
+INSERT INTO playback_events (tenant_id, session_hash, asset_id, kind, at, detail)
+SELECT $1::uuid, session_hash, $2::uuid, 'key_replay', $3::timestamptz,
+       jsonb_build_object('limit', $4::integer)
+FROM marked
+`
+
+type RecordKeyReplayParams struct {
+	TenantID   pgtype.UUID
+	AssetID    pgtype.UUID
+	Now        time.Time
+	MaxFetches int32
+	TokenHash  []byte
+}
+
+// Marks the token as over its bound and records one key_replay event, only for the request that
+// sets the mark: every later rejected request finds it set and records nothing.
+func (q *Queries) RecordKeyReplay(ctx context.Context, arg RecordKeyReplayParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordKeyReplay,
+		arg.TenantID,
+		arg.AssetID,
+		arg.Now,
+		arg.MaxFetches,
+		arg.TokenHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releasePlaybackKeyFetch = `-- name: ReleasePlaybackKeyFetch :exec
+UPDATE playback_key_fetches SET fetches = GREATEST(fetches - 1, 0) WHERE token_hash = $1::bytea
+`
+
+// Gives back a fetch taken by ReservePlaybackKeyFetch for a request that got no key.
+func (q *Queries) ReleasePlaybackKeyFetch(ctx context.Context, tokenHash []byte) error {
+	_, err := q.db.Exec(ctx, releasePlaybackKeyFetch, tokenHash)
+	return err
+}
+
+const reservePlaybackKeyFetch = `-- name: ReservePlaybackKeyFetch :one
+INSERT INTO playback_key_fetches (token_hash, session_hash, fetches, expires_at)
+VALUES ($1::bytea, $2::bytea, 1, $3::timestamptz)
+ON CONFLICT (token_hash) DO UPDATE SET fetches = playback_key_fetches.fetches + 1
+WHERE playback_key_fetches.fetches < $4::integer
+RETURNING fetches
+`
+
+type ReservePlaybackKeyFetchParams struct {
+	TokenHash   []byte
+	SessionHash []byte
+	ExpiresAt   time.Time
+	MaxFetches  int32
+}
+
+// Takes one of a token's key fetches, or returns no row when the token has used max_fetches. The
+// check and the increment are one statement, so concurrent requests cannot exceed the bound.
+func (q *Queries) ReservePlaybackKeyFetch(ctx context.Context, arg ReservePlaybackKeyFetchParams) (int32, error) {
+	row := q.db.QueryRow(ctx, reservePlaybackKeyFetch,
+		arg.TokenHash,
+		arg.SessionHash,
+		arg.ExpiresAt,
+		arg.MaxFetches,
+	)
+	var fetches int32
+	err := row.Scan(&fetches)
+	return fetches, err
+}
+
+const sweepPlaybackKeyFetches = `-- name: SweepPlaybackKeyFetches :execrows
+DELETE FROM playback_key_fetches WHERE expires_at < $1::timestamptz
+`
+
+func (q *Queries) SweepPlaybackKeyFetches(ctx context.Context, before time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepPlaybackKeyFetches, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertPlaybackSettings = `-- name: UpsertPlaybackSettings :one
