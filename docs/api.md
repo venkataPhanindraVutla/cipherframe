@@ -48,8 +48,8 @@ Requests the spec does not describe (404 and 405) must still return a valid `Pro
 
 | Surface | Callers | Authentication |
 |---|---|---|
-| Control plane | Embedding application servers | API keys; JWT and signed callback (M4-8, pending P7) |
-| Data plane | Browsers | Short-lived playback tokens (pending P6) |
+| Control plane | Embedding application servers | API keys; JWT and signed callback (M4-8, ADR 0029) |
+| Data plane | Browsers | Short-lived playback tokens (ADR 0028) |
 | Well-known keys | Anyone | None (public keys only) |
 
 Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and

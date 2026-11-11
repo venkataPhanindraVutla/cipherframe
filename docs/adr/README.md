@@ -33,8 +33,10 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0025](0025-resumable-uploads-and-media-limits.md) | Resumable uploads and media limits | none | Accepted | 2026-11-11 |
 | [0026](0026-asset-and-upload-api.md) | Asset and upload API | none | Accepted (flagged for owner review before v1.0.0) | 2026-11-11 |
 | [0027](0027-segment-encryption-in-the-worker.md) | Segment encryption in the worker | none | Accepted (flagged for owner review) | 2026-11-11 |
+| [0028](0028-playback-tokens-and-session-parameters.md) | Playback tokens and session parameters | P6 | Accepted | 2026-11-11 |
+| [0029](0029-jwt-and-signed-callback-authorization.md) | JWT and signed-callback authorization | P7 (JWT and signed callback) | Accepted | 2026-11-11 |
 
 ## Open gates
 
-P6, P7 (JWT and signed callback), P9 to P14, P16 to P20, P21 (worker). See the build plan's
+P9 to P14, P16 to P20, P21 (worker). See the build plan's
 decision register.

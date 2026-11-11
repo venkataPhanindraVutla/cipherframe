@@ -16,7 +16,7 @@
 | Actor | Trust |
 |---|---|
 | Operator | Trusted to run the service and hold storage and KMS credentials. |
-| Embedding application | Trusted to authorize viewers; authenticated by API key (others pending P7). |
+| Embedding application | Trusted to authorize viewers; authenticated by API key, JWT or signed callback (ADR 0009, ADR 0029). |
 | Authorized viewer | Trusted to watch during a session; **not** trusted to stop there. |
 | Unauthorized party | Untrusted; may hold leaked URLs, expired tokens or copied playlists. |
 | Verifier | Untrusted; holds only public keys. |
@@ -28,7 +28,7 @@
 | Original fetched directly | Source bucket private; source key never returned (I4). |
 | Segments fetched from storage without a session | Segments are AES-128 ciphertext; keys only via the session-checked key endpoint. |
 | Revoked viewer keeps playing | Key endpoint checks session state on every request; revocation is immediate there. |
-| Token replay or sharing | Short TTL, scope-limited tokens, bounded replay at the key endpoint, anomaly events (P6). |
+| Token replay or sharing | Short TTL, scope-limited tokens, bounded replay at the key endpoint, anomaly events (ADR 0028). |
 | Secrets in logs | Redacting logger; automated scan of a full playback run (pitfall 9). |
 | Data survives "deletion" | Storage enumeration, key destruction, re-list, signed record (I5, I6). |
 | Forged deletion or integrity record | Signatures verifiable with public keys only (pitfall 1); optional RFC 3161 timestamps. |
