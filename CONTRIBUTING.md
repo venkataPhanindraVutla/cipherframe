@@ -51,6 +51,20 @@ FFmpeg is a runtime tool, not a dependency, and is never linked (rule 1 above).
 4. Documentation must be honest: each security feature states what it does **not** protect against.
 5. Merge only when CI is green.
 
+## Secrets in tests and examples
+
+Secret scanning (gitleaks, `.gitleaks.toml`) runs on every pull request. Fake credentials in tests,
+docs and Compose files must be obviously fake **by prefix**, so the scanner can tell them apart from
+real ones:
+
+- `dev-placeholder-...` for development settings that production must refuse (ADR 0013);
+- `test-fixture-...` for any other fake key, token or password in tests.
+
+Only a value that **starts** with one of these prefixes is allowed; anything else that looks like a
+secret fails CI. Never use realistic-looking values. If the scanner still flags something that is
+genuinely not a secret (for example a published test vector), add its exact fingerprint to
+`.gitleaksignore` with a comment saying why, and get it reviewed.
+
 ## Local checks
 
 Requires Go 1.27. Run everything CI runs before pushing:
@@ -62,7 +76,7 @@ go vet ./...
 go test -race ./...
 govulncheck ./...
 go-licenses check ./... --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
-gitleaks git --redact
+gitleaks git --config .gitleaks.toml --redact --log-opts="origin/main..HEAD" .
 sqlc diff               # generated code in internal/db/dbgen must be current
 ```
 

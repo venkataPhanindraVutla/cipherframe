@@ -1,0 +1,19 @@
+# Secret scanning for Cipherframe (gitleaks). Extends gitleaks' default rules; nothing is disabled.
+#
+# The only allowlist is for values that are fake by construction: the development placeholders that
+# production refuses (ADR 0013) and test fixtures that use the documented prefix. A value is
+# allowed only when the detected secret itself starts with one of these prefixes, so a real key in
+# a test file is still reported. Reviewed one-off false positives go in .gitleaksignore instead.
+
+title = "Cipherframe"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Development placeholders and test fixtures (fake by construction; see CONTRIBUTING.md)"
+regexTarget = "secret"
+regexes = [
+  '''^dev-placeholder-[A-Za-z0-9._~+/=-]*$''',
+  '''^test-fixture-[A-Za-z0-9._~+/=-]*$''',
+]
