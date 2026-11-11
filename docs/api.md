@@ -341,13 +341,14 @@ the defaults, and `updated_at` is absent until the first `PUT`.
 | `key_requests_per_minute` | 30 | 1 to 600 | Key requests one session may make per minute, rejected ones included (key endpoint, below). |
 | `allowed_origins` | `[]` | at most 20 | Browser origins allowed to play (CORS on edge, see below). |
 | `token_in_url` | `false` | | Put the token in the manifest URL for native HLS players. |
+| `delivery` | `proxy` | `proxy`, `presigned` | How segments reach the player (see below). |
 
 `allowed_origins` entries are exact origins as a browser writes them: `https://host[:port]`, or
 `http://localhost[:port]` for development. Lower case, no path, no trailing slash, no wildcard, no
 user information, and no port that is the scheme's default (`https://example.com`, not
 `https://example.com:443`). Duplicates are rejected. An invalid request is `400 invalid_request` with
 one `errors` entry per field, for example `allowed_origins[1]`, and nothing is stored. A change
-applies to new sessions, and edge picks up `token_in_url`, `allowed_origins` and `idle_timeout_seconds`
+applies to new sessions, and edge picks up `token_in_url`, `delivery`, `allowed_origins` and `idle_timeout_seconds`
 within 30 seconds (its settings cache).
 
 **Token in URLs (`token_in_url`).** Off by default, so no URL carries a token (pitfall 9). Turn it on
@@ -356,6 +357,25 @@ headers: `manifest_url` then ends in `?t=<token>` and `token_transport` is `url`
 appear in browser history and in the logs of proxies and CDNs that you do not control; it lasts at
 most the token TTL, and revoking the session still stops key fetches. Edge strips the parameter from
 what it logs and sends `Referrer-Policy: no-referrer` (ADR 0030).
+
+**Delivery (`delivery`).** `proxy` (the default) serves every init and media segment through edge,
+after the token check. With `presigned`, the media playlist the player gets carries, for the init
+segment and for each media segment, a presigned GET URL for that object in the delivery bucket, so
+storage or a CDN serves the bytes and edge does not (ADR 0032). The master playlist and the key URI
+(`../key`) are unchanged, so the key endpoint still checks the session on every fetch and revocation
+still applies. The edge segment route keeps working in both modes.
+
+- A URL lives until the playback token expires or 10 minutes, whichever is first (at least 1 second;
+  a token with under a second left gets `401`). The player gets fresh URLs each time it fetches the
+  media playlist, so a player that reloads the playlist (or fetches it again after expiry) keeps
+  playing; a client that holds one playlist for longer than the lifetime sees `403` from storage.
+- Segments are ciphertext in both modes, so a presigned URL exposes only encrypted bytes, and only
+  until it expires. It is still a credential: signed storage URLs appear in playlists, in browser
+  history and in the logs of proxies and CDNs you do not control, as a token does with `token_in_url`.
+  Edge never logs them.
+- The URLs point at `CIPHERFRAME_S3_PUBLIC_ENDPOINT`, which must be reachable by the player, and
+  the delivery bucket needs a CORS rule that allows your origins to GET (docs/usage.md). Source
+  objects are never presigned.
 
 ### Playlists and segments on edge (ADR 0027, 0030)
 
@@ -577,6 +597,9 @@ the row's times, so nothing waits for the sweep).
   endpoint.
 - With `token_in_url` on, the token is in URLs: browser history and the logs of proxies and CDNs you
   do not control can hold it, until it expires.
+- With `delivery` set to `presigned`, signed storage URLs are in the playlists, and so possibly in
+  history and intermediary logs, until they expire (at most 10 minutes). They give read access to
+  encrypted segments only; the key still needs a valid session.
 - The concurrency limit counts sessions per `viewer_id`. A caller that gives each of one person's
   tabs a different `viewer_id` defeats it, so derive the ID from your own user, not per page.
 - The limit is not a licensing control: it is checked when a session starts, and heartbeats keep

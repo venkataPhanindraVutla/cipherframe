@@ -174,6 +174,23 @@ SeaweedFS is published on the host because presigned URLs are signed for
 `CIPHERFRAME_S3_PUBLIC_ENDPOINT` (`http://localhost:8333`) and must be usable from your browser, while
 the server itself talks to `http://seaweedfs:8333` inside the Compose network.
 
+**Presigned delivery and CORS.** A tenant that sets `delivery` to `presigned` (docs/api.md) makes the
+player fetch segments from `CIPHERFRAME_S3_PUBLIC_ENDPOINT` directly. A browser then needs the delivery
+bucket to allow your page's origin to GET, so a CORS rule on the delivery bucket is required (it is
+not needed for `proxy`, where edge answers CORS). Cipherframe does not manage bucket CORS: configure
+it where you manage the bucket, with `GET` and `HEAD` for exactly the origins in the tenant's
+`allowed_origins`. On the Compose stack, SeaweedFS accepts the S3 API call, so with the AWS CLI and
+the development key pair from `compose.yaml`:
+
+```sh
+AWS_ACCESS_KEY_ID=dev-placeholder-access-key AWS_SECRET_ACCESS_KEY=dev-placeholder-secret-key \
+  aws --endpoint-url http://localhost:8333 --region us-east-1 s3api put-bucket-cors \
+  --bucket cipherframe-delivery --cors-configuration file://deploy/compose/seaweedfs/delivery-cors.json
+```
+
+`delivery-cors.json` allows `http://localhost:3000`; edit the origin to match your page. The stack
+does not apply it for you.
+
 **Reset.** `docker compose -f deploy/compose/compose.yaml down` stops the stack and keeps the data;
 adding `-v` also deletes the Postgres and SeaweedFS volumes. Run `up` again afterwards. Use `--build`
 after changing Go code to rebuild the image.
@@ -315,7 +332,7 @@ variable, never its value.
 | `CIPHERFRAME_EDGE_LISTEN` | `:8081` | no | no | `host:port`, port 1-65535. |
 | `CIPHERFRAME_DATABASE_URL` | none | yes | yes | `postgres://` or `postgresql://` URL. |
 | `CIPHERFRAME_S3_ENDPOINT` | empty (provider default) | no | no | Absolute `http(s)` URL. |
-| `CIPHERFRAME_S3_PUBLIC_ENDPOINT` | the endpoint | no | no | Absolute `http(s)` URL used by browsers. |
+| `CIPHERFRAME_S3_PUBLIC_ENDPOINT` | the endpoint | no | no | Absolute `http(s)` URL a browser can reach. Used only to sign presigned URLs (the `presigned` delivery setting, and uploads); server-side calls always use the endpoint. |
 | `CIPHERFRAME_S3_REGION` | `us-east-1` | no | no | |
 | `CIPHERFRAME_S3_FORCE_PATH_STYLE` | `false` | no | no | Go `strconv.ParseBool` values. |
 | `CIPHERFRAME_S3_SOURCE_BUCKET` | none | yes | no | Valid S3 bucket name (3-63 chars, lowercase letters, digits, `-`, `.`). |
