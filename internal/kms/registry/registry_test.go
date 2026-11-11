@@ -13,7 +13,7 @@ import (
 
 func load(t *testing.T, extra map[string]string) *config.Config {
 	t.Helper()
-	env := map[string]string{
+	env := map[string]string{ //nolint:gosec // test fixture
 		config.EnvDatabaseURL:         "postgres://app:pw@db:5432/cf",
 		config.EnvS3SourceBucket:      "cf-source",
 		config.EnvS3DeliveryBucket:    "cf-delivery",

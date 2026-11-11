@@ -194,7 +194,7 @@ func TestErrorsNeverContainValues(t *testing.T) {
 }
 
 func TestNewFromConfig(t *testing.T) {
-	env := map[string]string{
+	env := map[string]string{ //nolint:gosec // test fixture
 		config.EnvDatabaseURL:         "postgres://app:pw@db:5432/cf",
 		config.EnvS3SourceBucket:      "cf-source",
 		config.EnvS3DeliveryBucket:    "cf-delivery",

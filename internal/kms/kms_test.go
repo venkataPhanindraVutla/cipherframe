@@ -94,7 +94,8 @@ func TestToAppError(t *testing.T) {
 
 func TestToAppErrorKeepsAppErrors(t *testing.T) {
 	in := errs.New(errs.Conflict, "x")
-	if kms.ToAppError(in) != error(in) {
+	var got *errs.Error
+	if !errors.As(kms.ToAppError(in), &got) || got != in {
 		t.Fatal("an *errs.Error must pass through unchanged")
 	}
 }

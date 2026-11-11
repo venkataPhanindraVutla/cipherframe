@@ -30,9 +30,13 @@ const (
 
 	// formatV1 is the first byte of every ciphertext: format version 1, then a 96-bit nonce, then
 	// the AES-256-GCM sealed bytes (ciphertext and tag).
-	formatV1  byte = 1
-	nonceSize      = 12
-	tagSize        = 16
+	formatV1 byte = 1
+)
+
+// Sizes of the ciphertext parts, in bytes.
+const (
+	nonceSize = 12
+	tagSize   = 16
 )
 
 // ErrProduction is returned by New when the environment is not development.
@@ -187,6 +191,9 @@ func (p *Provider) GoString() string { return p.String() }
 
 // Format implements fmt.Formatter and covers every verb.
 func (p *Provider) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(p.String())) }
+
+// MarshalJSON implements json.Marshaler.
+func (*Provider) MarshalJSON() ([]byte, error) { return []byte(`"` + config.Redacted + `"`), nil }
 
 // LogValue implements slog.LogValuer.
 func (p *Provider) LogValue() slog.Value { return slog.StringValue(p.String()) }

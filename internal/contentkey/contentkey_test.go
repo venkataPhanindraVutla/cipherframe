@@ -157,7 +157,7 @@ func TestContentKeyRedaction(t *testing.T) {
 		string(raw), hex.EncodeToString(raw), strings.ToUpper(hex.EncodeToString(raw)),
 		base64.StdEncoding.EncodeToString(raw), base64.RawStdEncoding.EncodeToString(raw),
 		base64.URLEncoding.EncodeToString(raw), base64.RawURLEncoding.EncodeToString(raw),
-		fmt.Sprint(raw), fmt.Sprintf("%v", []byte(raw)),
+		fmt.Sprintf("%v", raw),
 	}
 	for _, o := range outs {
 		for _, f := range forms {
