@@ -59,6 +59,24 @@ type Store interface {
 	SessionViewers(ctx context.Context, hashes [][]byte) (map[string]db.SessionViewer, error)
 }
 
+// SegmentCount is how many segments one session was served since the previous flush.
+type SegmentCount struct {
+	TenantID    id.TenantID
+	AssetID     id.AssetID
+	SessionHash []byte
+	Count       int
+}
+
+// SegmentSink receives the segment counts at every flush, right after they are queued for the
+// trail. The anomaly detector uses it for segments_without_key (M4-9). It runs on the writer
+// goroutine with a bounded context, so it must be quick; an implementation logs its own failures
+// (the counts of that interval are lost to it, never retried).
+type SegmentSink interface {
+	SegmentsServed(ctx context.Context, counts []SegmentCount)
+}
+
+type sinkHolder struct{ s SegmentSink }
+
 // Event is one thing that happened. Leave ViewerID and AuthMethod empty when only the session is
 // known: the writer fills them from the session row.
 type Event struct {
@@ -116,6 +134,8 @@ type Recorder struct {
 	queued, written, dropped, segDropped, throttled atomic.Uint64
 	lastWarn                                        atomic.Int64 // unix nanoseconds
 
+	sink atomic.Pointer[sinkHolder]
+
 	seg      *segmentCounter
 	throttle *throttle
 	denied   *deniedLimiter
@@ -163,6 +183,19 @@ func New(o Options) *Recorder {
 	}
 	go r.run()
 	return r
+}
+
+// SetSegmentSink sets the receiver of the segment counts (nil removes it). Set it before traffic
+// starts; the recorder and its sink refer to each other, so it cannot be an option.
+func (r *Recorder) SetSegmentSink(s SegmentSink) {
+	if r == nil {
+		return
+	}
+	if s == nil {
+		r.sink.Store(nil)
+		return
+	}
+	r.sink.Store(&sinkHolder{s: s})
 }
 
 // Stats returns the counters.
@@ -315,7 +348,9 @@ func (r *Recorder) run() {
 		}
 	}
 	addSegments := func() {
-		batch = append(batch, r.seg.drain(r.o.Now())...)
+		events := r.seg.drain(r.o.Now())
+		batch = append(batch, events...)
+		r.deliverSegments(events)
 	}
 	for {
 		select {
@@ -349,6 +384,21 @@ func (r *Recorder) run() {
 			return
 		}
 	}
+}
+
+// deliverSegments hands the drained counts to the sink, if there is one.
+func (r *Recorder) deliverSegments(events []Event) {
+	h := r.sink.Load()
+	if h == nil || len(events) == 0 {
+		return
+	}
+	counts := make([]SegmentCount, len(events))
+	for i, ev := range events {
+		counts[i] = SegmentCount{TenantID: ev.TenantID, AssetID: ev.AssetID, SessionHash: ev.SessionHash, Count: ev.segments}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	h.s.SegmentsServed(ctx, counts)
 }
 
 // write converts events to rows, applying the tenants' privacy settings and filling in viewers, and

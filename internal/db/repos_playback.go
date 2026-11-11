@@ -28,8 +28,15 @@ type PlaybackSettings struct {
 	AllowedOrigins           []string
 	TokenInURL               bool
 	// Delivery is DeliveryProxy or DeliveryPresigned (ADR 0032).
-	Delivery  string
-	UpdatedAt time.Time
+	Delivery string
+	// AnomalySessionsPerViewer10m and AnomalySegmentsWithoutKey are the thresholds of the
+	// rapid_session_creation and segments_without_key signals (M4-9); 0 disables the signal.
+	AnomalySessionsPerViewer10m int
+	AnomalySegmentsWithoutKey   int
+	// AutoRevoke lists the event kinds that also revoke the session (or the viewer's sessions):
+	// empty, the default, only records events. See AutoRevokeKinds for the allowed kinds.
+	AutoRevoke []string
+	UpdatedAt  time.Time
 }
 
 // The delivery strategies (ADR 0032).
@@ -51,6 +58,10 @@ func DefaultPlaybackSettings() PlaybackSettings {
 		KeyRequestsPerMinute:     30,
 		AllowedOrigins:           []string{},
 		Delivery:                 DeliveryProxy,
+
+		AnomalySessionsPerViewer10m: 10,
+		AnomalySegmentsWithoutKey:   30,
+		AutoRevoke:                  []string{},
 	}
 }
 
@@ -108,7 +119,11 @@ func settingsFromRow(r dbgen.PlaybackSetting) PlaybackSettings {
 		AllowedOrigins:           append([]string{}, r.AllowedOrigins...),
 		TokenInURL:               r.TokenInUrl,
 		Delivery:                 r.Delivery,
-		UpdatedAt:                r.UpdatedAt.UTC(),
+
+		AnomalySessionsPerViewer10m: int(r.AnomalySessionsPerViewer10m),
+		AnomalySegmentsWithoutKey:   int(r.AnomalySegmentsWithoutKey),
+		AutoRevoke:                  append([]string{}, r.AutoRevoke...),
+		UpdatedAt:                   r.UpdatedAt.UTC(),
 	}
 }
 
@@ -157,6 +172,10 @@ func (r *Repos) PutPlaybackSettings(ctx context.Context, tenantID id.TenantID, s
 	if origins == nil {
 		origins = []string{}
 	}
+	revoke := s.AutoRevoke
+	if revoke == nil {
+		revoke = []string{}
+	}
 	//nolint:gosec // every value is range-checked by the caller and by the table's CHECKs
 	row, err := r.q.UpsertPlaybackSettings(ctx, dbgen.UpsertPlaybackSettingsParams{
 		TenantID:                 tid,
@@ -170,7 +189,11 @@ func (r *Repos) PutPlaybackSettings(ctx context.Context, tenantID id.TenantID, s
 		AllowedOrigins:           origins,
 		TokenInUrl:               s.TokenInURL,
 		Delivery:                 s.Delivery,
-		At:                       at,
+
+		AnomalySessionsPerViewer10m: int32(s.AnomalySessionsPerViewer10m),
+		AnomalySegmentsWithoutKey:   int32(s.AnomalySegmentsWithoutKey),
+		AutoRevoke:                  revoke,
+		At:                          at,
 	})
 	if err != nil {
 		return PlaybackSettings{}, mapError(err)

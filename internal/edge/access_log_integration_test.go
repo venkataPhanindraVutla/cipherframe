@@ -26,10 +26,15 @@ import (
 func (e *env) useAccess() {
 	e.t.Helper()
 	e.closeAccess()
+	seg := e.segFlush
+	if seg <= 0 {
+		seg = time.Hour
+	}
 	e.access = accesslog.New(accesslog.Options{
-		Store: e.repos, Log: e.log, Now: e.clk.Now, FlushInterval: 5 * time.Millisecond, SegmentFlushInterval: time.Hour,
+		Store: e.repos, Log: e.log, Now: e.clk.Now, FlushInterval: 5 * time.Millisecond, SegmentFlushInterval: seg,
 	})
-	svc, err := playback.NewService(playback.Deps{Pool: e.pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Access: e.access, Now: e.clk.Now})
+	e.newDetector()
+	svc, err := playback.NewService(playback.Deps{Pool: e.pool, Keyring: e.keyring, EdgeURL: "https://media.example.com", Access: e.access, Anomalies: e.anomalies, Now: e.clk.Now})
 	if err != nil {
 		e.t.Fatal(err)
 	}

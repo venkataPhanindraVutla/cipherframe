@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -52,6 +53,9 @@ type Deps struct {
 	// Access receives the access-trail events of the service: session created, session denied
 	// (limit, asset not ready) and revoked. Nil records nothing.
 	Access *accesslog.Recorder
+	// Anomalies raises the session_limit and rapid_session_creation signals (M4-9) and applies
+	// the auto-revoke policy. Nil raises nothing.
+	Anomalies *anomaly.Detector
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -64,6 +68,7 @@ type Service struct {
 	edge    string
 	secrets *viewerauth.SecretBox // nil without a KMS registry
 	access  *accesslog.Recorder   // nil records nothing
+	anomaly *anomaly.Detector     // nil raises nothing
 	now     func() time.Time
 }
 
@@ -78,7 +83,7 @@ func NewService(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	svc := &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, access: d.Access, now: d.Now}
+	svc := &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, access: d.Access, anomaly: d.Anomalies, now: d.Now}
 	if d.KMS != nil {
 		svc.secrets = viewerauth.NewSecretBox(d.KMS)
 	}
@@ -134,15 +139,25 @@ func ValidateViewerID(v string) error {
 // limit, and inserts the new session. The lock makes the limit exact under concurrency. The token
 // is signed before the transaction so a signing failure leaves no row behind.
 func (s *Service) CreateSession(ctx context.Context, in CreateInput) (Created, error) {
-	c, err := s.createSession(ctx, in)
+	c, rapid, err := s.createSession(ctx, in)
 	if err != nil {
 		var e *errs.Error
 		if errors.As(err, &e) && (e.Code == errs.SessionLimit || e.Code == errs.AssetNotReady) {
 			s.access.RecordSessionDenied(s.accessEvent(ctx, in, nil, db.AccessSessionDenied))
 		}
+		if errors.As(err, &e) && e.Code == errs.SessionLimit {
+			// A refused creation is not abuse by itself (a player retries); the event lets the
+			// tenant see it. It is a viewer-level signal and never revokes anything.
+			s.anomaly.Raise(ctx, anomaly.Signal{
+				Tenant: in.TenantID, Asset: in.AssetID, Viewer: in.ViewerID, Kind: db.EventSessionLimit, At: s.now(),
+			})
+		}
 		return Created{}, err
 	}
 	s.access.Record(s.accessEvent(ctx, in, db.SessionHash(c.SessionID), db.AccessSessionCreated))
+	if rapid != nil {
+		s.anomaly.Raise(ctx, *rapid)
+	}
 	return c, nil
 }
 
@@ -165,34 +180,37 @@ func (s *Service) accessEvent(ctx context.Context, in CreateInput, hash []byte, 
 	return ev
 }
 
-func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, error) {
+// createSession also returns the rapid_session_creation signal when this creation pushed the
+// viewer over the tenant's threshold (nil otherwise). The count is taken in the creation's own
+// transaction, under the viewer's lock, from the sessions' created_at (an indexed range read).
+func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *anomaly.Signal, error) {
 	if err := ValidateViewerID(in.ViewerID); err != nil {
-		return Created{}, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "viewer_id", Message: err.Error()}})
+		return Created{}, nil, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "viewer_id", Message: err.Error()}})
 	}
 	set, err := s.repos.GetPlaybackSettings(ctx, in.TenantID)
 	if err != nil {
-		return Created{}, err
+		return Created{}, nil, err
 	}
 	asset, err := s.repos.GetAsset(ctx, in.TenantID, in.AssetID)
 	if err != nil {
 		// Only a real "not found" may become one (I11): a database failure stays a failure.
 		var e *errs.Error
 		if errors.As(err, &e) && e.Code == errs.NotFound {
-			return Created{}, errs.New(errs.NotFound, "No such asset.")
+			return Created{}, nil, errs.New(errs.NotFound, "No such asset.")
 		}
-		return Created{}, err
+		return Created{}, nil, err
 	}
 	if asset.State == db.AssetDeleted {
 		// Another tenant's asset, a deleted one and an unknown one all look the same.
-		return Created{}, errs.New(errs.NotFound, "No such asset.")
+		return Created{}, nil, errs.New(errs.NotFound, "No such asset.")
 	}
 	if asset.State != db.AssetReady {
-		return Created{}, errs.New(errs.AssetNotReady, "The asset is not ready for playback.")
+		return Created{}, nil, errs.New(errs.AssetNotReady, "The asset is not ready for playback.")
 	}
 
 	sid, err := id.NewSession()
 	if err != nil {
-		return Created{}, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
+		return Created{}, nil, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
 	}
 	now := s.now().UTC().Truncate(time.Microsecond)
 	sessionExpires := now.Add(time.Duration(set.SessionMaxSeconds) * time.Second)
@@ -206,10 +224,11 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, e
 		IssuedAt: now, Expiry: tokenExpires,
 	})
 	if err != nil {
-		return Created{}, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
+		return Created{}, nil, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
 	}
 
 	idle := time.Duration(set.IdleTimeoutSeconds) * time.Second
+	var rapid *anomaly.Signal
 	err = db.Tx(ctx, s.pool, func(tx *db.Repos) error {
 		if err := tx.LockPlaybackViewer(ctx, in.TenantID, in.ViewerID); err != nil {
 			return err
@@ -233,10 +252,23 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, e
 		if errors.Is(err, db.ErrStateChanged) { // the asset stopped being ready since the check above
 			return errs.New(errs.AssetNotReady, "The asset is not ready for playback.")
 		}
-		return err
+		if err != nil || set.AnomalySessionsPerViewer10m <= 0 {
+			return err
+		}
+		n, err := tx.CountViewerSessionsCreatedSince(ctx, in.TenantID, in.ViewerID, now.Add(-anomaly.Window))
+		if err != nil {
+			return err
+		}
+		if n > set.AnomalySessionsPerViewer10m {
+			rapid = &anomaly.Signal{
+				Tenant: in.TenantID, Asset: asset.ID, Viewer: in.ViewerID, Kind: db.EventRapidSessionCreation, At: now,
+				Detail: map[string]int64{"limit": int64(set.AnomalySessionsPerViewer10m), "sessions": int64(n)},
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		return Created{}, err
+		return Created{}, nil, err
 	}
 
 	manifest := s.edge + "/v1/play/" + sid.String() + "/master.m3u8"
@@ -249,7 +281,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, e
 		SessionID: sid, Token: config.NewSecret(tok), TokenExpiresAt: tokenExpires.Truncate(time.Second),
 		HeartbeatIntervalSeconds: set.HeartbeatIntervalSeconds, SessionExpiresAt: sessionExpires,
 		ManifestURL: config.NewSecret(manifest), TokenTransport: transport,
-	}, nil
+	}, rapid, nil
 }
 
 // GetSettings returns the tenant's effective settings: its stored ones, or the defaults.

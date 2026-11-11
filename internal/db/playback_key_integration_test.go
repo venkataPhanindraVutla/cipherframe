@@ -3,6 +3,7 @@
 package db_test
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -61,8 +62,8 @@ func TestPlaybackKeyWindowAndFetches(t *testing.T) {
 		t.Fatalf("reserve past the limit: %v, %v", ok, err)
 	}
 	for i, want := range []bool{true, false, false} {
-		got, err := r.RecordKeyReplay(ctx, f.tenant.ID, s.AssetID, tok, 2, t0)
-		if err != nil || got != want {
+		hash, got, err := r.MarkKeyReplay(ctx, tok, t0)
+		if err != nil || got != want || (got && !bytes.Equal(hash, s.IDHash)) {
 			t.Fatalf("replay %d: %v, %v", i, got, err)
 		}
 	}
@@ -78,12 +79,15 @@ func TestPlaybackKeyWindowAndFetches(t *testing.T) {
 	}
 
 	// Events: only the known kinds are allowed.
-	ev := db.NewPlaybackEvent{TenantID: f.tenant.ID, SessionHash: s.IDHash, AssetID: s.AssetID, Kind: db.EventKeyRate, At: t0, Detail: map[string]int64{"limit": 3}}
-	if err := r.InsertPlaybackEvent(ctx, ev); err != nil {
-		t.Fatal(err)
+	ev := db.NewAnomalyEvent{TenantID: f.tenant.ID, SessionHash: s.IDHash, AssetID: s.AssetID, Kind: db.EventKeyRate, At: t0, Since: t0.Add(-time.Minute), Detail: map[string]int64{"limit": 3}}
+	if ok, err := r.InsertAnomalyEvent(ctx, ev); err != nil || !ok {
+		t.Fatalf("insert event: %v, %v", ok, err)
+	}
+	if ok, err := r.InsertAnomalyEvent(ctx, ev); err != nil || ok {
+		t.Fatalf("a duplicate in the window was stored: %v, %v", ok, err)
 	}
 	ev.Kind = "other"
-	if err := r.InsertPlaybackEvent(ctx, ev); err == nil {
+	if _, err := r.InsertAnomalyEvent(ctx, ev); err == nil {
 		t.Fatal("an unknown event kind was accepted")
 	}
 

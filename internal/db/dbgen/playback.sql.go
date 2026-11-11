@@ -195,7 +195,7 @@ func (q *Queries) EndStalePlaybackSessions(ctx context.Context, arg EndStalePlay
 }
 
 const getPlaybackSession = `-- name: GetPlaybackSession :one
-SELECT id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method FROM playback_sessions WHERE tenant_id = $1 AND id_hash = $2
+SELECT id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at FROM playback_sessions WHERE tenant_id = $1 AND id_hash = $2
 `
 
 type GetPlaybackSessionParams struct {
@@ -222,6 +222,8 @@ func (q *Queries) GetPlaybackSession(ctx context.Context, arg GetPlaybackSession
 		&i.KeyWindowStart,
 		&i.KeyWindowCount,
 		&i.AuthMethod,
+		&i.SegmentsServed,
+		&i.KeyServedAt,
 	)
 	return i, err
 }
@@ -239,7 +241,7 @@ func (q *Queries) GetPlaybackSessionTenant(ctx context.Context, idHash []byte) (
 }
 
 const getPlaybackSettings = `-- name: GetPlaybackSettings :one
-SELECT tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery FROM playback_settings WHERE tenant_id = $1
+SELECT tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key, auto_revoke FROM playback_settings WHERE tenant_id = $1
 `
 
 func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID) (PlaybackSetting, error) {
@@ -258,6 +260,9 @@ func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID)
 		&i.TokenInUrl,
 		&i.UpdatedAt,
 		&i.Delivery,
+		&i.AnomalySessionsPerViewer10m,
+		&i.AnomalySegmentsWithoutKey,
+		&i.AutoRevoke,
 	)
 	return i, err
 }
@@ -271,7 +276,7 @@ WHERE tenant_id = $2::uuid
   AND expires_at > $1::timestamptz
   AND last_heartbeat_at > $1::timestamptz - make_interval(secs => $5::integer)
   AND last_heartbeat_at <= $1::timestamptz - make_interval(secs => $6::integer)
-RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at
 `
 
 type HeartbeatPlaybackSessionParams struct {
@@ -313,35 +318,10 @@ func (q *Queries) HeartbeatPlaybackSession(ctx context.Context, arg HeartbeatPla
 		&i.KeyWindowStart,
 		&i.KeyWindowCount,
 		&i.AuthMethod,
+		&i.SegmentsServed,
+		&i.KeyServedAt,
 	)
 	return i, err
-}
-
-const insertPlaybackEvent = `-- name: InsertPlaybackEvent :exec
-INSERT INTO playback_events (tenant_id, session_hash, asset_id, kind, at, detail)
-VALUES ($1::uuid, $2::bytea, $3::uuid,
-        $4::text, $5::timestamptz, $6::jsonb)
-`
-
-type InsertPlaybackEventParams struct {
-	TenantID    pgtype.UUID
-	SessionHash []byte
-	AssetID     pgtype.UUID
-	Kind        string
-	At          time.Time
-	Detail      []byte
-}
-
-func (q *Queries) InsertPlaybackEvent(ctx context.Context, arg InsertPlaybackEventParams) error {
-	_, err := q.db.Exec(ctx, insertPlaybackEvent,
-		arg.TenantID,
-		arg.SessionHash,
-		arg.AssetID,
-		arg.Kind,
-		arg.At,
-		arg.Detail,
-	)
-	return err
 }
 
 const insertPlaybackSession = `-- name: InsertPlaybackSession :one
@@ -353,7 +333,7 @@ SELECT $1::bytea, a.tenant_id, $2::uuid, $3::text, a.id,
        'active', $5::timestamptz, $5::timestamptz, $6::timestamptz
 FROM assets a
 WHERE a.id = $7::uuid AND a.tenant_id = $8::uuid AND a.state = 'ready'
-RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at
 `
 
 type InsertPlaybackSessionParams struct {
@@ -396,6 +376,8 @@ func (q *Queries) InsertPlaybackSession(ctx context.Context, arg InsertPlaybackS
 		&i.KeyWindowStart,
 		&i.KeyWindowCount,
 		&i.AuthMethod,
+		&i.SegmentsServed,
+		&i.KeyServedAt,
 	)
 	return i, err
 }
@@ -412,40 +394,42 @@ func (q *Queries) LockPlaybackViewer(ctx context.Context, lockKey string) error 
 	return err
 }
 
-const recordKeyReplay = `-- name: RecordKeyReplay :execrows
-WITH marked AS (
-    UPDATE playback_key_fetches SET exceeded_at = $3::timestamptz
-    WHERE token_hash = $5::bytea AND exceeded_at IS NULL
-    RETURNING session_hash
-)
-INSERT INTO playback_events (tenant_id, session_hash, asset_id, kind, at, detail)
-SELECT $1::uuid, session_hash, $2::uuid, 'key_replay', $3::timestamptz,
-       jsonb_build_object('limit', $4::integer)
-FROM marked
+const markKeyReplay = `-- name: MarkKeyReplay :one
+UPDATE playback_key_fetches SET exceeded_at = $1::timestamptz
+WHERE token_hash = $2::bytea AND exceeded_at IS NULL
+RETURNING session_hash
 `
 
-type RecordKeyReplayParams struct {
-	TenantID   pgtype.UUID
-	AssetID    pgtype.UUID
-	Now        time.Time
-	MaxFetches int32
-	TokenHash  []byte
+type MarkKeyReplayParams struct {
+	Now       time.Time
+	TokenHash []byte
 }
 
-// Marks the token as over its bound and records one key_replay event, only for the request that
-// sets the mark: every later rejected request finds it set and records nothing.
-func (q *Queries) RecordKeyReplay(ctx context.Context, arg RecordKeyReplayParams) (int64, error) {
-	result, err := q.db.Exec(ctx, recordKeyReplay,
-		arg.TenantID,
-		arg.AssetID,
-		arg.Now,
-		arg.MaxFetches,
-		arg.TokenHash,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Marks the token as over its bound, only for the request that sets the mark: every later rejected
+// request finds it set and gets no row. Returns the token's session, for the anomaly event.
+func (q *Queries) MarkKeyReplay(ctx context.Context, arg MarkKeyReplayParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, markKeyReplay, arg.Now, arg.TokenHash)
+	var session_hash []byte
+	err := row.Scan(&session_hash)
+	return session_hash, err
+}
+
+const markPlaybackKeyServed = `-- name: MarkPlaybackKeyServed :exec
+UPDATE playback_sessions SET key_served_at = $1::timestamptz
+WHERE tenant_id = $2::uuid AND id_hash = $3::bytea AND key_served_at IS NULL
+`
+
+type MarkPlaybackKeyServedParams struct {
+	Now      time.Time
+	TenantID pgtype.UUID
+	IDHash   []byte
+}
+
+// The session has now been served the content key (the segments_without_key signal reads this).
+// A no-op once set.
+func (q *Queries) MarkPlaybackKeyServed(ctx context.Context, arg MarkPlaybackKeyServedParams) error {
+	_, err := q.db.Exec(ctx, markPlaybackKeyServed, arg.Now, arg.TenantID, arg.IDHash)
+	return err
 }
 
 const releasePlaybackKeyFetch = `-- name: ReleasePlaybackKeyFetch :exec
@@ -491,7 +475,7 @@ const revokePlaybackSession = `-- name: RevokePlaybackSession :one
 UPDATE playback_sessions SET state = 'revoked', revoked_at = $1::timestamptz,
     revoke_reason = $2::text
 WHERE tenant_id = $3::uuid AND id_hash = $4::bytea AND state = 'active'
-RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at
 `
 
 type RevokePlaybackSessionParams struct {
@@ -526,6 +510,8 @@ func (q *Queries) RevokePlaybackSession(ctx context.Context, arg RevokePlaybackS
 		&i.KeyWindowStart,
 		&i.KeyWindowCount,
 		&i.AuthMethod,
+		&i.SegmentsServed,
+		&i.KeyServedAt,
 	)
 	return i, err
 }
@@ -606,14 +592,16 @@ const upsertPlaybackSettings = `-- name: UpsertPlaybackSettings :one
 INSERT INTO playback_settings (
     tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds,
     session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute,
-    allowed_origins, token_in_url, delivery, updated_at
+    allowed_origins, token_in_url, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key,
+    auto_revoke, updated_at
 ) VALUES (
     $1::uuid, $2::integer,
     $3::integer, $4::integer,
     $5::integer, $6::integer,
     $7::integer, $8::integer,
     $9::text[], $10::boolean, $11::text,
-    $12::timestamptz
+    $12::integer, $13::integer,
+    $14::text[], $15::timestamptz
 )
 ON CONFLICT (tenant_id) DO UPDATE SET
     token_ttl_seconds          = EXCLUDED.token_ttl_seconds,
@@ -626,23 +614,29 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     allowed_origins            = EXCLUDED.allowed_origins,
     token_in_url               = EXCLUDED.token_in_url,
     delivery                   = EXCLUDED.delivery,
+    anomaly_sessions_per_viewer_10m = EXCLUDED.anomaly_sessions_per_viewer_10m,
+    anomaly_segments_without_key    = EXCLUDED.anomaly_segments_without_key,
+    auto_revoke                = EXCLUDED.auto_revoke,
     updated_at                 = EXCLUDED.updated_at
-RETURNING tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery
+RETURNING tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key, auto_revoke
 `
 
 type UpsertPlaybackSettingsParams struct {
-	TenantID                 pgtype.UUID
-	TokenTtlSeconds          int32
-	HeartbeatIntervalSeconds int32
-	IdleTimeoutSeconds       int32
-	SessionMaxSeconds        int32
-	MaxSessionsPerViewer     int32
-	KeyFetchesPerToken       int32
-	KeyRequestsPerMinute     int32
-	AllowedOrigins           []string
-	TokenInUrl               bool
-	Delivery                 string
-	At                       time.Time
+	TenantID                    pgtype.UUID
+	TokenTtlSeconds             int32
+	HeartbeatIntervalSeconds    int32
+	IdleTimeoutSeconds          int32
+	SessionMaxSeconds           int32
+	MaxSessionsPerViewer        int32
+	KeyFetchesPerToken          int32
+	KeyRequestsPerMinute        int32
+	AllowedOrigins              []string
+	TokenInUrl                  bool
+	Delivery                    string
+	AnomalySessionsPerViewer10m int32
+	AnomalySegmentsWithoutKey   int32
+	AutoRevoke                  []string
+	At                          time.Time
 }
 
 func (q *Queries) UpsertPlaybackSettings(ctx context.Context, arg UpsertPlaybackSettingsParams) (PlaybackSetting, error) {
@@ -658,6 +652,9 @@ func (q *Queries) UpsertPlaybackSettings(ctx context.Context, arg UpsertPlayback
 		arg.AllowedOrigins,
 		arg.TokenInUrl,
 		arg.Delivery,
+		arg.AnomalySessionsPerViewer10m,
+		arg.AnomalySegmentsWithoutKey,
+		arg.AutoRevoke,
 		arg.At,
 	)
 	var i PlaybackSetting
@@ -674,6 +671,9 @@ func (q *Queries) UpsertPlaybackSettings(ctx context.Context, arg UpsertPlayback
 		&i.TokenInUrl,
 		&i.UpdatedAt,
 		&i.Delivery,
+		&i.AnomalySessionsPerViewer10m,
+		&i.AnomalySegmentsWithoutKey,
+		&i.AutoRevoke,
 	)
 	return i, err
 }

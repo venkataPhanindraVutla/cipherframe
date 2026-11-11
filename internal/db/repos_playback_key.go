@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -12,12 +11,6 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbgen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
-)
-
-// Playback event kinds (the playback_events CHECK constraint lists the same).
-const (
-	EventKeyReplay = "key_replay"
-	EventKeyRate   = "key_rate"
 )
 
 // TokenHash returns the SHA-256 of a playback token's exact text. Key fetches are counted under it,
@@ -70,53 +63,28 @@ func (r *Repos) ReleasePlaybackKeyFetch(ctx context.Context, tokenHash []byte) e
 	return mapError(r.q.ReleasePlaybackKeyFetch(ctx, tokenHash))
 }
 
-// RecordKeyReplay records one key_replay event for a token that is over its bound, once: it
-// reports whether this call recorded it (false for every later call for the same token).
-func (r *Repos) RecordKeyReplay(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, tokenHash []byte, limit int, now time.Time) (bool, error) {
+// MarkKeyReplay marks a token that is over its bound, once: it returns the token's session hash
+// and true for the call that set the mark, and false for every later call for the same token. The
+// anomaly event itself is raised by package anomaly.
+func (r *Repos) MarkKeyReplay(ctx context.Context, tokenHash []byte, now time.Time) (sessionHash []byte, first bool, err error) {
+	h, err := r.q.MarkKeyReplay(ctx, dbgen.MarkKeyReplayParams{Now: now, TokenHash: tokenHash})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, mapError(err)
+	}
+	return h, true, nil
+}
+
+// MarkPlaybackKeyServed records that the session has been served the content key. Only the first
+// call changes the row.
+func (r *Repos) MarkPlaybackKeyServed(ctx context.Context, tenantID id.TenantID, sessionHash []byte, now time.Time) error {
 	tid, err := requirePG(tenantID)
 	if err != nil {
-		return false, err
-	}
-	aid, err := requirePG(assetID)
-	if err != nil {
-		return false, err
-	}
-	n, err := r.q.RecordKeyReplay(ctx, dbgen.RecordKeyReplayParams{
-		TenantID: tid, AssetID: aid, Now: now, MaxFetches: int32(limit), TokenHash: tokenHash, //nolint:gosec // validated range
-	})
-	if err != nil {
-		return false, mapError(err)
-	}
-	return n > 0, nil
-}
-
-// NewPlaybackEvent is the input for InsertPlaybackEvent. Detail holds small numbers only.
-type NewPlaybackEvent struct {
-	TenantID    id.TenantID
-	SessionHash []byte
-	AssetID     id.AssetID
-	Kind        string
-	At          time.Time
-	Detail      map[string]int64
-}
-
-// InsertPlaybackEvent stores an anomaly event.
-func (r *Repos) InsertPlaybackEvent(ctx context.Context, in NewPlaybackEvent) error {
-	tid, err := requirePG(in.TenantID)
-	if err != nil {
 		return err
 	}
-	aid, err := requirePG(in.AssetID)
-	if err != nil {
-		return err
-	}
-	detail, err := json.Marshal(in.Detail)
-	if err != nil || in.Detail == nil {
-		detail = []byte("{}")
-	}
-	return mapError(r.q.InsertPlaybackEvent(ctx, dbgen.InsertPlaybackEventParams{
-		TenantID: tid, SessionHash: in.SessionHash, AssetID: aid, Kind: in.Kind, At: in.At, Detail: detail,
-	}))
+	return mapError(r.q.MarkPlaybackKeyServed(ctx, dbgen.MarkPlaybackKeyServedParams{Now: now, TenantID: tid, IDHash: sessionHash}))
 }
 
 // SweepPlaybackKeyFetches deletes the key-fetch counters of tokens that expired before the given

@@ -84,3 +84,23 @@ func (s *Service) SessionAccessLog(ctx context.Context, tenantID id.TenantID, si
 	entries, next, err := s.repos.ListSessionAccessLog(ctx, tenantID, hash, q)
 	return AccessLogPage{Entries: entries, Next: next}, err
 }
+
+// EventsPage is one page of anomaly events, newest first. Next is nil on the last page.
+type EventsPage struct {
+	Events []db.PlaybackEvent
+	Next   *db.EventCursor
+}
+
+// Events returns the tenant's anomaly events (M4-9), newest first.
+func (s *Service) Events(ctx context.Context, tenantID id.TenantID, q db.EventQuery) (EventsPage, error) {
+	if !q.From.IsZero() && !q.To.IsZero() && !q.From.Before(q.To) {
+		return EventsPage{}, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "from", Message: "must be before to"}})
+	}
+	if q.ViewerID != "" {
+		if err := ValidateViewerID(q.ViewerID); err != nil {
+			return EventsPage{}, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "viewer_id", Message: err.Error()}})
+		}
+	}
+	events, next, err := s.repos.ListPlaybackEvents(ctx, tenantID, q)
+	return EventsPage{Events: events, Next: next}, err
+}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
@@ -77,8 +78,8 @@ type KeyStore interface {
 	BumpPlaybackKeyWindow(ctx context.Context, tenantID id.TenantID, sessionHash []byte, now time.Time) (time.Time, int, error)
 	ReservePlaybackKeyFetch(ctx context.Context, tokenHash, sessionHash []byte, expires time.Time, limit int) (bool, error)
 	ReleasePlaybackKeyFetch(ctx context.Context, tokenHash []byte) error
-	RecordKeyReplay(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, tokenHash []byte, limit int, now time.Time) (bool, error)
-	InsertPlaybackEvent(ctx context.Context, in db.NewPlaybackEvent) error
+	MarkKeyReplay(ctx context.Context, tokenHash []byte, now time.Time) ([]byte, bool, error)
+	MarkPlaybackKeyServed(ctx context.Context, tenantID id.TenantID, sessionHash []byte, now time.Time) error
 }
 
 // ContentKeyReader unwraps an asset's content key. *contentkey.Manager implements it.
@@ -102,6 +103,10 @@ type PlaybackDeps struct {
 	// Access records the access trail (master playlists, keys, heartbeats, ends, segment counts).
 	// Nil records nothing.
 	Access *accesslog.Recorder
+	// Anomalies raises the key_replay and key_rate signals (and applies the auto-revoke policy).
+	// Nil raises nothing. The segments_without_key signal does not go through here: the same
+	// detector is the Recorder's segment sink.
+	Anomalies *anomaly.Detector
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -109,14 +114,15 @@ type PlaybackDeps struct {
 // Playback serves the session-scoped playlist and segment routes. Without one the routes answer
 // 503 dependency_unavailable.
 type Playback struct {
-	keyring  *token.Keyring
-	store    PlaybackStore
-	delivery storage.DeliveryStore
-	keyStore KeyStore
-	keys     ContentKeyReader
-	viewer   *ViewerDeps
-	access   *accesslog.Recorder
-	now      func() time.Time
+	keyring   *token.Keyring
+	store     PlaybackStore
+	delivery  storage.DeliveryStore
+	keyStore  KeyStore
+	keys      ContentKeyReader
+	viewer    *ViewerDeps
+	access    *accesslog.Recorder
+	anomalies *anomaly.Detector
+	now       func() time.Time
 
 	settings  *ttlCache[string, db.PlaybackSettings]
 	viewerCfg *ttlCache[string, viewerConfig]
@@ -140,7 +146,7 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 		d.Now = time.Now
 	}
 	return &Playback{
-		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, access: d.Access, now: d.Now,
+		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, access: d.Access, anomalies: d.Anomalies, now: d.Now,
 		settings:  newTTLCache[string, db.PlaybackSettings](settingsCacheMax, playbackCacheTTL, d.Now),
 		viewerCfg: newTTLCache[string, viewerConfig](settingsCacheMax, playbackCacheTTL, d.Now),
 		sessions:  newTTLCache[[sha256.Size]byte, sessionTenant](sessionCacheMax, playbackCacheTTL, d.Now),

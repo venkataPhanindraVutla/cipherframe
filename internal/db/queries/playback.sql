@@ -5,14 +5,16 @@ SELECT * FROM playback_settings WHERE tenant_id = $1;
 INSERT INTO playback_settings (
     tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds,
     session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute,
-    allowed_origins, token_in_url, delivery, updated_at
+    allowed_origins, token_in_url, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key,
+    auto_revoke, updated_at
 ) VALUES (
     sqlc.arg(tenant_id)::uuid, sqlc.arg(token_ttl_seconds)::integer,
     sqlc.arg(heartbeat_interval_seconds)::integer, sqlc.arg(idle_timeout_seconds)::integer,
     sqlc.arg(session_max_seconds)::integer, sqlc.arg(max_sessions_per_viewer)::integer,
     sqlc.arg(key_fetches_per_token)::integer, sqlc.arg(key_requests_per_minute)::integer,
     sqlc.arg(allowed_origins)::text[], sqlc.arg(token_in_url)::boolean, sqlc.arg(delivery)::text,
-    sqlc.arg(at)::timestamptz
+    sqlc.arg(anomaly_sessions_per_viewer_10m)::integer, sqlc.arg(anomaly_segments_without_key)::integer,
+    sqlc.arg(auto_revoke)::text[], sqlc.arg(at)::timestamptz
 )
 ON CONFLICT (tenant_id) DO UPDATE SET
     token_ttl_seconds          = EXCLUDED.token_ttl_seconds,
@@ -25,6 +27,9 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     allowed_origins            = EXCLUDED.allowed_origins,
     token_in_url               = EXCLUDED.token_in_url,
     delivery                   = EXCLUDED.delivery,
+    anomaly_sessions_per_viewer_10m = EXCLUDED.anomaly_sessions_per_viewer_10m,
+    anomaly_segments_without_key    = EXCLUDED.anomaly_segments_without_key,
+    auto_revoke                = EXCLUDED.auto_revoke,
     updated_at                 = EXCLUDED.updated_at
 RETURNING *;
 
@@ -97,23 +102,18 @@ RETURNING fetches;
 -- Gives back a fetch taken by ReservePlaybackKeyFetch for a request that got no key.
 UPDATE playback_key_fetches SET fetches = GREATEST(fetches - 1, 0) WHERE token_hash = sqlc.arg(token_hash)::bytea;
 
--- name: RecordKeyReplay :execrows
--- Marks the token as over its bound and records one key_replay event, only for the request that
--- sets the mark: every later rejected request finds it set and records nothing.
-WITH marked AS (
-    UPDATE playback_key_fetches SET exceeded_at = sqlc.arg(now)::timestamptz
-    WHERE token_hash = sqlc.arg(token_hash)::bytea AND exceeded_at IS NULL
-    RETURNING session_hash
-)
-INSERT INTO playback_events (tenant_id, session_hash, asset_id, kind, at, detail)
-SELECT sqlc.arg(tenant_id)::uuid, session_hash, sqlc.arg(asset_id)::uuid, 'key_replay', sqlc.arg(now)::timestamptz,
-       jsonb_build_object('limit', sqlc.arg(max_fetches)::integer)
-FROM marked;
+-- name: MarkKeyReplay :one
+-- Marks the token as over its bound, only for the request that sets the mark: every later rejected
+-- request finds it set and gets no row. Returns the token's session, for the anomaly event.
+UPDATE playback_key_fetches SET exceeded_at = sqlc.arg(now)::timestamptz
+WHERE token_hash = sqlc.arg(token_hash)::bytea AND exceeded_at IS NULL
+RETURNING session_hash;
 
--- name: InsertPlaybackEvent :exec
-INSERT INTO playback_events (tenant_id, session_hash, asset_id, kind, at, detail)
-VALUES (sqlc.arg(tenant_id)::uuid, sqlc.arg(session_hash)::bytea, sqlc.arg(asset_id)::uuid,
-        sqlc.arg(kind)::text, sqlc.arg(at)::timestamptz, sqlc.arg(detail)::jsonb);
+-- name: MarkPlaybackKeyServed :exec
+-- The session has now been served the content key (the segments_without_key signal reads this).
+-- A no-op once set.
+UPDATE playback_sessions SET key_served_at = sqlc.arg(now)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid AND id_hash = sqlc.arg(id_hash)::bytea AND key_served_at IS NULL;
 
 -- name: SweepPlaybackKeyFetches :execrows
 DELETE FROM playback_key_fetches WHERE expires_at < sqlc.arg(before)::timestamptz;
