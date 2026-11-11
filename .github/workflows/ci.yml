@@ -148,8 +148,18 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.mod
       - run: go install github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
-      - name: gitleaks (full history)
-        run: gitleaks git --redact --no-banner --verbose .
+      # Pull requests scan only the commits they add, so another branch's reviewed fixtures cannot
+      # fail them. Pushes scan the pushed branch's full history (not every branch) as a backstop.
+      # Rules: .gitleaks.toml (default rules plus a narrow fixture allowlist); reviewed one-off false
+      # positives: .gitleaksignore.
+      - name: gitleaks (commits in this pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: gitleaks git --config .gitleaks.toml --redact --no-banner --verbose --log-opts="origin/${BASE_REF}..HEAD" .
+      - name: gitleaks (full history of the pushed branch)
+        if: github.event_name != 'pull_request'
+        run: gitleaks git --config .gitleaks.toml --redact --no-banner --verbose --log-opts="HEAD" .
 
   compose:
     name: compose (development stack)
