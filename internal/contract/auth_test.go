@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getkin/kin-openapi/openapi3"
+
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
@@ -140,7 +142,7 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			if op.Security == nil || len(*op.Security) == 0 || !slices.Contains(op.Tags, "api") {
 				continue
 			}
-			p := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(path, "{key_id}", keyID), "{session_id}", sessionID), "{asset_id}", assetID)
+			p := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(path, "{key_id}", keyID), "{session_id}", sessionID), "{asset_id}", assetID), "{kid}", "key-1")
 			var body []byte
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
 				body = []byte(`{"name":"x"}`)
@@ -151,6 +153,10 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"size_bytes":1,"upload_method":"tus"}`)
 				case "updatePlaybackSettings":
 					body = []byte(`{}`)
+				case "updatePlaybackAuth":
+					body = []byte(`{"jwt_enabled":false,"callback_enabled":false}`)
+				case "putPlaybackJwtKey":
+					body = []byte(`{"kty":"OKP","alg":"EdDSA"}`)
 				case "revokePlaybackSessions":
 					body = []byte(`{"viewer_id":"viewer"}`)
 				case "createPlaybackSession":
@@ -176,8 +182,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 18 {
-		t.Fatalf("exercised %d secured operations, want 18", n)
+	if n != 23 {
+		t.Fatalf("exercised %d secured operations, want 23", n)
 	}
 }
 
@@ -201,6 +207,9 @@ func TestUploadOperationsRequireAnUploadToken(t *testing.T) {
 			}
 			if _, ok := (*op.Security)[0]["playbackToken"]; ok {
 				continue // the playback routes have their own tests (playback_integration_test.go)
+			}
+			if slices.ContainsFunc(*op.Security, func(r openapi3.SecurityRequirement) bool { _, ok := r["viewerJwt"]; return ok }) {
+				continue // the browser-session route authenticates inside its handler (edge_viewer_integration_test.go)
 			}
 			if _, ok := (*op.Security)[0]["uploadToken"]; !ok {
 				t.Errorf("%s %s: edge operations must use the uploadToken scheme", method, path)

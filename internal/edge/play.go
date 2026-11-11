@@ -94,6 +94,9 @@ type PlaybackDeps struct {
 	// dependency_unavailable (the server always provides them for the edge role).
 	KeyStore    KeyStore
 	ContentKeys ContentKeyReader
+	// Viewer serves the browser-session route, POST /v1/play/tenants/{tenant_id}/sessions (ADR
+	// 0031). Without it that route answers 503 dependency_unavailable.
+	Viewer *ViewerDeps
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -106,10 +109,12 @@ type Playback struct {
 	delivery storage.Store
 	keyStore KeyStore
 	keys     ContentKeyReader
+	viewer   *ViewerDeps
 	now      func() time.Time
 
-	settings *ttlCache[string, db.PlaybackSettings]
-	sessions *ttlCache[[sha256.Size]byte, sessionTenant]
+	settings  *ttlCache[string, db.PlaybackSettings]
+	viewerCfg *ttlCache[string, viewerConfig]
+	sessions  *ttlCache[[sha256.Size]byte, sessionTenant]
 }
 
 // sessionTenant is a cached answer to "which tenant owns this session": found is false for a
@@ -129,9 +134,10 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 		d.Now = time.Now
 	}
 	return &Playback{
-		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, now: d.Now,
-		settings: newTTLCache[string, db.PlaybackSettings](settingsCacheMax, playbackCacheTTL, d.Now),
-		sessions: newTTLCache[[sha256.Size]byte, sessionTenant](sessionCacheMax, playbackCacheTTL, d.Now),
+		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, now: d.Now,
+		settings:  newTTLCache[string, db.PlaybackSettings](settingsCacheMax, playbackCacheTTL, d.Now),
+		viewerCfg: newTTLCache[string, viewerConfig](settingsCacheMax, playbackCacheTTL, d.Now),
+		sessions:  newTTLCache[[sha256.Size]byte, sessionTenant](sessionCacheMax, playbackCacheTTL, d.Now),
 	}, nil
 }
 

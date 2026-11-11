@@ -25,6 +25,9 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/kmstest"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 )
@@ -67,7 +70,8 @@ type harness struct {
 	logs  *syncBuf
 	keys  []string // every full key issued, to prove none reaches the log
 
-	keyring *token.Keyring // verifies the playback tokens the API signs
+	keyring *token.Keyring  // verifies the playback tokens the API signs
+	kms     *kmstest.Faulty // the key provider under the callback secrets, with fault injection
 }
 
 // testEdgeURL is the edge public URL the playback service is built with.
@@ -89,14 +93,23 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pb, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: testEdgeURL, Now: clk.Now})
+	lp, err := local.NewFromKeys(config.Development, map[int][]byte{1: bytes.Repeat([]byte{0x41}, config.KEKBytes)}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	faulty := kmstest.NewFaulty(lp)
+	reg, err := kms.NewRegistry(faulty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: testEdgeURL, KMS: reg, Now: clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := api.New(api.Deps{Log: log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr, Playback: pb})
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)
-	return &harness{t: t, pool: pool, repos: repos, srv: srv, clk: clk, mgr: mgr, logs: logs, keyring: keyring}
+	return &harness{t: t, pool: pool, repos: repos, srv: srv, clk: clk, mgr: mgr, logs: logs, keyring: keyring, kms: faulty}
 }
 
 // bootstrap creates a tenant with an admin key and returns the full key.

@@ -18,6 +18,42 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for CreateBrowserPlaybackSessionRequestMethod.
+const (
+	Callback CreateBrowserPlaybackSessionRequestMethod = "callback"
+	Jwt      CreateBrowserPlaybackSessionRequestMethod = "jwt"
+)
+
+// Valid indicates whether the value is a known member of the CreateBrowserPlaybackSessionRequestMethod enum.
+func (e CreateBrowserPlaybackSessionRequestMethod) Valid() bool {
+	switch e {
+	case Callback:
+		return true
+	case Jwt:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreatedPlaybackSessionTokenTransport.
+const (
+	Header CreatedPlaybackSessionTokenTransport = "header"
+	Url    CreatedPlaybackSessionTokenTransport = "url"
+)
+
+// Valid indicates whether the value is a known member of the CreatedPlaybackSessionTokenTransport enum.
+func (e CreatedPlaybackSessionTokenTransport) Valid() bool {
+	switch e {
+	case Header:
+		return true
+	case Url:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
@@ -119,6 +155,57 @@ func (e ReadyResponseStatus) Valid() bool {
 		return false
 	}
 }
+
+// AssetIdValue defines model for AssetIdValue.
+type AssetIdValue = string
+
+// CreateBrowserPlaybackSessionRequest defines model for CreateBrowserPlaybackSessionRequest.
+type CreateBrowserPlaybackSessionRequest struct {
+	AssetId AssetIdValue `json:"asset_id"`
+
+	// Method How your application authorises the viewer.
+	Method CreateBrowserPlaybackSessionRequestMethod `json:"method"`
+
+	// Ticket For `callback` (required): an opaque string from your page that your callback
+	// understands, for example a short-lived order or login reference. Cipherframe forwards
+	// it and never logs it. Ignored for `jwt`.
+	Ticket *string `json:"ticket,omitempty"`
+}
+
+// CreateBrowserPlaybackSessionRequestMethod How your application authorises the viewer.
+type CreateBrowserPlaybackSessionRequestMethod string
+
+// CreatedPlaybackSession defines model for CreatedPlaybackSession.
+type CreatedPlaybackSession struct {
+	// HeartbeatIntervalSeconds How often the player should send a heartbeat.
+	HeartbeatIntervalSeconds int `json:"heartbeat_interval_seconds"`
+
+	// ManifestUrl The master playlist on edge, `<edge URL>/v1/play/<session_id>/master.m3u8`. It ends
+	// with `?t=<token>` only when `token_transport` is `url`.
+	ManifestUrl string `json:"manifest_url"`
+
+	// SessionExpiresAt The session ends at this time at the latest, heartbeats or not.
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+
+	// SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
+	SessionId SessionId `json:"session_id"`
+
+	// Token The playback token (`v1.<payload>.<kid>.<mac>`), shown only here. It allows the
+	// manifest, key and segment requests of this session and asset until `token_expires_at`.
+	// Each heartbeat returns a fresh one.
+	Token string `json:"token"`
+
+	// TokenExpiresAt When the token stops working. Never later than `session_expires_at`.
+	TokenExpiresAt time.Time `json:"token_expires_at"`
+
+	// TokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
+	// to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+	TokenTransport CreatedPlaybackSessionTokenTransport `json:"token_transport"`
+}
+
+// CreatedPlaybackSessionTokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
+// to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+type CreatedPlaybackSessionTokenTransport string
 
 // FieldError defines model for FieldError.
 type FieldError struct {
@@ -222,11 +309,17 @@ type PlaySessionId = SessionId
 // PlayTokenQuery defines model for PlayTokenQuery.
 type PlayTokenQuery = string
 
+// TenantIdPath defines model for TenantIdPath.
+type TenantIdPath = string
+
 // PlaybackUnauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type PlaybackUnauthenticated = Problem
 
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
+
+// ViewerUnauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
+type ViewerUnauthenticated = Problem
 
 // EndPlaybackParams defines parameters for EndPlayback.
 type EndPlaybackParams struct {
@@ -270,6 +363,9 @@ type GetPlaybackSegmentParams struct {
 	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
 }
 
+// CreateBrowserPlaybackSessionJSONRequestBody defines body for CreateBrowserPlaybackSession for application/json ContentType.
+type CreateBrowserPlaybackSessionJSONRequestBody = CreateBrowserPlaybackSessionRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealthz Liveness
@@ -278,6 +374,9 @@ type ServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// CreateBrowserPlaybackSession Start a playback session from the viewer's browser
+	// (POST /v1/play/tenants/{tenant_id}/sessions)
+	CreateBrowserPlaybackSession(w http.ResponseWriter, r *http.Request, tenantId TenantIdPath)
 	// EndPlayback End the session
 	// (POST /v1/play/{session_id}/end)
 	EndPlayback(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params EndPlaybackParams)
@@ -332,6 +431,32 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBrowserPlaybackSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateBrowserPlaybackSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "tenant_id" -------------
+	var tenantId TenantIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tenant_id", r.PathValue("tenant_id"), &tenantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBrowserPlaybackSession(w, r, tenantId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -803,6 +928,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadyz)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/play/tenants/{tenant_id}/sessions", wrapper.CreateBrowserPlaybackSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/master.m3u8", wrapper.GetPlaybackMaster)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/media.m3u8", wrapper.GetPlaybackMedia)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/{file}", wrapper.GetPlaybackSegment)
@@ -842,6 +968,16 @@ type UnauthenticatedApplicationProblemPlusJSONResponse struct {
 	Body Problem
 
 	Headers UnauthenticatedResponseHeaders
+}
+
+type ViewerUnauthenticatedResponseHeaders struct {
+	WWWAuthenticate string
+	XRequestId      string
+}
+type ViewerUnauthenticatedApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers ViewerUnauthenticatedResponseHeaders
 }
 
 type GetHealthzRequestObject struct {
@@ -950,6 +1086,163 @@ type GetReadyzdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetReadyzdefaultApplicationProblemPlusJSONResponse) VisitGetReadyzResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSessionRequestObject struct {
+	TenantId TenantIdPath `json:"tenant_id"`
+	Body     *CreateBrowserPlaybackSessionJSONRequestBody
+}
+
+type CreateBrowserPlaybackSessionResponseObject interface {
+	VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error
+}
+
+type CreateBrowserPlaybackSession201ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type CreateBrowserPlaybackSession201JSONResponse struct {
+	Body    CreatedPlaybackSession
+	Headers CreateBrowserPlaybackSession201ResponseHeaders
+}
+
+func (response CreateBrowserPlaybackSession201JSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSession400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateBrowserPlaybackSession400ApplicationProblemPlusJSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSession401ApplicationProblemPlusJSONResponse struct {
+	ViewerUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateBrowserPlaybackSession401ApplicationProblemPlusJSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSession404ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateBrowserPlaybackSession404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateBrowserPlaybackSession404ResponseHeaders
+}
+
+func (response CreateBrowserPlaybackSession404ApplicationProblemPlusJSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSession409ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateBrowserPlaybackSession409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateBrowserPlaybackSession409ResponseHeaders
+}
+
+func (response CreateBrowserPlaybackSession409ApplicationProblemPlusJSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSession503ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateBrowserPlaybackSession503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateBrowserPlaybackSession503ResponseHeaders
+}
+
+func (response CreateBrowserPlaybackSession503ApplicationProblemPlusJSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSessiondefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateBrowserPlaybackSessiondefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    CreateBrowserPlaybackSessiondefaultResponseHeaders
+	StatusCode int
+}
+
+func (response CreateBrowserPlaybackSessiondefaultApplicationProblemPlusJSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -2075,6 +2368,9 @@ type StrictServerInterface interface {
 	// GetReadyz Readiness
 	// (GET /readyz)
 	GetReadyz(ctx context.Context, request GetReadyzRequestObject) (GetReadyzResponseObject, error)
+	// CreateBrowserPlaybackSession Start a playback session from the viewer's browser
+	// (POST /v1/play/tenants/{tenant_id}/sessions)
+	CreateBrowserPlaybackSession(ctx context.Context, request CreateBrowserPlaybackSessionRequestObject) (CreateBrowserPlaybackSessionResponseObject, error)
 	// EndPlayback End the session
 	// (POST /v1/play/{session_id}/end)
 	EndPlayback(ctx context.Context, request EndPlaybackRequestObject) (EndPlaybackResponseObject, error)
@@ -2181,6 +2477,39 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetReadyzResponseObject); ok {
 		if err := validResponse.VisitGetReadyzResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateBrowserPlaybackSession operation middleware
+func (sh *strictHandler) CreateBrowserPlaybackSession(w http.ResponseWriter, r *http.Request, tenantId TenantIdPath) {
+	var request CreateBrowserPlaybackSessionRequestObject
+
+	request.TenantId = tenantId
+
+	var body CreateBrowserPlaybackSessionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateBrowserPlaybackSession(ctx, request.(CreateBrowserPlaybackSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateBrowserPlaybackSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateBrowserPlaybackSessionResponseObject); ok {
+		if err := validResponse.VisitCreateBrowserPlaybackSessionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

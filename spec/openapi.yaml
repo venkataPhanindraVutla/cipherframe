@@ -723,6 +723,243 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/playback-auth:
+    get:
+      operationId: getPlaybackAuth
+      summary: Get the playback authorization settings
+      description: |
+        Returns how the tenant lets a viewer's browser start a playback session without your API
+        key (ADR 0029, 0031): the JWT provider (issuer, audiences, JWKS URL, viewer claim, and the
+        public keys you uploaded) and the signed-callback provider (URL, and whether a secret
+        exists). A tenant that never configured them has both methods off. **The callback secret
+        is never returned**; only `callback_secret_version` and whether it is set. Requires the
+        `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: The effective settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackAuth"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updatePlaybackAuth
+      summary: Replace the playback authorization settings
+      description: |
+        Replaces the JWT and callback settings (a full replacement: a field you leave out goes back
+        to its default). It does not touch the uploaded keys or the callback secret; use the
+        endpoints below. Invalid values are `invalid_request` with an `errors` entry per field and
+        nothing is stored. `callback_enabled` needs a callback secret (rotate one first) and
+        `jwt_enabled` needs a `jwt_jwks_url` or at least one uploaded key. Every change is audited.
+        Edge reads these settings through a cache of about 30 seconds. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackAuthInput"
+      responses:
+        "200":
+          description: The settings were replaced.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackAuth"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/playback-auth/jwt-keys/{kid}:
+    put:
+      operationId: putPlaybackJwtKey
+      summary: Upload a public JWT verification key
+      description: |
+        Stores a **public** JWK under `kid`, replacing a key that has the same `kid`. The body is the
+        JWK itself and must carry `alg`. Edge uses a key only with that algorithm. Refused with
+        `invalid_request`: a private key (any private member such as `d`), an RSA key under 2048
+        bits, an EC curve other than P-256, a key type other than OKP (Ed25519), EC and RSA, an
+        `alg` that is not `EdDSA`, `ES256` or `RS256` or does not match the key, `use` other than
+        `sig`, and a `kid` member that differs from the path. A tenant may hold at most 20 keys
+        (`409 conflict` beyond that). Every change is audited. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/KidPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicJwk"
+      responses:
+        "200":
+          description: The key was stored.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackJwtKey"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deletePlaybackJwtKey
+      summary: Delete an uploaded JWT verification key
+      description: |
+        Deletes the uploaded key with this `kid`. Tokens signed with it stop verifying once edge's
+        settings cache (about 30 seconds) expires. An unknown `kid` is `404 not_found`. Audited.
+        Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/KidPath"
+      responses:
+        "204":
+          description: The key was deleted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/playback-auth/callback-secret/rotate:
+    post:
+      operationId: rotatePlaybackCallbackSecret
+      summary: Rotate the callback signing secret
+      description: |
+        Generates a new 32-byte callback secret and returns it **once** as `whsec_<base64>`, the form
+        Standard Webhooks libraries take. Cipherframe stores it wrapped by the key provider and
+        cannot show it again. For 24 hours after a rotation the previous secret keeps signing too:
+        every callback then carries two signatures in `webhook-signature`, so your endpoint can
+        switch secrets without refusing a viewer. The first rotation has no previous secret. Audited.
+        Requires the `admin` scope. The response is `no-store`.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: The new secret. It is shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotatedCallbackSecret"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/tenants/{tenant_id}/sessions:
+    post:
+      operationId: createBrowserPlaybackSession
+      summary: Start a playback session from the viewer's browser
+      description: |
+        The viewer's browser starts its own playback session, authorised by your application with a
+        JWT or a signed callback (ADR 0029, 0031) instead of your API key. The tenant is in the path
+        because a CORS preflight has no body: the preflight `OPTIONS` on this path needs no
+        credentials and answers `204` (with `Access-Control-Allow-Origin` only for an origin in the
+        tenant's `allowed_origins`). Every response carries `Cache-Control: no-store`.
+
+        **`method: "jwt"`** takes the token in `Authorization: Bearer <jwt>`. It is checked against
+        the keys you uploaded or your JWKS: algorithms `EdDSA`, `ES256` and `RS256` only; `iss` equal
+        to the configured issuer; `aud` containing a configured audience; `exp` required (at most
+        60 seconds of clock skew, and no more than 24 hours ahead); `nbf` and `iat` honoured; `jti`
+        required (at most 128 characters) and **single use**; `asset_id` equal to the asset in the
+        body, so one token cannot open every asset; and the configured viewer claim (default `sub`)
+        as the viewer ID.
+
+        **`method: "callback"`** sends `ticket`, an opaque string from your page (1 to 2048 bytes),
+        to your callback URL in a signed POST. Only an HTTP 200 answer `{"allow": true,
+        "viewer_id": "..."}` creates a session. A timeout (2 seconds), any other status, a malformed
+        answer or `allow: false` is a `401`. Answers are not cached.
+
+        A method that is off, a tenant with nothing configured, and every JWT or callback failure
+        answer the same generic `401`, so the response reveals nothing about why. When Cipherframe
+        itself cannot unwrap the callback secret the answer is `503`, never a denial. Once
+        authorised, the session is created exactly as by `createPlaybackSession` (same asset checks,
+        per-viewer limit and response) and counts toward the same per-viewer limit.
+      tags: [edge]
+      security:
+        - {}
+        - viewerJwt: []
+      parameters:
+        - $ref: "#/components/parameters/TenantIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBrowserPlaybackSessionRequest"
+      responses:
+        "201":
+          description: The session was created. `token` and a `manifest_url` carrying it are shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedPlaybackSession"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/ViewerUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/play/{session_id}/master.m3u8:
     get:
       operationId: getPlaybackMaster
@@ -1221,6 +1458,14 @@ components:
         has `token_in_url` on may it go in the query parameter `t` instead, for native HLS players
         that cannot set headers. Sending it both ways is `400 invalid_request`; sending it in the
         query when the setting is off is `401`. Any token failure is the same `401`.
+    viewerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT issued by the embedding application
+      description: |
+        Only for `createBrowserPlaybackSession` with `method: jwt` (ADR 0029, 0031): a JWT your
+        application signs, in `Authorization: Bearer <jwt>`, verified against the tenant's uploaded
+        keys or JWKS. The `callback` method needs no header.
   parameters:
     Limit:
       name: limit
@@ -1263,6 +1508,22 @@ components:
       description: A session ID (`ses_` followed by 52 characters), as returned by `createPlaybackSession`.
       schema:
         $ref: "#/components/schemas/SessionId"
+    KidPath:
+      name: kid
+      in: path
+      required: true
+      description: A JWT key ID, 1 to 128 characters from letters, digits and `._~:-`.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._~:-]{1,128}$"
+    TenantIdPath:
+      name: tenant_id
+      in: path
+      required: true
+      description: Your tenant ID (`ten_` followed by 26 characters). An identifier, not a secret.
+      schema:
+        type: string
+        pattern: "^ten_[0-9a-hjkmnp-tv-z]{26}$"
     PlayRendition:
       name: rendition
       in: path
@@ -1341,6 +1602,23 @@ components:
         The playback token is missing, malformed, invalid, expired, for another session or without
         the scope the request needs; the token was sent in the query while `token_in_url` is off; or
         (playlists and the key only) the session is no longer active. One generic detail covers every case.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+        WWW-Authenticate:
+          description: Always `Bearer`.
+          required: true
+          schema:
+            type: string
+            enum: [Bearer]
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ViewerUnauthenticated:
+      description: |
+        The method is off or not configured, or the JWT or the callback refused the viewer. One
+        generic detail covers every case.
       headers:
         X-Request-Id:
           $ref: "#/components/headers/XRequestId"
@@ -1930,6 +2208,181 @@ components:
           type: string
           format: date-time
           description: When the settings were last replaced. Absent while the defaults are in force.
+    PlaybackAuthInput:
+      description: |
+        The JWT and callback settings of a tenant (ADR 0029, 0031). A full replacement: a field you
+        leave out goes back to its default (the viewer claim to `sub`, the rest to off or empty).
+        `jwt_enabled` and `callback_enabled` are required: a missing one is `invalid_request` with
+        an `errors` entry naming it. (The schema does not mark them `required` so that a missing
+        flag can be told apart from `false`.)
+      type: object
+      additionalProperties: false
+      properties:
+        jwt_enabled:
+          type: boolean
+        jwt_issuer:
+          type: string
+          maxLength: 512
+          description: The exact `iss` your tokens carry. Required when `jwt_enabled` is true.
+        jwt_audiences:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          description: Accepted `aud` values; a token needs to name at least one. Required when `jwt_enabled` is true.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+        jwt_jwks_url:
+          type: [string, "null"]
+          maxLength: 2048
+          description: |
+            An https URL of your JWKS document (at most 64 KiB), cached about 10 minutes and
+            refetched at most every 30 seconds when a token names an unknown `kid`. No redirects;
+            hosts that resolve to private, loopback or link-local addresses are refused.
+        jwt_viewer_claim:
+          type: string
+          maxLength: 64
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          description: The claim that holds the viewer ID. Default `sub`.
+        callback_enabled:
+          type: boolean
+          description: Needs a callback secret (see `rotatePlaybackCallbackSecret`).
+        callback_url:
+          type: [string, "null"]
+          maxLength: 2048
+          description: Your https callback URL. Required when `callback_enabled` is true.
+    PlaybackAuth:
+      description: A tenant's playback authorization settings. The callback secret is never part of it.
+      type: object
+      additionalProperties: false
+      required:
+        - jwt_enabled
+        - jwt_issuer
+        - jwt_audiences
+        - jwt_jwks_url
+        - jwt_viewer_claim
+        - jwt_keys
+        - callback_enabled
+        - callback_url
+        - callback_secret_configured
+        - callback_secret_version
+      properties:
+        jwt_enabled:
+          type: boolean
+        jwt_issuer:
+          type: string
+        jwt_audiences:
+          type: array
+          items:
+            type: string
+        jwt_jwks_url:
+          type: [string, "null"]
+        jwt_viewer_claim:
+          type: string
+        jwt_keys:
+          type: array
+          description: The uploaded public keys, by `kid`.
+          items:
+            $ref: "#/components/schemas/PlaybackJwtKey"
+        callback_enabled:
+          type: boolean
+        callback_url:
+          type: [string, "null"]
+        callback_secret_configured:
+          type: boolean
+          description: True once the secret has been rotated at least once.
+        callback_secret_version:
+          type: integer
+          description: 0 until the first rotation, then increases by one per rotation.
+        callback_secret_rotated_at:
+          type: string
+          format: date-time
+        callback_previous_secret_valid_until:
+          type: string
+          format: date-time
+          description: While present, callbacks carry a second signature made with the previous secret.
+        updated_at:
+          type: string
+          format: date-time
+          description: When the settings were last replaced. Absent while the defaults are in force.
+    PlaybackJwtKey:
+      type: object
+      additionalProperties: false
+      required: [kid, alg, created_at]
+      properties:
+        kid:
+          type: string
+        alg:
+          type: string
+          enum: [EdDSA, ES256, RS256]
+        created_at:
+          type: string
+          format: date-time
+    PublicJwk:
+      description: |
+        A public JWK (RFC 7517) with an `alg`. `kty` is `OKP` (`crv` `Ed25519`, alg `EdDSA`), `EC`
+        (`crv` `P-256`, alg `ES256`) or `RSA` (at least 2048 bits, alg `RS256`). Members other than
+        those listed are accepted by the schema and judged by the server: a private member such as
+        `d` is refused.
+      type: object
+      required: [kty, alg]
+      additionalProperties: true
+      properties:
+        kty:
+          type: string
+        alg:
+          type: string
+          enum: [EdDSA, ES256, RS256]
+        kid:
+          type: string
+        use:
+          type: string
+        crv:
+          type: string
+        x:
+          type: string
+        y:
+          type: string
+        "n":
+          type: string
+        e:
+          type: string
+    RotatedCallbackSecret:
+      type: object
+      additionalProperties: false
+      required: [secret, version]
+      properties:
+        secret:
+          type: string
+          description: |
+            The callback secret, `whsec_` followed by the standard base64 of 32 random bytes.
+            Shown only here; store it now.
+        version:
+          type: integer
+        previous_valid_until:
+          type: string
+          format: date-time
+          description: Until when the previous secret also signs callbacks. Absent on the first rotation.
+    CreateBrowserPlaybackSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [asset_id, method]
+      properties:
+        asset_id:
+          $ref: "#/components/schemas/AssetIdValue"
+        method:
+          type: string
+          enum: [jwt, callback]
+          description: How your application authorises the viewer.
+        ticket:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: |
+            For `callback` (required): an opaque string from your page that your callback
+            understands, for example a short-lived order or login reference. Cipherframe forwards
+            it and never logs it. Ignored for `jwt`.
     UploadPart:
       type: object
       additionalProperties: false

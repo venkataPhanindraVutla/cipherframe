@@ -40,6 +40,12 @@ var operationScopes = map[string][]db.Scope{
 	"RevokePlaybackSessions": {db.ScopeSessionsWrite},
 	"GetPlaybackSettings":    {db.ScopeAdmin},
 	"UpdatePlaybackSettings": {db.ScopeAdmin},
+
+	"GetPlaybackAuth":              {db.ScopeAdmin},
+	"UpdatePlaybackAuth":           {db.ScopeAdmin},
+	"PutPlaybackJwtKey":            {db.ScopeAdmin},
+	"DeletePlaybackJwtKey":         {db.ScopeAdmin},
+	"RotatePlaybackCallbackSecret": {db.ScopeAdmin},
 }
 
 // publicOperations are served without authentication.
@@ -179,6 +185,26 @@ func (g guarded) GetPlaybackSettings(w http.ResponseWriter, r *http.Request) {
 
 func (g guarded) UpdatePlaybackSettings(w http.ResponseWriter, r *http.Request) {
 	g.a.run("UpdatePlaybackSettings", w, r, func(r *http.Request) { g.ServerInterface.UpdatePlaybackSettings(w, r) })
+}
+
+func (g guarded) GetPlaybackAuth(w http.ResponseWriter, r *http.Request) {
+	g.a.run("GetPlaybackAuth", w, r, func(r *http.Request) { g.ServerInterface.GetPlaybackAuth(w, r) })
+}
+
+func (g guarded) UpdatePlaybackAuth(w http.ResponseWriter, r *http.Request) {
+	g.a.run("UpdatePlaybackAuth", w, r, func(r *http.Request) { g.ServerInterface.UpdatePlaybackAuth(w, r) })
+}
+
+func (g guarded) PutPlaybackJwtKey(w http.ResponseWriter, r *http.Request, kid gen.KidPath) {
+	g.a.run("PutPlaybackJwtKey", w, r, func(r *http.Request) { g.ServerInterface.PutPlaybackJwtKey(w, r, kid) })
+}
+
+func (g guarded) DeletePlaybackJwtKey(w http.ResponseWriter, r *http.Request, kid gen.KidPath) {
+	g.a.run("DeletePlaybackJwtKey", w, r, func(r *http.Request) { g.ServerInterface.DeletePlaybackJwtKey(w, r, kid) })
+}
+
+func (g guarded) RotatePlaybackCallbackSecret(w http.ResponseWriter, r *http.Request) {
+	g.a.run("RotatePlaybackCallbackSecret", w, r, func(r *http.Request) { g.ServerInterface.RotatePlaybackCallbackSecret(w, r) })
 }
 
 func (g guarded) ListAssets(w http.ResponseWriter, r *http.Request, params gen.ListAssetsParams) {

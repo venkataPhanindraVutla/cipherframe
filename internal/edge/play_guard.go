@@ -50,6 +50,10 @@ func playGate(p *Playback) httpx.Middleware {
 				return
 			}
 			if r.Method == http.MethodOptions {
+				if tid, ok := tenantRouteID(r.URL.Path); ok {
+					p.preflightTenant(w, r, tid)
+					return
+				}
 				if sid, ok := playRouteSession(r.URL.Path); ok {
 					p.preflight(w, r, sid)
 					return
