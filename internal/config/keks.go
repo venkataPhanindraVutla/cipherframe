@@ -31,7 +31,11 @@ type KMS struct {
 	Provider string
 	// LocalKEKs is the local provider's key set. It is empty unless Provider is "local".
 	LocalKEKs KEKs
-	// Provider-specific settings (vault, awskms, gcpkms) are added by M2-2.
+	// Vault, AWS and GCP hold provider-specific settings. Each is filled only when Provider names
+	// that provider; each lives in its own file (kms_vault.go, kms_aws.go, kms_gcp.go).
+	Vault KMSVault
+	AWS   KMSAWS
+	GCP   KMSGCP
 }
 
 // KEKs is the versioned set of local-provider key-encryption keys plus the current version,

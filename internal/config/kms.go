@@ -21,7 +21,15 @@ func (l *loader) kms(prod bool) KMS {
 		l.errf("%s must be one of %s", EnvKMSProvider, strings.Join(KMSProviders(), ", "))
 		return k
 	}
-	if k.Provider != ProviderLocal {
+	switch k.Provider {
+	case ProviderVault:
+		k.Vault = l.kmsVault(prod)
+		return k
+	case ProviderAWSKMS:
+		k.AWS = l.kmsAWS(prod)
+		return k
+	case ProviderGCPKMS:
+		k.GCP = l.kmsGCP(prod)
 		return k
 	}
 	if prod {
