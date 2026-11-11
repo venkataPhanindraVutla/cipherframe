@@ -112,11 +112,11 @@ func startSeaweed(ctx context.Context) (*seaweed, testcontainers.Container, erro
 	}
 	s := &seaweed{internalHost: "127.0.0.1", publicHost: "localhost", port: port.Port(), accessKey: access, secretKey: secret}
 	if host != "localhost" && host != "127.0.0.1" {
-		addrs, err := net.LookupIP(host)
+		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 		if err != nil || len(addrs) == 0 {
 			return nil, c, fmt.Errorf("resolve %s: %w", host, err)
 		}
-		s.internalHost, s.publicHost = addrs[0].String(), host
+		s.internalHost, s.publicHost = addrs[0].IP.String(), host
 	}
 	if err := s.createBuckets(ctx, sourceBucket, deliveryBucket); err != nil {
 		return nil, c, err
