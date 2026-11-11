@@ -182,12 +182,15 @@ variable, never its value.
 | `CIPHERFRAME_S3_SECRET_ACCESS_KEY` | unset | production: yes | yes | Credential, see below. |
 | `CIPHERFRAME_API_KEY_PEPPERS` | none | yes | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded pepper is at least 32 bytes (standard base64). |
 | `CIPHERFRAME_API_KEY_PEPPER_CURRENT` | none | yes | no | Positive integer naming a version in the set. |
-| `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. Only `local` is implemented so far (Docker Compose uses it with a `dev-placeholder-` KEK); the others are reserved names that fail at startup until M2-2 (ADR 0019, ADR 0022). |
+| `CIPHERFRAME_KMS_PROVIDER` | `local` in development | production: yes | no | Key provider that wraps content keys: `local`, `vault`, `awskms` or `gcpkms`. `local` is **development-only**: production requires an explicit provider other than `local` and refuses to start otherwise. `local` and `gcpkms` are implemented so far (Docker Compose uses `local` with a `dev-placeholder-` KEK); the others are reserved names that fail at startup until M2-2 lands them. `gcpkms` is absent from a binary built with the `nokms_gcp` tag, and selecting it there fails at startup (ADR 0019, ADR 0022). |
 | `CIPHERFRAME_KMS_LOCAL_KEKS` | none | with `local` | yes | Comma-separated `version:base64`. Versions are unique positive integers; each decoded KEK is **exactly 32 bytes** (standard base64). `_FILE` is supported. Values starting with `dev-placeholder-` are accepted only in development. Ignored unless the provider is `local`. |
 | `CIPHERFRAME_KMS_LOCAL_KEK_CURRENT` | none | with `local` | no | Positive integer naming the version in the set that new wraps use. Older versions stay for unwrapping. |
 | `CIPHERFRAME_KMS_VAULT_*` | | | | **Stub.** Vault Transit settings arrive with M2-2 (ADR 0021). |
 | `CIPHERFRAME_KMS_AWS_*` | | | | **Stub.** AWS KMS settings arrive with M2-2. |
-| `CIPHERFRAME_KMS_GCP_*` | | | | **Stub.** GCP KMS settings arrive with M2-2. |
+| `CIPHERFRAME_KMS_GCP_KEY_NAME` | none | with `gcpkms` | no | Cloud KMS crypto key, `projects/P/locations/L/keyRings/R/cryptoKeys/K`. A key version name is refused. The key must be a symmetric `ENCRYPT_DECRYPT` key; new wraps use its primary version. Ignored unless the provider is `gcpkms`. |
+| `CIPHERFRAME_KMS_GCP_CREDENTIALS_FILE` | unset (Application Default Credentials) | no | no | Path of a credentials JSON file (`service_account`, `authorized_user`, `external_account` or `impersonated_service_account`). It is a path, not a secret; its content is never logged. Unset means Application Default Credentials (workload identity, attached service account, `GOOGLE_APPLICATION_CREDENTIALS`). The identity needs `cloudkms.cryptoKeys.get` and `cloudkms.cryptoKeyVersions.useToEncrypt`/`useToDecrypt` (for example `roles/cloudkms.cryptoOperator` plus `roles/cloudkms.viewer`). |
+| `CIPHERFRAME_KMS_GCP_ENDPOINT` | the Cloud KMS endpoint | no | no | Optional `host:port` that replaces `cloudkms.googleapis.com:443`, for a private endpoint (Private Service Connect). The connection uses TLS. |
+| `CIPHERFRAME_KMS_GCP_TIMEOUT` | `5s` | no | no | Go duration from 1ms to 5m, applied to each Cloud KMS request (including SDK retries). |
 
 Empty values of non-secret variables mean "use the default".
 
