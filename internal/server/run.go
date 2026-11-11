@@ -65,6 +65,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 	if len(opts.Roles) == 0 {
 		return errors.New("server: no roles")
 	}
+	// The api role signs playback tokens and the edge role verifies them (ADR 0028); neither can
+	// run without the keys.
+	if Has(opts.Roles, RoleAPI) || Has(opts.Roles, RoleEdge) {
+		if err := cfg.Playback.Require(); err != nil {
+			return err
+		}
+	}
 	// Only the worker role runs FFmpeg. Check it first, before any connection is opened, so a
 	// worker with a missing or limited FFmpeg stops with a message that says what is missing.
 	if Has(opts.Roles, RoleWorker) {
