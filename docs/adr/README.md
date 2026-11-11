@@ -36,6 +36,8 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0028](0028-playback-tokens-and-session-parameters.md) | Playback tokens and session parameters | P6 | Accepted | 2026-11-11 |
 | [0029](0029-jwt-and-signed-callback-authorization.md) | JWT and signed-callback authorization | P7 (JWT and signed callback) | Accepted | 2026-11-11 |
 | [0030](0030-playback-token-transport.md) | Playback token transport | none | Accepted | 2026-11-11 |
+| [0031](0031-browser-session-creation-and-jwt-library.md) | Browser session creation and the JWT library | none | Accepted | 2026-11-11 |
+| [0032](0032-delivery-strategies.md) | Delivery strategies | none | Accepted (flagged for owner review) | 2026-11-11 |
 
 ## Open gates
 
