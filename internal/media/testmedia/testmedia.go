@@ -135,6 +135,7 @@ func SetMP4Duration(path string, d time.Duration) error {
 		return err
 	}
 	var movieScale uint32
+	var trackFactor, movieFactor float64
 	patched := 0
 	// walk visits the boxes in [start, end) and descends into the containers of the movie header tree.
 	var walk func(start, end int) error
@@ -147,7 +148,7 @@ func SetMP4Duration(path string, d time.Duration) error {
 			}
 			body := pos + 8
 			switch typ {
-			case "moov", "trak", "mdia":
+			case "moov", "trak", "mdia", "minf", "stbl", "edts":
 				if err := walk(body, pos+size); err != nil {
 					return err
 				}
@@ -156,6 +157,9 @@ func SetMP4Duration(path string, d time.Duration) error {
 					return errors.New("testmedia: only version 0 mvhd is supported")
 				}
 				movieScale = binary.BigEndian.Uint32(data[body+12:])
+				if orig := binary.BigEndian.Uint32(data[body+16:]); orig > 0 {
+					movieFactor = d.Seconds() * float64(movieScale) / float64(orig)
+				}
 				binary.BigEndian.PutUint32(data[body+16:], uint32(d.Seconds()*float64(movieScale)))
 				patched++
 			case "tkhd":
@@ -169,8 +173,35 @@ func SetMP4Duration(path string, d time.Duration) error {
 					return errors.New("testmedia: only version 0 mdhd is supported")
 				}
 				scale := binary.BigEndian.Uint32(data[body+12:])
+				if orig := binary.BigEndian.Uint32(data[body+16:]); orig > 0 {
+					trackFactor = d.Seconds() * float64(scale) / float64(orig)
+				}
 				binary.BigEndian.PutUint32(data[body+16:], uint32(d.Seconds()*float64(scale)))
 				patched++
+			case "elst":
+				// Edit lists also bound a track's reported length: stretch every segment.
+				if data[body] != 0 {
+					return errors.New("testmedia: only version 0 elst is supported")
+				}
+				n := int(binary.BigEndian.Uint32(data[body+4:]))
+				for i := 0; i < n && body+8+12*i+12 <= pos+size; i++ {
+					at := body + 8 + 12*i
+					delta := float64(binary.BigEndian.Uint32(data[at:])) * movieFactor
+					binary.BigEndian.PutUint32(data[at:], uint32(max(delta, 1)))
+				}
+				patched++
+			case "stts":
+				// The sample table decides what FFmpeg reports, so stretch every sample's duration
+				// by the same factor: the file now really does span d, with the same frames.
+				if trackFactor > 0 {
+					n := int(binary.BigEndian.Uint32(data[body+4:]))
+					for i := 0; i < n && body+8+8*i+8 <= pos+size; i++ {
+						at := body + 8 + 8*i + 4
+						delta := float64(binary.BigEndian.Uint32(data[at:])) * trackFactor
+						binary.BigEndian.PutUint32(data[at:], uint32(max(delta, 1)))
+					}
+					patched++
+				}
 			}
 			pos += size
 		}

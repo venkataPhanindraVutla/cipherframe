@@ -128,6 +128,7 @@ RUN ./configure \
         --enable-indev=lavfi \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov \
+        --enable-decoder=wrapped_avframe,pcm_s16le,pcm_f32le,pcm_f64le,rawvideo \
         --enable-parser=h264,aac \
         --enable-encoder=libx264,aac \
         --enable-muxer=mp4,matroska \
