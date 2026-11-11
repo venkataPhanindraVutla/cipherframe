@@ -28,12 +28,23 @@ type ApiKey struct {
 }
 
 type Asset struct {
-	ID                pgtype.UUID
-	TenantID          pgtype.UUID
-	CreatedByClientID pgtype.UUID
-	State             string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                  pgtype.UUID
+	TenantID            pgtype.UUID
+	CreatedByClientID   pgtype.UUID
+	State               string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	SizeBytes           *int64
+	ContentType         *string
+	UploadMethod        *string
+	SourceKey           *string
+	S3UploadID          *string
+	UploadExpiresAt     *time.Time
+	CommittedAt         *time.Time
+	ProcessingStartedAt *time.Time
+	ReadyAt             *time.Time
+	FailedAt            *time.Time
+	FailureCode         *string
 }
 
 type AuditEvent struct {
@@ -88,4 +99,20 @@ type Tenant struct {
 	Name       string
 	CreatedAt  time.Time
 	DisabledAt *time.Time
+}
+
+type UploadPart struct {
+	AssetID    pgtype.UUID
+	PartNumber int32
+	Etag       string
+	SizeBytes  int64
+	CreatedAt  time.Time
+}
+
+type UploadToken struct {
+	TokenHash []byte
+	AssetID   pgtype.UUID
+	TenantID  pgtype.UUID
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
