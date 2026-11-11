@@ -147,7 +147,7 @@ func (s *Service) CreateSession(ctx context.Context, in CreateInput) (Created, e
 		tokenExpires = sessionExpires
 	}
 	tok, err := s.keyring.Sign(token.Claims{
-		SessionID: sid.String(), AssetID: asset.ID.String(),
+		SessionID: sid.String(), AssetID: asset.ID.String(), TenantID: in.TenantID.String(),
 		Scopes:   token.ScopeManifest | token.ScopeKey | token.ScopeSegment,
 		IssuedAt: now, Expiry: tokenExpires,
 	})

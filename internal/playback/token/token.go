@@ -5,8 +5,8 @@
 //		v1.<payload>.<kid>.<mac>
 //
 //	  - payload is compact JSON, base64url without padding. The fields are short:
-//	    s (session ID), a (asset ID), m (scope bitmask), i (issued-at, unix seconds) and
-//	    e (expiry, unix seconds). Unknown fields are rejected.
+//	    s (session ID), a (asset ID), n (tenant ID), m (scope bitmask), i (issued-at, unix seconds)
+//	    and e (expiry, unix seconds). Unknown fields are rejected.
 //	  - kid is the key ID: the decimal version of the signing key, written as plain text. Decimal
 //	    digits are already URL-safe and never contain a dot, so it is not base64-encoded.
 //	  - mac is HMAC-SHA256 over the exact text "v1." + payload + "." + kid, base64url without
@@ -15,6 +15,10 @@
 //
 // Scopes are a bitmask (manifest 1, key 2, segment 4) so the set stays small and has one canonical
 // encoding. A token may carry any non-empty combination.
+//
+// The tenant is in the claims so that edge can serve a segment without a database round trip: it
+// builds the object key from the tenant and asset in the (MAC-protected) claims, and finds the
+// tenant's settings in its own small cache. The client never names the asset or the tenant.
 //
 // Verification is stateless: it checks the MAC, the key ID, expiry, scope and asset, with no
 // database round trip. That is enough for playlists and segments at the edge. The key endpoint
@@ -103,6 +107,7 @@ var ErrInvalid = errs.New(errs.Unauthenticated, "invalid playback token")
 type Claims struct {
 	SessionID string
 	AssetID   string
+	TenantID  string
 	Scopes    Scope
 	IssuedAt  time.Time
 	Expiry    time.Time
@@ -112,6 +117,7 @@ type Claims struct {
 type payload struct {
 	Session string `json:"s"`
 	Asset   string `json:"a"`
+	Tenant  string `json:"n"`
 	Scopes  uint8  `json:"m"`
 	Issued  int64  `json:"i"`
 	Expires int64  `json:"e"`
@@ -179,13 +185,15 @@ func (k *Keyring) Sign(c Claims) (string, error) {
 		return "", errors.New("token: invalid session ID")
 	case c.AssetID == "" || len(c.AssetID) > maxIDLen:
 		return "", errors.New("token: invalid asset ID")
+	case c.TenantID == "" || len(c.TenantID) > maxIDLen:
+		return "", errors.New("token: invalid tenant ID")
 	case !c.Scopes.valid():
 		return "", errors.New("token: invalid scope")
 	case c.IssuedAt.Unix() < 1 || c.Expiry.Unix() <= c.IssuedAt.Unix():
 		return "", errors.New("token: expiry must be after issue time")
 	}
 	body, err := json.Marshal(payload{
-		Session: c.SessionID, Asset: c.AssetID, Scopes: uint8(c.Scopes),
+		Session: c.SessionID, Asset: c.AssetID, Tenant: c.TenantID, Scopes: uint8(c.Scopes),
 		Issued: c.IssuedAt.Unix(), Expires: c.Expiry.Unix(),
 	})
 	if err != nil {
@@ -204,14 +212,25 @@ func (k *Keyring) Sign(c Claims) (string, error) {
 // request requires (every bit must be present, and it must not be empty); assetID is the asset the
 // request is for. Any failure returns ErrInvalid.
 func (k *Keyring) Verify(tok string, now time.Time, need Scope, assetID string) (Claims, error) {
-	c, ok := k.verify(tok, now, need, assetID)
+	c, ok := k.verify(tok, now, need, &assetID)
 	if !ok {
 		return Claims{}, ErrInvalid
 	}
 	return c, nil
 }
 
-func (k *Keyring) verify(tok string, now time.Time, need Scope, assetID string) (Claims, bool) {
+// Open is Verify for a caller that does not know the asset yet, such as edge, whose request names
+// only the session: it checks everything Verify checks except the asset, which the caller then
+// takes from the returned claims (never from the client). Any failure returns ErrInvalid.
+func (k *Keyring) Open(tok string, now time.Time, need Scope) (Claims, error) {
+	c, ok := k.verify(tok, now, need, nil)
+	if !ok {
+		return Claims{}, ErrInvalid
+	}
+	return c, nil
+}
+
+func (k *Keyring) verify(tok string, now time.Time, need Scope, assetID *string) (Claims, bool) {
 	if k == nil || len(tok) > MaxTokenLen || !need.valid() {
 		return Claims{}, false
 	}
@@ -250,17 +269,17 @@ func (k *Keyring) verify(tok string, now time.Time, need Scope, assetID string) 
 	}
 	sc := Scope(p.Scopes)
 	switch {
-	case p.Session == "" || p.Asset == "" || !sc.valid() || p.Expires <= p.Issued:
+	case p.Session == "" || p.Asset == "" || p.Tenant == "" || !sc.valid() || p.Expires <= p.Issued:
 		return Claims{}, false
 	case now.Unix() >= p.Expires:
 		return Claims{}, false
 	case !sc.Has(need):
 		return Claims{}, false
-	case !hmac.Equal([]byte(p.Asset), []byte(assetID)):
+	case assetID != nil && !hmac.Equal([]byte(p.Asset), []byte(*assetID)):
 		return Claims{}, false
 	}
 	return Claims{
-		SessionID: p.Session, AssetID: p.Asset, Scopes: sc,
+		SessionID: p.Session, AssetID: p.Asset, TenantID: p.Tenant, Scopes: sc,
 		IssuedAt: time.Unix(p.Issued, 0).UTC(), Expiry: time.Unix(p.Expires, 0).UTC(),
 	}, true
 }
