@@ -1,0 +1,178 @@
+package db
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbgen"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+)
+
+// ArtifactKind says what a derived object is (the asset_artifacts.kind column).
+type ArtifactKind string
+
+// Artifact kinds.
+const (
+	ArtifactMaster   ArtifactKind = "master"
+	ArtifactPlaylist ArtifactKind = "playlist"
+	ArtifactInit     ArtifactKind = "init"
+	ArtifactSegment  ArtifactKind = "segment"
+	ArtifactPoster   ArtifactKind = "poster"
+)
+
+// Valid reports whether k is a known kind.
+func (k ArtifactKind) Valid() bool {
+	switch k {
+	case ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster:
+		return true
+	}
+	return false
+}
+
+// Artifact registers one object derived from an asset (invariant I6). Bucket is the bucket role
+// ("source" or "delivery"), not the configured bucket name. SHA256 is the hash of the bytes as
+// stored, so for an encrypted segment it covers the ciphertext.
+type Artifact struct {
+	AssetID   id.AssetID
+	Kind      ArtifactKind
+	Rendition string // empty for the master playlist
+	Bucket    string
+	ObjectKey string
+	SizeBytes int64
+	SHA256    []byte
+	CreatedAt time.Time
+}
+
+// RecordSource stores the SHA-256 and size the worker measured while streaming the source. It
+// changes nothing, and returns a conflict, unless the asset is processing.
+func (r *Repos) RecordSource(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, sha256 []byte, size int64) error {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return err
+	}
+	if len(sha256) != 32 || size < 1 {
+		return errs.New(errs.InternalError, "An internal error occurred.")
+	}
+	n, err := r.q.RecordAssetSource(ctx, dbgen.RecordAssetSourceParams{
+		SourceSha256: sha256, SourceSizeBytes: size, At: time.Now().UTC(), TenantID: tid, ID: aid,
+	})
+	if err != nil {
+		return mapError(err)
+	}
+	if n == 0 {
+		return stateConflict()
+	}
+	return nil
+}
+
+// SetProgress records a 0-100 progress hint. It only moves forward and applies only while the
+// asset is processing; anything else is silently ignored.
+func (r *Repos) SetProgress(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, percent int) error {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return err
+	}
+	if percent < 0 || percent > 100 {
+		return errs.New(errs.InternalError, "An internal error occurred.")
+	}
+	_, err = r.q.SetAssetProgress(ctx, dbgen.SetAssetProgressParams{
+		Progress: int16(percent), TenantID: tid, ID: aid, //nolint:gosec // 0..100
+	})
+	return mapError(err)
+}
+
+// ResetProgress sets the progress of a processing asset back to zero (a retry starts over).
+func (r *Repos) ResetProgress(ctx context.Context, tenantID id.TenantID, assetID id.AssetID) error {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return err
+	}
+	return mapError(r.q.ResetAssetProgress(ctx, dbgen.ResetAssetProgressParams{TenantID: tid, ID: aid}))
+}
+
+// Completion is what a finished pipeline records on the asset.
+type Completion struct {
+	Duration time.Duration
+	// Renditions is a JSON summary of the renditions produced; it must be valid JSON.
+	Renditions []byte
+	At         time.Time
+}
+
+// CompleteProcessing moves the asset processing -> ready with a compare-and-set and records the
+// duration and the renditions summary. Losing the race is a conflict whose cause is ErrStateChanged.
+func (r *Repos) CompleteProcessing(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, c Completion) (Asset, error) {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return Asset{}, err
+	}
+	if c.Duration <= 0 || len(c.Renditions) == 0 {
+		return Asset{}, errs.New(errs.InternalError, "An internal error occurred.")
+	}
+	if c.At.IsZero() {
+		c.At = time.Now().UTC()
+	}
+	ms := max(c.Duration.Milliseconds(), 1)
+	row, err := r.q.CompleteAssetProcessing(ctx, dbgen.CompleteAssetProcessingParams{
+		At: c.At, DurationMs: ms, Renditions: c.Renditions, TenantID: tid, ID: aid,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Asset{}, stateConflict()
+		}
+		return Asset{}, mapError(err)
+	}
+	return assetFromRow(row), nil
+}
+
+// RecordArtifact registers (or re-registers) a derived object. An object key that already belongs
+// to a different asset is not taken over.
+func (r *Repos) RecordArtifact(ctx context.Context, a Artifact) error {
+	aid, err := requirePG(a.AssetID)
+	if err != nil {
+		return err
+	}
+	if !a.Kind.Valid() || (a.Bucket != "source" && a.Bucket != "delivery") || a.ObjectKey == "" ||
+		a.SizeBytes < 0 || len(a.SHA256) != 32 {
+		return errs.New(errs.InternalError, "An internal error occurred.")
+	}
+	return mapError(r.q.UpsertAssetArtifact(ctx, dbgen.UpsertAssetArtifactParams{
+		AssetID: aid, Kind: string(a.Kind), Rendition: strPtr(a.Rendition), Bucket: a.Bucket,
+		ObjectKey: a.ObjectKey, SizeBytes: a.SizeBytes, Sha256: a.SHA256,
+	}))
+}
+
+// ListArtifacts returns every registered artifact of the asset, ordered by bucket and key.
+func (r *Repos) ListArtifacts(ctx context.Context, assetID id.AssetID) ([]Artifact, error) {
+	aid, err := requirePG(assetID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.q.ListAssetArtifacts(ctx, aid)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]Artifact, len(rows))
+	for i, row := range rows {
+		out[i] = Artifact{
+			AssetID: assetID, Kind: ArtifactKind(row.Kind), Rendition: strVal(row.Rendition), Bucket: row.Bucket,
+			ObjectKey: row.ObjectKey, SizeBytes: row.SizeBytes, SHA256: row.Sha256, CreatedAt: row.CreatedAt.UTC(),
+		}
+	}
+	return out, nil
+}
+
+// DeleteHLSArtifacts removes the asset's playlist, init segment and media segment rows (what the
+// processing job produces again on a retry; a poster is kept) and returns how many there were. The
+// objects themselves are the caller's to delete.
+func (r *Repos) DeleteHLSArtifacts(ctx context.Context, assetID id.AssetID) (int64, error) {
+	aid, err := requirePG(assetID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := r.q.DeleteAssetHLSArtifacts(ctx, aid)
+	return n, mapError(err)
+}

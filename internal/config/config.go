@@ -117,6 +117,7 @@ func (c *Config) LogValue() slog.Value {
 			slog.Int("max_source_width", c.Media.MaxSourceWidth),
 			slog.Int("max_source_height", c.Media.MaxSourceHeight),
 			slog.Duration("transcode_timeout", c.Media.TranscodeTimeout),
+			slog.String("work_dir", c.Media.WorkDir),
 		),
 		slog.Group("kms",
 			slog.String("provider", c.KMS.Provider),

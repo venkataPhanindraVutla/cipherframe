@@ -140,6 +140,14 @@ type Asset struct {
 	ReadyAt             *time.Time
 	FailedAt            *time.Time
 	FailureCode         string
+	// SourceSHA256 and SourceSizeBytes are measured by the worker while it streams the source
+	// (nil and 0 until then). DurationMS and Renditions (a JSON summary) are set when the asset
+	// becomes ready. Progress is a 0-100 hint while processing.
+	SourceSHA256    []byte
+	SourceSizeBytes int64
+	DurationMS      int64
+	Renditions      []byte
+	Progress        int
 }
 
 // String implements fmt.Stringer without the source key or upload ID.

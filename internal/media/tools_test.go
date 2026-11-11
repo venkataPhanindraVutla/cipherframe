@@ -62,6 +62,7 @@ Output:
  ... anull             A->A       Pass the source unchanged to the output.
  ... setsar            V->V       Set the pixel sample aspect ratio.
  ... fps               V->V       Force constant framerate.
+ ... split             V->N       Pass on the input to N video outputs.
 `
 )
 

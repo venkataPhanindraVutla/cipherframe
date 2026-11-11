@@ -93,3 +93,40 @@ WHERE asset_id = $1 AND part_number <> $2;
 
 -- name: DeleteUploadParts :exec
 DELETE FROM upload_parts WHERE asset_id = $1;
+
+-- name: RecordAssetSource :execrows
+-- Stores what the worker measured while streaming the source. Only while the asset is processing.
+UPDATE assets SET
+    source_sha256     = sqlc.arg(source_sha256)::bytea,
+    source_size_bytes = sqlc.arg(source_size_bytes)::bigint,
+    updated_at        = sqlc.arg(at)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state = 'processing';
+
+-- name: SetAssetProgress :execrows
+-- A hint for clients; it never moves backwards (ResetAssetProgress starts a retry from zero) and is
+-- written only while processing.
+UPDATE assets SET progress = sqlc.arg(progress)::smallint
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state = 'processing'
+  AND progress < sqlc.arg(progress)::smallint;
+
+-- name: ResetAssetProgress :exec
+UPDATE assets SET progress = 0
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid AND id = sqlc.arg(id)::uuid AND state = 'processing';
+
+-- name: CompleteAssetProcessing :one
+-- Compare-and-set processing -> ready with the results of the pipeline.
+UPDATE assets SET
+    state       = 'ready',
+    ready_at    = sqlc.arg(at)::timestamptz,
+    updated_at  = sqlc.arg(at)::timestamptz,
+    duration_ms = sqlc.arg(duration_ms)::bigint,
+    renditions  = sqlc.arg(renditions)::jsonb,
+    progress    = 100
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state = 'processing'
+RETURNING *;

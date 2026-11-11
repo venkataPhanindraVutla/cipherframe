@@ -46,6 +46,10 @@ Cipherframe does **not** protect against:
 
 ## Known hard limits
 
+- While a transcode runs, plaintext segments exist on the worker's local disk in a private 0700
+  directory (ADR 0027). Anyone with root on that node can read them; run workers on dedicated nodes
+  with encrypted local disks.
+
 - Losing the key-encryption key makes every asset permanently unreadable. That is the same property
   that makes crypto-shredding work.
 - Crypto-shredding cannot reach plaintext a viewer already saved.

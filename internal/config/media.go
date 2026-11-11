@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ const (
 	EnvMaxSourceWidth    = "CIPHERFRAME_MAX_SOURCE_WIDTH"
 	EnvMaxSourceHeight   = "CIPHERFRAME_MAX_SOURCE_HEIGHT"
 	EnvTranscodeTimeout  = "CIPHERFRAME_TRANSCODE_TIMEOUT"
+	EnvWorkDir           = "CIPHERFRAME_WORK_DIR"
 )
 
 // Media defaults and ceilings. The ceilings keep a typo from disabling a limit.
@@ -44,6 +47,10 @@ type Media struct {
 	MaxSourceHeight   int
 	// TranscodeTimeout bounds one whole transcode.
 	TranscodeTimeout time.Duration
+	// WorkDir is the private directory under which each processing job gets its own subdirectory
+	// for the downloaded source and the plaintext segments FFmpeg writes. The worker creates it
+	// with mode 0700 and removes a job's subdirectory when the job ends.
+	WorkDir string
 }
 
 func (l *loader) media() Media {
@@ -54,7 +61,22 @@ func (l *loader) media() Media {
 		MaxSourceWidth:    l.dimension(EnvMaxSourceWidth, defaultMaxSourceWidth),
 		MaxSourceHeight:   l.dimension(EnvMaxSourceHeight, defaultMaxSourceHeight),
 		TranscodeTimeout:  l.positiveDuration(EnvTranscodeTimeout, defaultTranscodeTimeout, transcodeTimeoutCeiling),
+		WorkDir:           l.workDir(),
 	}
+}
+
+// workDir reads CIPHERFRAME_WORK_DIR. The default is "cipherframe" under the operating system's
+// temporary directory. The path must be absolute (FFmpeg is handed absolute file: URLs).
+func (l *loader) workDir() string {
+	v := l.plain(EnvWorkDir, "")
+	if v == "" {
+		return filepath.Join(os.TempDir(), "cipherframe")
+	}
+	if strings.ContainsAny(v, "\x00\r\n") || strings.TrimSpace(v) != v || !filepath.IsAbs(v) {
+		l.errf("%s must be an absolute path without control characters or surrounding spaces", EnvWorkDir)
+		return v
+	}
+	return filepath.Clean(v)
 }
 
 func (l *loader) toolPath(name, def string) string {

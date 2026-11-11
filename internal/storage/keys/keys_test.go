@@ -116,3 +116,14 @@ func TestZeroIDsPanic(t *testing.T) {
 	}()
 	keys.NewSource(id.TenantID{}, id.New[id.AssetKind]())
 }
+
+func TestHLSPrefixCoversEveryHLSKeyAndNothingElse(t *testing.T) {
+	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
+	for _, k := range allKeys(t, tn, a) {
+		under := strings.HasPrefix(k.key, keys.HLSPrefix(tn, a))
+		isHLS := k.bucket == keys.Delivery && k.name != "Poster"
+		if under != isHLS {
+			t.Errorf("%s: under HLSPrefix = %v, want %v", k.name, under, isHLS)
+		}
+	}
+}

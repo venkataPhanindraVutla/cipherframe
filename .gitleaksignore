@@ -11,3 +11,8 @@ a5645d81e290e97d7cc84dece5282ef3d9ce2450:internal/config/load_test.go:generic-ap
 f097e02d3f547f8d71f4eb1e792533abcd80b9ff:internal/config/kms_aws_test.go:generic-api-key:87
 fcb428fde29ef91f72b1f1e6a25e5df7822ce477:internal/config/kms_vault_test.go:generic-api-key:135
 fcb428fde29ef91f72b1f1e6a25e5df7822ce477:internal/config/kms_vault_test.go:generic-api-key:147
+
+# internal/hls tests: the published NIST SP 800-38A F.2.1 CBC-AES128 test-vector key, and a fixed
+# IV in a golden playlist fixture. Public test data, not secrets.
+74917f7238f6f85cbc75aff9e10a1c8b1f3fc146:internal/hls/hls_test.go:generic-api-key:58
+74917f7238f6f85cbc75aff9e10a1c8b1f3fc146:internal/hls/testdata/media.m3u8.golden:generic-api-key:11

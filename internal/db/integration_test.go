@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -154,7 +155,7 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 			t.Fatalf("migrate run %d: %v", i+1, err)
 		}
 	}
-	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "content_keys", "external_tasks", "upload_tokens", "upload_parts", "river_job", "river_migration"} {
+	for _, table := range []string{"tenants", "clients", "api_keys", "assets", "audit_events", "content_keys", "external_tasks", "upload_tokens", "upload_parts", "asset_artifacts", "river_job", "river_migration"} {
 		var n int
 		err := pool.QueryRow(ctx,
 			"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
@@ -167,8 +168,8 @@ func TestMigrateFromEmptyAndIdempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id > 0").Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 4 {
-		t.Fatalf("applied migrations = %d, want 4", applied)
+	if applied != 5 {
+		t.Fatalf("applied migrations = %d, want 5", applied)
 	}
 	// River's schema is applied by the same call and is not re-applied by a further run.
 	var riverVersions int
@@ -417,7 +418,7 @@ func TestRotationPreservesOwnership(t *testing.T) {
 
 	// Assets and audit rows are untouched.
 	after, err := r.GetAsset(ctx, f.tenant.ID, asset.ID)
-	if err != nil || after != asset {
+	if err != nil || !reflect.DeepEqual(after, asset) {
 		t.Fatalf("asset changed by rotation: %+v vs %+v (%v)", after, asset, err)
 	}
 	if after.CreatedByClientID != f.client.ID {
@@ -520,7 +521,7 @@ func TestAssets(t *testing.T) {
 		t.Fatalf("unexpected asset: %+v", a)
 	}
 	got, err := r.GetAsset(ctx, f.tenant.ID, a.ID)
-	if err != nil || got != a {
+	if err != nil || !reflect.DeepEqual(got, a) {
 		t.Fatalf("GetAsset = %+v, %v; want %+v", got, err, a)
 	}
 	_, err = r.GetAsset(ctx, f.tenant.ID, id.New[id.AssetKind]())

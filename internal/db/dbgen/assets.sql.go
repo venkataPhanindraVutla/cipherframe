@@ -12,12 +12,71 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const completeAssetProcessing = `-- name: CompleteAssetProcessing :one
+UPDATE assets SET
+    state       = 'ready',
+    ready_at    = $1::timestamptz,
+    updated_at  = $1::timestamptz,
+    duration_ms = $2::bigint,
+    renditions  = $3::jsonb,
+    progress    = 100
+WHERE tenant_id = $4::uuid
+  AND id = $5::uuid
+  AND state = 'processing'
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
+`
+
+type CompleteAssetProcessingParams struct {
+	At         time.Time
+	DurationMs int64
+	Renditions []byte
+	TenantID   pgtype.UUID
+	ID         pgtype.UUID
+}
+
+// Compare-and-set processing -> ready with the results of the pipeline.
+func (q *Queries) CompleteAssetProcessing(ctx context.Context, arg CompleteAssetProcessingParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, completeAssetProcessing,
+		arg.At,
+		arg.DurationMs,
+		arg.Renditions,
+		arg.TenantID,
+		arg.ID,
+	)
+	var i Asset
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.CreatedByClientID,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
+	)
+	return i, err
+}
+
 const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (id, tenant_id, created_by_client_id, state)
 SELECT $1::uuid, c.tenant_id, c.id, $2::text
 FROM clients c
 WHERE c.id = $3::uuid AND c.tenant_id = $4::uuid
-RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
 `
 
 type CreateAssetParams struct {
@@ -54,6 +113,11 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Asset
 		&i.ReadyAt,
 		&i.FailedAt,
 		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
 }
@@ -68,7 +132,7 @@ SELECT $1::uuid, c.tenant_id, c.id, 'created', $2::bigint,
        $6::text, $7::timestamptz
 FROM clients c
 WHERE c.id = $8::uuid AND c.tenant_id = $9::uuid
-RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
 `
 
 type CreateUploadAssetParams struct {
@@ -115,6 +179,11 @@ func (q *Queries) CreateUploadAsset(ctx context.Context, arg CreateUploadAssetPa
 		&i.ReadyAt,
 		&i.FailedAt,
 		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
 }
@@ -138,7 +207,7 @@ func (q *Queries) DeleteUploadTokens(ctx context.Context, assetID pgtype.UUID) e
 }
 
 const getAsset = `-- name: GetAsset :one
-SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code FROM assets
+SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress FROM assets
 WHERE tenant_id = $1 AND id = $2
 `
 
@@ -168,12 +237,17 @@ func (q *Queries) GetAsset(ctx context.Context, arg GetAssetParams) (Asset, erro
 		&i.ReadyAt,
 		&i.FailedAt,
 		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
 }
 
 const getUploadGrant = `-- name: GetUploadGrant :one
-SELECT a.id, a.tenant_id, a.created_by_client_id, a.state, a.created_at, a.updated_at, a.size_bytes, a.content_type, a.upload_method, a.source_key, a.s3_upload_id, a.upload_expires_at, a.committed_at, a.processing_started_at, a.ready_at, a.failed_at, a.failure_code, t.expires_at AS token_expires_at
+SELECT a.id, a.tenant_id, a.created_by_client_id, a.state, a.created_at, a.updated_at, a.size_bytes, a.content_type, a.upload_method, a.source_key, a.s3_upload_id, a.upload_expires_at, a.committed_at, a.processing_started_at, a.ready_at, a.failed_at, a.failure_code, a.source_sha256, a.source_size_bytes, a.duration_ms, a.renditions, a.progress, t.expires_at AS token_expires_at
 FROM upload_tokens t
 JOIN assets a ON a.id = t.asset_id AND a.tenant_id = t.tenant_id
 WHERE t.token_hash = $1
@@ -205,6 +279,11 @@ func (q *Queries) GetUploadGrant(ctx context.Context, tokenHash []byte) (GetUplo
 		&i.Asset.ReadyAt,
 		&i.Asset.FailedAt,
 		&i.Asset.FailureCode,
+		&i.Asset.SourceSha256,
+		&i.Asset.SourceSizeBytes,
+		&i.Asset.DurationMs,
+		&i.Asset.Renditions,
+		&i.Asset.Progress,
 		&i.TokenExpiresAt,
 	)
 	return i, err
@@ -233,7 +312,7 @@ func (q *Queries) InsertUploadToken(ctx context.Context, arg InsertUploadTokenPa
 }
 
 const listAssetsPage = `-- name: ListAssetsPage :many
-SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code FROM assets
+SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress FROM assets
 WHERE tenant_id = $1::uuid
   AND state <> 'deleted'
   AND ($2::uuid IS NULL OR id > $2::uuid)
@@ -275,6 +354,11 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.ReadyAt,
 			&i.FailedAt,
 			&i.FailureCode,
+			&i.SourceSha256,
+			&i.SourceSizeBytes,
+			&i.DurationMs,
+			&i.Renditions,
+			&i.Progress,
 		); err != nil {
 			return nil, err
 		}
@@ -317,7 +401,7 @@ func (q *Queries) ListUploadParts(ctx context.Context, assetID pgtype.UUID) ([]U
 }
 
 const lockAsset = `-- name: LockAsset :one
-SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code FROM assets
+SELECT id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress FROM assets
 WHERE tenant_id = $1 AND id = $2
 FOR UPDATE
 `
@@ -349,8 +433,85 @@ func (q *Queries) LockAsset(ctx context.Context, arg LockAssetParams) (Asset, er
 		&i.ReadyAt,
 		&i.FailedAt,
 		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
+}
+
+const recordAssetSource = `-- name: RecordAssetSource :execrows
+UPDATE assets SET
+    source_sha256     = $1::bytea,
+    source_size_bytes = $2::bigint,
+    updated_at        = $3::timestamptz
+WHERE tenant_id = $4::uuid
+  AND id = $5::uuid
+  AND state = 'processing'
+`
+
+type RecordAssetSourceParams struct {
+	SourceSha256    []byte
+	SourceSizeBytes int64
+	At              time.Time
+	TenantID        pgtype.UUID
+	ID              pgtype.UUID
+}
+
+// Stores what the worker measured while streaming the source. Only while the asset is processing.
+func (q *Queries) RecordAssetSource(ctx context.Context, arg RecordAssetSourceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordAssetSource,
+		arg.SourceSha256,
+		arg.SourceSizeBytes,
+		arg.At,
+		arg.TenantID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetAssetProgress = `-- name: ResetAssetProgress :exec
+UPDATE assets SET progress = 0
+WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'processing'
+`
+
+type ResetAssetProgressParams struct {
+	TenantID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+func (q *Queries) ResetAssetProgress(ctx context.Context, arg ResetAssetProgressParams) error {
+	_, err := q.db.Exec(ctx, resetAssetProgress, arg.TenantID, arg.ID)
+	return err
+}
+
+const setAssetProgress = `-- name: SetAssetProgress :execrows
+UPDATE assets SET progress = $1::smallint
+WHERE tenant_id = $2::uuid
+  AND id = $3::uuid
+  AND state = 'processing'
+  AND progress < $1::smallint
+`
+
+type SetAssetProgressParams struct {
+	Progress int16
+	TenantID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+// A hint for clients; it never moves backwards (ResetAssetProgress starts a retry from zero) and is
+// written only while processing.
+func (q *Queries) SetAssetProgress(ctx context.Context, arg SetAssetProgressParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setAssetProgress, arg.Progress, arg.TenantID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const startTusUpload = `-- name: StartTusUpload :one
@@ -360,7 +521,7 @@ WHERE tenant_id = $3::uuid
   AND state = 'created'
   AND upload_method = 'tus'
   AND s3_upload_id IS NULL
-RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
 `
 
 type StartTusUploadParams struct {
@@ -398,6 +559,11 @@ func (q *Queries) StartTusUpload(ctx context.Context, arg StartTusUploadParams) 
 		&i.ReadyAt,
 		&i.FailedAt,
 		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
 }
@@ -431,7 +597,7 @@ UPDATE assets SET
 WHERE tenant_id = $4::uuid
   AND id = $5::uuid
   AND state = $6::text
-RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress
 `
 
 type TransitionAssetParams struct {
@@ -473,6 +639,11 @@ func (q *Queries) TransitionAsset(ctx context.Context, arg TransitionAssetParams
 		&i.ReadyAt,
 		&i.FailedAt,
 		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
 	)
 	return i, err
 }

@@ -27,3 +27,6 @@ coverage.*
 # CI/local media test binaries
 /out/
 /out-buildconf.txt
+
+# Output of build/test-media.sh (the FFmpeg test binaries)
+/out/

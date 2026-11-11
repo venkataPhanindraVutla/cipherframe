@@ -2,7 +2,7 @@
 
 > Status: M2-1 to M2-5 implemented (key-provider interface, envelope encryption, content keys,
 > local development provider, Vault/OpenBao, AWS KMS and GCP Cloud KMS providers, re-wrap, failure
-> behaviour). Packaging lands with M3.
+> behaviour) and M3-8 (segment encryption in the processing pipeline).
 
 ## Layers
 
@@ -18,6 +18,45 @@
 | HashiCorp Vault Transit and OpenBao (`vault`) | implemented (ADR 0021) |
 | GCP Cloud KMS (`gcpkms`) | implemented (M2-2); see below |
 | Local development provider (`local`) | implemented; **development only** (ADR 0019) |
+
+## Segment encryption (M3-8)
+
+The processing pipeline ([architecture.md](architecture.md#processing-pipeline)) encrypts every media
+segment itself, in process. FFmpeg's HLS muxer cannot encrypt fMP4 segments, so FFmpeg writes plain
+segments into the job's private work directory and Cipherframe encrypts each one before it is
+uploaded.
+
+- **Cipher.** AES-128 in CBC mode with PKCS#7 padding, exactly the HLS `METHOD=AES-128` of RFC 8216
+  section 4.3.2.4, so any HLS player decrypts it. The result is 1 to 16 bytes longer than the plaintext
+  (a segment that is already a multiple of 16 bytes gains a whole padding block).
+- **Key.** The asset's content key (one random 16-byte key per asset, see below). It is created once
+  before transcoding, read once per job, kept only in memory and cleared when the job ends.
+- **IV.** Every segment gets its own random 16-byte IV from `crypto/rand`, written in the playlist as
+  `IV=0x<32 hex digits>` on that segment's `EXT-X-KEY` tag. An explicit IV per segment avoids the
+  default of deriving the IV from the media sequence number: every fMP4 segment starts with the same
+  box header, and reusing one CBC IV under one key would reveal whether two segments begin with the
+  same plaintext block. IVs are not secret.
+- **Stored playlists.** Each `EXT-X-KEY` carries `URI="cipherframe-key"`, a placeholder. The edge
+  (M4) rewrites it to a session-bound key URL when it serves a playlist, so what is stored in the
+  delivery bucket never contains a token, a session ID or a real key location.
+- **Init segments are not encrypted.** The `EXT-X-MAP` tag comes before the first `EXT-X-KEY`, and by
+  RFC 8216 a key applies only to init segments declared after it, so players fetch the init segment
+  without a key. It holds codec configuration (the avcC and esds boxes, track sizes and timescales)
+  and no media samples. Anyone who can read the delivery bucket learns the codec, profile, level and
+  frame size of a rendition from it; they learn that from the master playlist as well.
+- **Integrity.** The SHA-256 of the stored (encrypted) bytes of every object is recorded in
+  `asset_artifacts`. CBC provides confidentiality, not authentication: a modified segment is not
+  detected by the player's decryption (at best the padding check fails); the recorded hashes are what
+  integrity checks (M6) compare against.
+- **Plaintext.** The plaintext of a segment exists in the worker's work directory until it is read
+  (then the file is deleted) and in a memory buffer that is cleared right after encryption. The
+  content key, the IVs' relationship to it and the plaintext never appear in logs, errors, job
+  arguments or storage; the pipeline's unit tests scan logs, errors and artifacts for the key in raw,
+  hex and base64 form.
+- **Tests.** `internal/hls` checks the cipher against the NIST SP 800-38A CBC vectors and the padding
+  against an independent single-block AES computation. The pipeline integration test fetches segments
+  straight from storage and shows that FFprobe cannot parse them, then decrypts them with the key and
+  the playlist's IV and shows that FFprobe can.
 
 ## Key providers
 
@@ -321,8 +360,14 @@ success.
 ## What this does not protect against
 
 - Standard HLS AES-128 is **not DRM**. A viewer with a valid session receives the content key, so the
-  video can be recorded or reassembled during the session. Delivering the key to authorized players is
-  by design.
+  video can be recorded or reassembled during the session: an authorized player holds the key and can
+  save the segments, and the key is the same for every viewer of the asset. Delivering the key to
+  authorized players is by design (invariant I8).
+- Segment encryption protects the delivery bucket, not the viewer: whoever can read the bucket sees
+  only ciphertext, but the init segment, the playlists, the number and size of segments and the
+  renditions' resolutions and bitrates are not hidden.
+- CBC without authentication: a tampered segment is not rejected by the cipher. The registered hashes
+  detect it only when something checks them.
 - Compromise of the operator's KMS credentials exposes every content key. The same holds for the
   local provider's KEKs, which sit in configuration.
 - Losing every KEK (or the KMS key itself) makes all assets permanently unreadable. Back up KEKs and
