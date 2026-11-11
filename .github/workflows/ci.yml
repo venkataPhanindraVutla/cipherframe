@@ -22,6 +22,10 @@ env:
   SQLC_VERSION: v1.31.1
   # Keep in sync with CONTRIBUTING.md ("Dependency licence policy").
   ALLOWED_LICENSES: Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
+  # Runners are discarded after each job, so testcontainers' reaper (Ryuk) has nothing to clean up.
+  # With several test binaries running at once, one binary's reaper could be removed just as another
+  # one tried to reuse it ("unexpected container status removing"), failing the job at random.
+  TESTCONTAINERS_RYUK_DISABLED: "true"
 
 jobs:
   format:
