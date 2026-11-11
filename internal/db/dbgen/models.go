@@ -222,6 +222,19 @@ type PrivacySetting struct {
 	UpdatedAt      time.Time
 }
 
+type SigningKey struct {
+	KeyID           string
+	Purpose         string
+	Algorithm       string
+	PublicKey       []byte
+	PrivateEnvelope []byte
+	State           string
+	IsCurrent       bool
+	CreatedAt       time.Time
+	ActivatedAt     time.Time
+	RetiredAt       *time.Time
+}
+
 type Tenant struct {
 	ID         pgtype.UUID
 	Name       string

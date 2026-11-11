@@ -15,6 +15,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
 
@@ -38,6 +39,12 @@ type Deps struct {
 	// Playback serves the playback-session and playback-settings endpoints (M4-1). Without it
 	// they answer 503 dependency_unavailable.
 	Playback *playback.Service
+	// Signing manages the integrity signing keys (M5-2). Without it the admin endpoints answer 503
+	// dependency_unavailable.
+	Signing *signing.Manager
+	// KeySet serves the public key set (/.well-known/cipherframe-keys.json). Without it the
+	// endpoint answers 503.
+	KeySet *signing.KeySet
 }
 
 // API is the control-plane HTTP handler.
@@ -54,7 +61,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})

@@ -29,6 +29,9 @@ type (
 	AssetKind struct{}
 	// ContentKeyKind marks content key IDs.
 	ContentKeyKind struct{}
+	// SigningKeyKind marks integrity signing key IDs (ADR 0033). They are published in the key
+	// set, so they are not secret.
+	SigningKeyKind struct{}
 )
 
 func (TenantKind) prefix() string     { return "ten" }
@@ -36,6 +39,7 @@ func (ClientKind) prefix() string     { return "cli" }
 func (APIKeyKind) prefix() string     { return "key" }
 func (AssetKind) prefix() string      { return "ast" }
 func (ContentKeyKind) prefix() string { return "cky" }
+func (SigningKeyKind) prefix() string { return "sk" }
 
 // Aliases for the concrete ID types.
 type (
@@ -45,6 +49,8 @@ type (
 	AssetID  = ID[AssetKind]
 	// ContentKeyID identifies a content key row. It is not secret.
 	ContentKeyID = ID[ContentKeyKind]
+	// SigningKeyID identifies an integrity signing key. It is the `keyid` of a signature.
+	SigningKeyID = ID[SigningKeyKind]
 )
 
 const uuidTextLen = 26

@@ -52,10 +52,14 @@ var operationScopes = map[string][]db.Scope{
 	"PutPlaybackJwtKey":            {db.ScopeAdmin},
 	"DeletePlaybackJwtKey":         {db.ScopeAdmin},
 	"RotatePlaybackCallbackSecret": {db.ScopeAdmin},
+
+	"ListSigningKeys":  {db.ScopeAdmin},
+	"RotateSigningKey": {db.ScopeAdmin},
+	"RetireSigningKey": {db.ScopeAdmin},
 }
 
 // publicOperations are served without authentication.
-var publicOperations = []string{"GetHealthz", "GetReadyz"}
+var publicOperations = []string{"GetHealthz", "GetReadyz", "GetSigningKeySet"}
 
 // OperationScopes returns a copy of the scope table keyed by the spec's operationId (lower
 // camel case, for example "getWhoami"), with scopes as strings. The contract test compares it
@@ -249,4 +253,16 @@ func (g guarded) GetPrivacySettings(w http.ResponseWriter, r *http.Request) {
 
 func (g guarded) UpdatePrivacySettings(w http.ResponseWriter, r *http.Request) {
 	g.a.run("UpdatePrivacySettings", w, r, func(r *http.Request) { g.ServerInterface.UpdatePrivacySettings(w, r) })
+}
+
+func (g guarded) ListSigningKeys(w http.ResponseWriter, r *http.Request) {
+	g.a.run("ListSigningKeys", w, r, func(r *http.Request) { g.ServerInterface.ListSigningKeys(w, r) })
+}
+
+func (g guarded) RotateSigningKey(w http.ResponseWriter, r *http.Request) {
+	g.a.run("RotateSigningKey", w, r, func(r *http.Request) { g.ServerInterface.RotateSigningKey(w, r) })
+}
+
+func (g guarded) RetireSigningKey(w http.ResponseWriter, r *http.Request, keyID gen.SigningKeyIdPath) {
+	g.a.run("RetireSigningKey", w, r, func(r *http.Request) { g.ServerInterface.RetireSigningKey(w, r, keyID) })
 }

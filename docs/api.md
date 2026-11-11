@@ -964,6 +964,35 @@ read it. Credentials are never allowed.
   must stay configured while a secret wrapped under it is current or within its 24-hour overlap, or
   rotate the callback secret to re-wrap it.
 
+## Integrity signing keys (ADR 0033)
+
+Manifests and deletion records are signed with Ed25519 keys that belong to the deployment, not to a
+tenant. See [integrity.md](integrity.md#signing-keys) for custody, rotation and retirement.
+
+| Operation | Route | Scope |
+|---|---|---|
+| `listSigningKeys` | `GET /v1/signing-keys` | `admin` |
+| `rotateSigningKey` | `POST /v1/signing-keys/rotate` | `admin` |
+| `retireSigningKey` | `POST /v1/signing-keys/{key_id}/retire` | `admin` |
+| `getSigningKeySet` | `GET /.well-known/cipherframe-keys.json` | none |
+
+A key is returned as `key_id` (`sk_` and 26 characters), `algorithm` (`ed25519`), `state`
+(`active` or `retired`), `current` (true for the one signer), `public_key` (raw 32 bytes, standard
+base64), `created_at`, `activated_at` and `retired_at`. Only public data is ever returned.
+
+- `rotateSigningKey` answers `201` with the new current key. The previous key stays `active`. When the
+  key provider is unavailable it answers `503 dependency_unavailable` and creates nothing.
+- `retireSigningKey` answers `200` with the retired key, `409 conflict` for the current key, and
+  `404 not_found` for an unknown id. Retiring a retired key is a no-op. A retired key stays in both
+  lists, so records it signed still verify.
+- Rotation and retirement are audited against the caller's tenant (`signing_key.rotate`,
+  `signing_key.retire`), with the key id as the target.
+- `getSigningKeySet` is served by the edge (the public listener) and by the api listener. It needs no
+  key, answers with `Cache-Control: public, max-age=300` and `Access-Control-Allow-Origin: *`, and
+  lists every key with `keyid`, `alg`, `public_key`, `status`, `created_at` and, for a retired key,
+  `retired_at`, oldest first. A change shows up within a minute (a 60-second in-process cache). If
+  the database cannot be read it answers `503`; it never answers an empty set.
+
 ## Conventions
 
 ### ID formats (ADR 0011)
@@ -979,6 +1008,7 @@ endpoint is rejected before any query runs. Text order matches creation order.
 | Client | `cli` | `cli_01k9z3m5q8r7s2t4v6w8x0y1zg` |
 | API key | `key` | `key_01k9z3m5q8r7s2t4v6w8x0y1zg` |
 | Asset | `ast` | `ast_01k9z3m5q8r7s2t4v6w8x0y1zg` |
+| Signing key | `sk` | `sk_01k9z3m5q8r7s2t4v6w8x0y1zg` |
 | Session | `ses` | `ses_` followed by 52 characters (256 random bits) |
 
 Session IDs are random, unordered and carry no time component. They are capabilities: whoever holds

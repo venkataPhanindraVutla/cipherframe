@@ -370,6 +370,39 @@ func (e PublicJwkAlg) Valid() bool {
 	}
 }
 
+// Defines values for PublishedSigningKeyAlg.
+const (
+	PublishedSigningKeyAlgEd25519 PublishedSigningKeyAlg = "ed25519"
+)
+
+// Valid indicates whether the value is a known member of the PublishedSigningKeyAlg enum.
+func (e PublishedSigningKeyAlg) Valid() bool {
+	switch e {
+	case PublishedSigningKeyAlgEd25519:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublishedSigningKeyStatus.
+const (
+	PublishedSigningKeyStatusActive  PublishedSigningKeyStatus = "active"
+	PublishedSigningKeyStatusRetired PublishedSigningKeyStatus = "retired"
+)
+
+// Valid indicates whether the value is a known member of the PublishedSigningKeyStatus enum.
+func (e PublishedSigningKeyStatus) Valid() bool {
+	switch e {
+	case PublishedSigningKeyStatusActive:
+		return true
+	case PublishedSigningKeyStatusRetired:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadyCheckStatus.
 const (
 	ReadyCheckStatusOk          ReadyCheckStatus = "ok"
@@ -427,6 +460,39 @@ func (e Scope) Valid() bool {
 	case SessionsWrite:
 		return true
 	case WebhooksManage:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SigningKeyAlgorithm.
+const (
+	SigningKeyAlgorithmEd25519 SigningKeyAlgorithm = "ed25519"
+)
+
+// Valid indicates whether the value is a known member of the SigningKeyAlgorithm enum.
+func (e SigningKeyAlgorithm) Valid() bool {
+	switch e {
+	case SigningKeyAlgorithmEd25519:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SigningKeyState.
+const (
+	SigningKeyStateActive  SigningKeyState = "active"
+	SigningKeyStateRetired SigningKeyState = "retired"
+)
+
+// Valid indicates whether the value is a known member of the SigningKeyState enum.
+func (e SigningKeyState) Valid() bool {
+	switch e {
+	case SigningKeyStateActive:
+		return true
+	case SigningKeyStateRetired:
 		return true
 	default:
 		return false
@@ -1094,6 +1160,28 @@ type PublicJwk struct {
 // PublicJwkAlg defines model for PublicJwk.Alg.
 type PublicJwkAlg string
 
+// PublishedSigningKey defines model for PublishedSigningKey.
+type PublishedSigningKey struct {
+	Alg       PublishedSigningKeyAlg `json:"alg"`
+	CreatedAt time.Time              `json:"created_at"`
+
+	// Keyid The key ID, as it appears in the `keyid` of a signature.
+	Keyid string `json:"keyid"`
+
+	// PublicKey The raw 32-byte Ed25519 public key in standard base64.
+	PublicKey string `json:"public_key"`
+
+	// RetiredAt Present only on a retired key.
+	RetiredAt *time.Time                `json:"retired_at,omitempty"`
+	Status    PublishedSigningKeyStatus `json:"status"`
+}
+
+// PublishedSigningKeyAlg defines model for PublishedSigningKey.Alg.
+type PublishedSigningKeyAlg string
+
+// PublishedSigningKeyStatus defines model for PublishedSigningKey.Status.
+type PublishedSigningKeyStatus string
+
 // ReadyCheck defines model for ReadyCheck.
 type ReadyCheck struct {
 	// Name Fixed check name, for example `database`.
@@ -1159,6 +1247,44 @@ type Scope string
 
 // SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
 type SessionId = string
+
+// SigningKey An integrity signing key. Public data only; the private half is never returned.
+type SigningKey struct {
+	ActivatedAt time.Time           `json:"activated_at"`
+	Algorithm   SigningKeyAlgorithm `json:"algorithm"`
+	CreatedAt   time.Time           `json:"created_at"`
+
+	// Current True for the one active key that signs.
+	Current bool `json:"current"`
+
+	// KeyId The key ID (`sk_` followed by 26 characters), also the `keyid` of a signature.
+	KeyId string `json:"key_id"`
+
+	// PublicKey The raw 32-byte Ed25519 public key in standard base64.
+	PublicKey string     `json:"public_key"`
+	RetiredAt *time.Time `json:"retired_at"`
+
+	// State `active` keys are published and verify; `retired` keys are published and verify old
+	// records but never sign.
+	State SigningKeyState `json:"state"`
+}
+
+// SigningKeyAlgorithm defines model for SigningKey.Algorithm.
+type SigningKeyAlgorithm string
+
+// SigningKeyState `active` keys are published and verify; `retired` keys are published and verify old
+// records but never sign.
+type SigningKeyState string
+
+// SigningKeyList defines model for SigningKeyList.
+type SigningKeyList struct {
+	Items []SigningKey `json:"items"`
+}
+
+// SigningKeySet The published public keys, oldest first.
+type SigningKeySet struct {
+	Keys []PublishedSigningKey `json:"keys"`
+}
 
 // UploadInstructions defines model for UploadInstructions.
 type UploadInstructions struct {
@@ -1249,6 +1375,9 @@ type PlaybackEventViewerId = string
 
 // SessionIdPath A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
 type SessionIdPath = SessionId
+
+// SigningKeyIdPath defines model for SigningKeyIdPath.
+type SigningKeyIdPath = string
 
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
@@ -1559,6 +1688,9 @@ func (a PublicJwk) MarshalJSON() ([]byte, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetSigningKeySet The public signing key set
+	// (GET /.well-known/cipherframe-keys.json)
+	GetSigningKeySet(w http.ResponseWriter, r *http.Request)
 	// GetHealthz Liveness
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -1646,6 +1778,15 @@ type ServerInterface interface {
 	// UpdatePrivacySettings Replace the privacy settings
 	// (PUT /v1/privacy-settings)
 	UpdatePrivacySettings(w http.ResponseWriter, r *http.Request)
+	// ListSigningKeys List the integrity signing keys
+	// (GET /v1/signing-keys)
+	ListSigningKeys(w http.ResponseWriter, r *http.Request)
+	// RotateSigningKey Rotate the integrity signing key
+	// (POST /v1/signing-keys/rotate)
+	RotateSigningKey(w http.ResponseWriter, r *http.Request)
+	// RetireSigningKey Retire a signing key
+	// (POST /v1/signing-keys/{key_id}/retire)
+	RetireSigningKey(w http.ResponseWriter, r *http.Request, keyId SigningKeyIdPath)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(w http.ResponseWriter, r *http.Request)
@@ -1659,6 +1800,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetSigningKeySet operation middleware
+func (siw *ServerInterfaceWrapper) GetSigningKeySet(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSigningKeySet(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetHealthz operation middleware
 func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Request) {
@@ -2527,6 +2682,60 @@ func (siw *ServerInterfaceWrapper) UpdatePrivacySettings(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// ListSigningKeys operation middleware
+func (siw *ServerInterfaceWrapper) ListSigningKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSigningKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateSigningKey operation middleware
+func (siw *ServerInterfaceWrapper) RotateSigningKey(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateSigningKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetireSigningKey operation middleware
+func (siw *ServerInterfaceWrapper) RetireSigningKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "key_id" -------------
+	var keyId SigningKeyIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "key_id", r.PathValue("key_id"), &keyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetireSigningKey(w, r, keyId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWhoami operation middleware
 func (siw *ServerInterfaceWrapper) GetWhoami(w http.ResponseWriter, r *http.Request) {
 
@@ -2691,6 +2900,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/playback-auth/jwt-keys/{kid}", wrapper.DeletePlaybackJwtKey)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-auth/jwt-keys/{kid}", wrapper.PutPlaybackJwtKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-auth/callback-secret/rotate", wrapper.RotatePlaybackCallbackSecret)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/signing-keys", wrapper.ListSigningKeys)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/signing-keys/rotate", wrapper.RotateSigningKey)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/signing-keys/{key_id}/retire", wrapper.RetireSigningKey)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/.well-known/cipherframe-keys.json", wrapper.GetSigningKeySet)
 
 	return m
 }
@@ -2712,6 +2925,79 @@ type UnauthenticatedApplicationProblemPlusJSONResponse struct {
 	Body Problem
 
 	Headers UnauthenticatedResponseHeaders
+}
+
+type GetSigningKeySetRequestObject struct {
+}
+
+type GetSigningKeySetResponseObject interface {
+	VisitGetSigningKeySetResponse(w http.ResponseWriter) error
+}
+
+type GetSigningKeySet200ResponseHeaders struct {
+	AccessControlAllowOrigin string
+	CacheControl             string
+	XRequestId               string
+}
+
+type GetSigningKeySet200JSONResponse struct {
+	Body    SigningKeySet
+	Headers GetSigningKeySet200ResponseHeaders
+}
+
+func (response GetSigningKeySet200JSONResponse) VisitGetSigningKeySetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", fmt.Sprint(response.Headers.AccessControlAllowOrigin))
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSigningKeySet503ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetSigningKeySet503ApplicationProblemPlusJSONResponse) VisitGetSigningKeySetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSigningKeySetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetSigningKeySetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetSigningKeySetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetSigningKeySetdefaultApplicationProblemPlusJSONResponse) VisitGetSigningKeySetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetHealthzRequestObject struct {
@@ -5877,6 +6163,378 @@ func (response UpdatePrivacySettingsdefaultApplicationProblemPlusJSONResponse) V
 	return err
 }
 
+type ListSigningKeysRequestObject struct {
+}
+
+type ListSigningKeysResponseObject interface {
+	VisitListSigningKeysResponse(w http.ResponseWriter) error
+}
+
+type ListSigningKeys200ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListSigningKeys200JSONResponse struct {
+	Body    SigningKeyList
+	Headers ListSigningKeys200ResponseHeaders
+}
+
+func (response ListSigningKeys200JSONResponse) VisitListSigningKeysResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSigningKeys401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListSigningKeys401ApplicationProblemPlusJSONResponse) VisitListSigningKeysResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSigningKeys403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListSigningKeys403ApplicationProblemPlusJSONResponse) VisitListSigningKeysResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSigningKeys503ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListSigningKeys503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ListSigningKeys503ResponseHeaders
+}
+
+func (response ListSigningKeys503ApplicationProblemPlusJSONResponse) VisitListSigningKeysResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSigningKeysdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListSigningKeysdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListSigningKeysdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListSigningKeysdefaultApplicationProblemPlusJSONResponse) VisitListSigningKeysResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateSigningKeyRequestObject struct {
+}
+
+type RotateSigningKeyResponseObject interface {
+	VisitRotateSigningKeyResponse(w http.ResponseWriter) error
+}
+
+type RotateSigningKey201ResponseHeaders struct {
+	XRequestId string
+}
+
+type RotateSigningKey201JSONResponse struct {
+	Body    SigningKey
+	Headers RotateSigningKey201ResponseHeaders
+}
+
+func (response RotateSigningKey201JSONResponse) VisitRotateSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateSigningKey401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response RotateSigningKey401ApplicationProblemPlusJSONResponse) VisitRotateSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateSigningKey403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RotateSigningKey403ApplicationProblemPlusJSONResponse) VisitRotateSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateSigningKey503ResponseHeaders struct {
+	XRequestId string
+}
+
+type RotateSigningKey503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RotateSigningKey503ResponseHeaders
+}
+
+func (response RotateSigningKey503ApplicationProblemPlusJSONResponse) VisitRotateSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateSigningKeydefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type RotateSigningKeydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    RotateSigningKeydefaultResponseHeaders
+	StatusCode int
+}
+
+func (response RotateSigningKeydefaultApplicationProblemPlusJSONResponse) VisitRotateSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetireSigningKeyRequestObject struct {
+	KeyId SigningKeyIdPath `json:"key_id"`
+}
+
+type RetireSigningKeyResponseObject interface {
+	VisitRetireSigningKeyResponse(w http.ResponseWriter) error
+}
+
+type RetireSigningKey200ResponseHeaders struct {
+	XRequestId string
+}
+
+type RetireSigningKey200JSONResponse struct {
+	Body    SigningKey
+	Headers RetireSigningKey200ResponseHeaders
+}
+
+func (response RetireSigningKey200JSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetireSigningKey401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response RetireSigningKey401ApplicationProblemPlusJSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetireSigningKey403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RetireSigningKey403ApplicationProblemPlusJSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetireSigningKey404ResponseHeaders struct {
+	XRequestId string
+}
+
+type RetireSigningKey404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RetireSigningKey404ResponseHeaders
+}
+
+func (response RetireSigningKey404ApplicationProblemPlusJSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetireSigningKey409ResponseHeaders struct {
+	XRequestId string
+}
+
+type RetireSigningKey409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RetireSigningKey409ResponseHeaders
+}
+
+func (response RetireSigningKey409ApplicationProblemPlusJSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetireSigningKey503ResponseHeaders struct {
+	XRequestId string
+}
+
+type RetireSigningKey503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RetireSigningKey503ResponseHeaders
+}
+
+func (response RetireSigningKey503ApplicationProblemPlusJSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetireSigningKeydefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type RetireSigningKeydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    RetireSigningKeydefaultResponseHeaders
+	StatusCode int
+}
+
+func (response RetireSigningKeydefaultApplicationProblemPlusJSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetWhoamiRequestObject struct {
 }
 
@@ -5945,6 +6603,9 @@ func (response GetWhoamidefaultApplicationProblemPlusJSONResponse) VisitGetWhoam
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// GetSigningKeySet The public signing key set
+	// (GET /.well-known/cipherframe-keys.json)
+	GetSigningKeySet(ctx context.Context, request GetSigningKeySetRequestObject) (GetSigningKeySetResponseObject, error)
 	// GetHealthz Liveness
 	// (GET /healthz)
 	GetHealthz(ctx context.Context, request GetHealthzRequestObject) (GetHealthzResponseObject, error)
@@ -6032,6 +6693,15 @@ type StrictServerInterface interface {
 	// UpdatePrivacySettings Replace the privacy settings
 	// (PUT /v1/privacy-settings)
 	UpdatePrivacySettings(ctx context.Context, request UpdatePrivacySettingsRequestObject) (UpdatePrivacySettingsResponseObject, error)
+	// ListSigningKeys List the integrity signing keys
+	// (GET /v1/signing-keys)
+	ListSigningKeys(ctx context.Context, request ListSigningKeysRequestObject) (ListSigningKeysResponseObject, error)
+	// RotateSigningKey Rotate the integrity signing key
+	// (POST /v1/signing-keys/rotate)
+	RotateSigningKey(ctx context.Context, request RotateSigningKeyRequestObject) (RotateSigningKeyResponseObject, error)
+	// RetireSigningKey Retire a signing key
+	// (POST /v1/signing-keys/{key_id}/retire)
+	RetireSigningKey(ctx context.Context, request RetireSigningKeyRequestObject) (RetireSigningKeyResponseObject, error)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(ctx context.Context, request GetWhoamiRequestObject) (GetWhoamiResponseObject, error)
@@ -6074,6 +6744,30 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// GetSigningKeySet operation middleware
+func (sh *strictHandler) GetSigningKeySet(w http.ResponseWriter, r *http.Request) {
+	var request GetSigningKeySetRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSigningKeySet(ctx, request.(GetSigningKeySetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSigningKeySet")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSigningKeySetResponseObject); ok {
+		if err := validResponse.VisitGetSigningKeySetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetHealthz operation middleware
@@ -6880,6 +7574,80 @@ func (sh *strictHandler) UpdatePrivacySettings(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdatePrivacySettingsResponseObject); ok {
 		if err := validResponse.VisitUpdatePrivacySettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSigningKeys operation middleware
+func (sh *strictHandler) ListSigningKeys(w http.ResponseWriter, r *http.Request) {
+	var request ListSigningKeysRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSigningKeys(ctx, request.(ListSigningKeysRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSigningKeys")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSigningKeysResponseObject); ok {
+		if err := validResponse.VisitListSigningKeysResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RotateSigningKey operation middleware
+func (sh *strictHandler) RotateSigningKey(w http.ResponseWriter, r *http.Request) {
+	var request RotateSigningKeyRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RotateSigningKey(ctx, request.(RotateSigningKeyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RotateSigningKey")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RotateSigningKeyResponseObject); ok {
+		if err := validResponse.VisitRotateSigningKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RetireSigningKey operation middleware
+func (sh *strictHandler) RetireSigningKey(w http.ResponseWriter, r *http.Request, keyId SigningKeyIdPath) {
+	var request RetireSigningKeyRequestObject
+
+	request.KeyId = keyId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RetireSigningKey(ctx, request.(RetireSigningKeyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RetireSigningKey")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RetireSigningKeyResponseObject); ok {
+		if err := validResponse.VisitRetireSigningKeyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
