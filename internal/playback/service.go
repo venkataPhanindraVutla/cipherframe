@@ -120,7 +120,15 @@ func (s *Service) CreateSession(ctx context.Context, in CreateInput) (Created, e
 		return Created{}, err
 	}
 	asset, err := s.repos.GetAsset(ctx, in.TenantID, in.AssetID)
-	if err != nil || asset.State == db.AssetDeleted {
+	if err != nil {
+		// Only a real "not found" may become one (I11): a database failure stays a failure.
+		var e *errs.Error
+		if errors.As(err, &e) && e.Code == errs.NotFound {
+			return Created{}, errs.New(errs.NotFound, "No such asset.")
+		}
+		return Created{}, err
+	}
+	if asset.State == db.AssetDeleted {
 		// Another tenant's asset, a deleted one and an unknown one all look the same.
 		return Created{}, errs.New(errs.NotFound, "No such asset.")
 	}
