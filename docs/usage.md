@@ -216,8 +216,9 @@ a `failure_code`: `invalid_media`, `transcode_failed`, `transcode_timeout`, `sou
 **Disk.** Plan for **2 to 3 times the source size per concurrent job** in `CIPHERFRAME_WORK_DIR`:
 the downloaded source, plus the plaintext segments of all renditions, which together are about the
 size of the source for typical content (the ladder is capped at about 4.5, 2.5, 1.2, 0.7 and 0.35
-Mbit/s) and at most a few times the capped rates for the length of the video. A worker runs up to 10 jobs at
-once, so size the volume for the concurrency you allow or run fewer workers per node. The work
+Mbit/s) and at most a few times the capped rates for the length of the video. A worker process transcodes
+`CIPHERFRAME_WORKER_MEDIA_CONCURRENCY` jobs at once (default 1), so size the volume for the
+concurrency you allow or run fewer workers per node. The work
 directory should be a dedicated volume, not shared with other users: during a job it holds plaintext
 video.
 
@@ -353,6 +354,7 @@ variable, never its value.
 | `CIPHERFRAME_MAX_SOURCE_HEIGHT` | `2160` | no | no | Largest accepted picture height, same rules. |
 | `CIPHERFRAME_TRANSCODE_TIMEOUT` | `6h` | no | no | Longest one transcode may run, a Go duration above zero and at most `168h`. A transcode that exceeds it fails the asset with `transcode_timeout`. |
 | `CIPHERFRAME_WORK_DIR` | `<OS temp dir>/cipherframe` | no | no | Absolute path of the **worker's** private scratch directory. Created with mode 0700 (and tightened if it already exists with wider permissions). Each `asset.process` job works in its own subdirectory, which holds the downloaded source and the plaintext segments FFmpeg writes and is deleted when the job ends. See [Processing](#processing-and-the-work-directory). |
+| `CIPHERFRAME_WORKER_MEDIA_CONCURRENCY` | `1` | no | no | How many `asset.process` jobs one **worker** process transcodes at once, 1 to 64. They run on their own `media` queue, so transcodes never take a slot from other jobs such as `kms.rewrap` (those keep 10 slots). Each FFmpeg run already uses all cores, so scale throughput by adding worker replicas rather than raising this. Disk need is 2 to 3 times the source size per concurrent job in `CIPHERFRAME_WORK_DIR`. |
 
 Empty values of non-secret variables mean "use the default".
 

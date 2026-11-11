@@ -258,6 +258,10 @@ The worker image (`build/worker.Dockerfile`) is separate from the api and edge i
 `asset.process` (package `internal/pipeline`, registered in the worker role only) takes a `committed`
 asset to `ready` (ADR 0024). Job arguments are the tenant and asset IDs and nothing else.
 
+The job runs on its own River queue, `media`, apart from the default queue that carries `kms.rewrap`. A worker
+process works `CIPHERFRAME_WORKER_MEDIA_CONCURRENCY` media jobs at once (default 1, because one FFmpeg run
+already uses every core) and 10 default-queue jobs; the api role inserts into `media` directly.
+
 1. **Claim.** Compare-and-set `committed -> processing`. A retried job finds the asset already
    `processing` and carries on; an asset that is `ready`, `failed` or `deleted` needs no work and the
    job ends successfully.

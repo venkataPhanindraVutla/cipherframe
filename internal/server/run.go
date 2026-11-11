@@ -22,6 +22,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	kmsregistry "github.com/venkataPhanindraVutla/cipherframe/internal/kms/registry"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/worker"
@@ -182,7 +183,12 @@ func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.C
 		return nil, fmt.Errorf("%s is required when the api role runs", config.EnvEdgePublicURL)
 	}
 	// An insert-only queue: the api role enqueues asset.process, the worker role handles it.
-	queue, err := jobs.NewQueue(pool, jobs.NewRegistry(), jobs.Config{Logger: log})
+	// The registry has no handlers, so it is told which queue asset.process runs on.
+	reg := jobs.NewRegistry()
+	if err := pipeline.Declare(reg); err != nil {
+		return nil, fmt.Errorf("assets: %w", err)
+	}
+	queue, err := jobs.NewQueue(pool, reg, jobs.Config{Logger: log})
 	if err != nil {
 		return nil, fmt.Errorf("assets: %w", err)
 	}
@@ -225,7 +231,7 @@ func newEdgeUploads(ctx context.Context, pool *pgxpool.Pool, buckets *storage.Bu
 }
 
 // workerConcurrency is how many jobs one worker process runs at once.
-const workerConcurrency = 10
+const workerConcurrency = 10 // the default queue; the media queue is sized by Media.Concurrency
 
 // processing is what the asset.process job needs besides the database: the two buckets and the
 // configuration (FFmpeg paths, limits, work directory, timeout).
@@ -257,7 +263,12 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 	if len(kinds) == 0 {
 		return worker.New(log, nil, nil), nil
 	}
-	q, err := jobs.NewQueue(pool, reg, jobs.Config{Workers: workerConcurrency, Logger: log})
+	jc := jobs.Config{Workers: workerConcurrency, Logger: log}
+	if proc != nil {
+		// asset.process has its own queue so a transcode never takes a slot from kms.rewrap.
+		jc.Queues = map[string]int{jobs.QueueMedia: proc.Config.Media.Concurrency}
+	}
+	q, err := jobs.NewQueue(pool, reg, jc)
 	if err != nil {
 		return nil, fmt.Errorf("worker: %w", err)
 	}
