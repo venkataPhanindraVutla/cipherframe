@@ -15,6 +15,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/edge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 )
@@ -131,18 +132,22 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	keyID := "key_" + strings.Repeat("0", 26)
+	assetID := "ast_" + strings.Repeat("0", 26)
 	n := 0
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
 			if op.Security == nil || len(*op.Security) == 0 || !slices.Contains(op.Tags, "api") {
 				continue
 			}
-			p := strings.ReplaceAll(path, "{key_id}", keyID)
+			p := strings.ReplaceAll(strings.ReplaceAll(path, "{key_id}", keyID), "{asset_id}", assetID)
 			var body []byte
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
 				body = []byte(`{"name":"x"}`)
-				if op.OperationID == "createKey" {
+				switch op.OperationID {
+				case "createKey":
 					body = []byte(`{"name":"x","client_id":"cli_` + strings.Repeat("0", 26) + `"}`)
+				case "createAsset":
+					body = []byte(`{"size_bytes":1,"upload_method":"tus"}`)
 				}
 			}
 			for name, hdr := range map[string]map[string]string{
@@ -164,7 +169,59 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 7 {
-		t.Fatalf("exercised %d secured operations, want 7", n)
+	if n != 12 {
+		t.Fatalf("exercised %d secured operations, want 12", n)
+	}
+}
+
+// TestUploadOperationsRequireAnUploadToken calls every edge operation secured by the upload
+// token without a token, with a malformed one and with an API key (which is never accepted
+// there): 401 with WWW-Authenticate, a valid Problem, and no handler reached.
+func TestUploadOperationsRequireAnUploadToken(t *testing.T) {
+	doc := loadSpec(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	e := edge.New(edge.Deps{Log: log, Uploads: &edge.Uploads{}})
+	srv := httptest.NewServer(e.Handler())
+	t.Cleanup(srv.Close)
+
+	assetID := "ast_" + strings.Repeat("0", 26)
+	apiKey := "cf_" + strings.Repeat("a", 12) + "_" + strings.Repeat("b", 43)
+	n := 0
+	for path, item := range doc.Paths.Map() {
+		for method, op := range item.Operations() {
+			if op.Security == nil || len(*op.Security) == 0 || !slices.Contains(op.Tags, "edge") {
+				continue
+			}
+			if _, ok := (*op.Security)[0]["uploadToken"]; !ok {
+				t.Errorf("%s %s: edge operations must use the uploadToken scheme", method, path)
+				continue
+			}
+			p := strings.ReplaceAll(strings.ReplaceAll(path, "{asset_id}", assetID), "{part_number}", "1")
+			var body []byte
+			if op.RequestBody != nil && op.RequestBody.Value.Required {
+				body = []byte("part bytes")
+			}
+			for name, hdr := range map[string]map[string]string{
+				"no header":  {"Content-Type": "application/octet-stream"},
+				"malformed":  {"Content-Type": "application/octet-stream", "Authorization": "Bearer nope"},
+				"api key":    {"Content-Type": "application/octet-stream", "Authorization": "Bearer " + apiKey},
+				"wrong kind": {"Content-Type": "application/octet-stream", "Authorization": "Basic abc"},
+			} {
+				ex := doBody(t, srv.URL, method, p, hdr, body)
+				if ex.resp.StatusCode != 401 {
+					t.Fatalf("%s %s (%s): status %d, body %s", method, path, name, ex.resp.StatusCode, ex.body)
+				}
+				if ex.resp.Header.Get("WWW-Authenticate") != "Bearer" {
+					t.Fatalf("%s %s (%s): WWW-Authenticate = %q", method, path, name, ex.resp.Header.Get("WWW-Authenticate"))
+				}
+				if got := validate(t, doc, ex); got != op.OperationID {
+					t.Fatalf("matched %q, want %q", got, op.OperationID)
+				}
+			}
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("exercised %d upload operations, want 2", n)
 	}
 }
