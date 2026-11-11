@@ -93,6 +93,14 @@ Cipherframe does **not** protect against:
 - A compromised edge process also holds the means to unwrap callback secrets (it needs them to sign), as
   it holds the playback token keys and KMS access for content keys.
 
+- A compromised worker process holds the current integrity signing key in memory (unwrapped for up to
+  five minutes at a time) and can ask the key provider to unwrap it, so it can sign false manifests
+  and deletion records until the key is rotated. Rotate the key (`POST /v1/signing-keys/rotate`) and
+  retire the old one to stop new signatures; records the key already signed stay valid, and a
+  retired key still verifies them, so a leaked key cannot be told apart from an honest retirement
+  yet (ADR 0033). Run workers on dedicated nodes, and give edge and api processes no more KMS access
+  than they need.
+
 - While a transcode runs, plaintext segments exist on the worker's local disk in a private 0700
   directory (ADR 0027). Anyone with root on that node can read them; run workers on dedicated nodes
   with encrypted local disks.

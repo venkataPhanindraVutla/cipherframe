@@ -59,6 +59,13 @@ export CIPHERFRAME_KMS_LOCAL_KEKS=1:ZGV2LXBsYWNlaG9sZGVyLTAxMjM0NTY3ODlhYmNkZWY=
 export CIPHERFRAME_KMS_LOCAL_KEK_CURRENT=1
 ```
 
+The `api` and `worker` roles also make sure the deployment has an integrity signing key (M5-2). The
+first one to start creates it, wrapped by the key provider; concurrent starts create exactly one, and
+a start with the key provider down stops with an error that says so. There is no new environment
+variable: the keys use the same provider and KEK as content keys. The `edge` role only publishes the
+public keys (`/.well-known/cipherframe-keys.json`) and does not need the key provider for that.
+Rotate and retire keys through the API (see [api.md](api.md#integrity-signing-keys-adr-0033)).
+
 The Docker Compose stack (M1-8) is not in the repository yet. When it lands, its shared environment
 block must carry these three variables, so the stack runs without a cloud account (ADR 0019).
 
