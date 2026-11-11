@@ -63,7 +63,7 @@ func (f *Faulty) down(op string, counted bool) error {
 		f.outage = true
 	}
 	if f.outage {
-		return kms.New(kms.Unavailable, f.Provider.Name(), op, "injected outage")
+		return kms.New(kms.Unavailable, f.Name(), op, "injected outage")
 	}
 	if counted {
 		f.calls++
@@ -99,7 +99,7 @@ func (f *Faulty) Unwrap(ctx context.Context, w kms.Wrapped, aad []byte) ([]byte,
 	integrity := f.integrity
 	f.mu.Unlock()
 	if integrity {
-		return nil, kms.New(kms.Invalid, f.Provider.Name(), "unwrap", "injected authentication failure")
+		return nil, kms.New(kms.Invalid, f.Name(), "unwrap", "injected authentication failure")
 	}
 	return f.Provider.Unwrap(ctx, w, aad)
 }

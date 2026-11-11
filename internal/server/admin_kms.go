@@ -115,12 +115,12 @@ func waitRewrap(ctx context.Context, repos *db.Repos, q *jobs.Queue, p kms.Provi
 			if total < 0 || left > total {
 				total = left
 			}
-			fmt.Fprintf(progress, "kms-rewrap: %d content keys remain on another KEK (%d at start)\n", left, total)
+			_, _ = fmt.Fprintf(progress, "kms-rewrap: %d content keys remain on another KEK (%d at start)\n", left, total)
 			if left == 0 {
 				return nil
 			}
 		case kms.KindOf(err) == kms.Unavailable:
-			fmt.Fprintln(progress, "kms-rewrap: the key service is unavailable; still waiting")
+			_, _ = fmt.Fprintln(progress, "kms-rewrap: the key service is unavailable; still waiting")
 		default:
 			return fmt.Errorf("kms-rewrap: current KEK: %w", err)
 		}
