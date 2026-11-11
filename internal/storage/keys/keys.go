@@ -12,6 +12,8 @@
 package keys
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strconv"
 
@@ -63,9 +65,19 @@ func assetRoot(t id.TenantID, a id.AssetID) string {
 	return "t/" + t.String() + "/a/" + a.String() + "/"
 }
 
-// SourceOriginal is the key of the uploaded original in the source bucket.
-func SourceOriginal(t id.TenantID, a id.AssetID) string {
-	return SourcePrefix(t, a) + "original"
+// SourceRandomBytes is the length of the random component of a source key.
+const SourceRandomBytes = 16
+
+// NewSource returns a fresh key for the uploaded original in the source bucket. It ends in a
+// random component (128 bits, hex), so the key cannot be derived from the tenant and asset IDs.
+// It is stored on the asset row and must never be returned to a client or logged. Every key it
+// returns lies under SourcePrefix, so deletion by prefix covers it.
+func NewSource(t id.TenantID, a id.AssetID) string {
+	var b [SourceRandomBytes]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("keys: no randomness available") // crypto/rand does not fail on supported platforms
+	}
+	return SourcePrefix(t, a) + hex.EncodeToString(b[:])
 }
 
 // SourcePrefix is the prefix of everything stored for the asset in the source bucket.
