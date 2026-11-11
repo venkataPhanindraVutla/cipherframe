@@ -78,7 +78,7 @@ RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-comp
 #   decode  h264 hevc vp8 vp9 libdav1d(av1) aac opus mp3 (+ parsers)
 #   encode  libx264, aac
 #   output  muxers mp4 and hls (fMP4 segments); null (decode checks and tests)
-#   filters scale format aresample null anull setsar fps; transpose hflip vflip apply the display
+#   filters scale format aresample null anull setsar fps split; transpose hflip vflip apply the display
 #           matrix rotation (FFmpeg's autorotate inserts them); ffmpeg adds aformat/trim/etc itself.
 # Not built: network protocols, devices, every other codec, container and filter, zlib/bzlib/iconv
 # (so compressed MP4 headers and Matroska header compression are rejected).
@@ -101,7 +101,7 @@ RUN ./configure \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
         --enable-encoder=libx264,aac \
         --enable-muxer=mp4,hls,null \
-        --enable-filter=scale,format,aresample,null,anull,setsar,fps,transpose,hflip,vflip \
+        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe \
@@ -110,7 +110,9 @@ RUN ./configure \
     && /opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf > /opt/ffmpeg/buildconf.txt
 
 # ---------------------------------------------------------------------------------------------
-# Test-only FFmpeg: lavfi test sources to generate fixtures at test time (internal/media/testmedia).
+# Test-only FFmpeg: lavfi test sources to generate fixtures at test time (internal/media/testmedia),
+# plus the h264/aac decoders and the ssim and psnr filters the pipeline test uses to measure quality.
+# Those measuring filters live here and NEVER in the shipped build above.
 # It lacks hls, libdav1d and most decoders on purpose, so it also serves as the "limited build"
 # that CheckCapabilities must reject. It is never copied into the worker image.
 FROM ffmpeg-src AS fixtures
@@ -128,11 +130,11 @@ RUN ./configure \
         --enable-indev=lavfi \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov \
-        --enable-decoder=wrapped_avframe,pcm_s16le,pcm_f32le,pcm_f64le,rawvideo \
+        --enable-decoder=wrapped_avframe,pcm_s16le,pcm_f32le,pcm_f64le,rawvideo,h264,aac \
         --enable-parser=h264,aac \
-        --enable-encoder=libx264,aac \
-        --enable-muxer=mp4,matroska \
-        --enable-filter=testsrc2,sine,anullsrc,scale,format,aresample,null,anull,setsar,fps \
+        --enable-encoder=libx264,aac,wrapped_avframe \
+        --enable-muxer=mp4,matroska,null \
+        --enable-filter=testsrc2,sine,anullsrc,scale,format,aresample,null,anull,setsar,fps,ssim,psnr \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg-fixtures/bin/ffmpeg \
