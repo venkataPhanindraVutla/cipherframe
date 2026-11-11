@@ -480,7 +480,7 @@ func leaks(haystack string, key []byte) []string {
 		"HEX":    strings.ToUpper(hex.EncodeToString(key)),
 		"base64": base64.StdEncoding.EncodeToString(key),
 		"b64url": base64.RawURLEncoding.EncodeToString(key),
-		"%v":     fmt.Sprint(key),
+		"%v":     fmt.Sprintf("%v", key),
 	} {
 		if strings.Contains(haystack, needle) {
 			found = append(found, name)

@@ -125,7 +125,9 @@ type fakeRepo struct {
 	progress    []int
 }
 
-func newFakeRepo(a db.Asset) *fakeRepo { return &fakeRepo{asset: a, artifacts: map[string]db.Artifact{}} }
+func newFakeRepo(a db.Asset) *fakeRepo {
+	return &fakeRepo{asset: a, artifacts: map[string]db.Artifact{}}
+}
 
 func (r *fakeRepo) GetAsset(context.Context, id.TenantID, id.AssetID) (db.Asset, error) {
 	r.mu.Lock()
@@ -325,7 +327,7 @@ func box(typ string, payload ...[]byte) []byte {
 
 func descriptor(tag byte, payload ...[]byte) []byte {
 	body := bytes.Join(payload, nil)
-	return append([]byte{tag, byte(len(body))}, body...)
+	return append([]byte{tag, byte(len(body))}, body...) //nolint:gosec // small test data
 }
 
 // fakeInit is a minimal init segment with an avc1 (High, level 4.0) and optionally an mp4a (AAC-LC)

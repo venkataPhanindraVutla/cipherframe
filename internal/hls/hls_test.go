@@ -295,7 +295,7 @@ func box(typ string, payload ...[]byte) []byte {
 // descriptor builds an MPEG-4 descriptor with a one byte length.
 func descriptor(tag byte, payload ...[]byte) []byte {
 	body := bytes.Join(payload, nil)
-	return append([]byte{tag, byte(len(body))}, body...)
+	return append([]byte{tag, byte(len(body))}, body...) //nolint:gosec // small test data
 }
 
 func avcInit(profile, compat, level byte) []byte {

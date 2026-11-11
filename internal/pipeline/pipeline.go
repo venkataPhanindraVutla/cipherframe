@@ -116,7 +116,7 @@ func prepareWorkDir(dir string) error {
 		return errors.New("pipeline: work directory is not a directory")
 	}
 	if st.Mode().Perm()&0o077 != 0 {
-		if err := os.Chmod(dir, 0o700); err != nil {
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 0700 is the strictest useful mode for a directory
 			return errors.New("pipeline: work directory is accessible to other users and cannot be restricted")
 		}
 	}
