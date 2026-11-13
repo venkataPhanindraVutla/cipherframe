@@ -40,6 +40,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0032](0032-delivery-strategies.md) | Delivery strategies | none | Accepted (flagged for owner review) | 2026-11-11 |
 | [0033](0033-integrity-design.md) | Integrity design | P9 | Accepted (manifest outline flagged for owner review) | 2026-11-12 |
 | [0034](0034-timestamp-authority-recommendations.md) | Timestamp authority recommendations | P10 | Accepted | 2026-11-12 |
+| [0035](0035-floci-cloud-emulators-in-tests.md) | Floci cloud emulators in tests | none | Accepted | 2026-11-13 |
 
 ## Open gates
 
