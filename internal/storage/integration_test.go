@@ -32,14 +32,19 @@ import (
 // seaweedImage is pinned (ADR 0014). Keep it in step with Docker Compose (M1-8).
 const seaweedImage = "chrislusf/seaweedfs:4.53"
 
+// flociImage is the Floci AWS emulator (MIT), the second S3 backend (ADR 0035), pinned by tag and
+// digest.
+const flociImage = "floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c"
+
 const (
 	sourceBucket   = "cipherframe-test-source"
 	deliveryBucket = "cipherframe-test-delivery"
-	s3Port         = "8333/tcp"
+	seaweedPort    = "8333/tcp"
+	flociPort      = "4566/tcp"
 )
 
-// seaweed is the one SeaweedFS container shared by every integration test in the package.
-type seaweed struct {
+// s3server is the one S3 server container shared by every integration test in the package.
+type s3server struct {
 	// internalHost and publicHost are two different spellings of the container's address, so the
 	// test can tell the internal endpoint from the public one. On a plain Docker host they are
 	// 127.0.0.1 and localhost; when the tests run inside a container (TESTCONTAINERS_HOST_OVERRIDE,
@@ -51,11 +56,11 @@ type seaweed struct {
 	secretKey    string
 }
 
-var sw *seaweed
+var srv *s3server
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	s, c, err := startSeaweed(ctx)
+	s, c, err := startServer(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "integration setup failed:", err)
 		if c != nil {
@@ -63,7 +68,7 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(1)
 	}
-	sw = s
+	srv = s
 	code := m.Run()
 	_ = c.Terminate(ctx)
 	os.Exit(code)
@@ -77,28 +82,54 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// startServer starts the S3 backend the tests run against (ADR 0035): SeaweedFS by default, Floci
+// when CIPHERFRAME_TEST_S3_BACKEND=floci.
+func startServer(ctx context.Context) (*s3server, testcontainers.Container, error) {
+	switch b := os.Getenv("CIPHERFRAME_TEST_S3_BACKEND"); b {
+	case "", "seaweedfs":
+		return startSeaweed(ctx)
+	case "floci":
+		return startFloci(ctx)
+	default:
+		return nil, nil, fmt.Errorf("unknown CIPHERFRAME_TEST_S3_BACKEND %q (want seaweedfs or floci)", b)
+	}
+}
+
 // startSeaweed runs SeaweedFS with its S3 gateway. The gateway only verifies signatures when it has
 // identities, so a throwaway access key is generated per run and written to the identities file
 // (-s3.config). Master, volume server and S3 gateway run in one process ("server -s3").
-func startSeaweed(ctx context.Context) (*seaweed, testcontainers.Container, error) {
+func startSeaweed(ctx context.Context) (*s3server, testcontainers.Container, error) {
 	access, secret := "AK"+strings.ToUpper(randomHex(8)), randomHex(20)
 	identities := fmt.Sprintf(`{"identities":[{"name":"cipherframe-test","credentials":[{"accessKey":%q,"secretKey":%q}],`+
 		`"actions":["Admin","Read","Write","List","Tagging"]}]}`, access, secret)
+	return start(ctx, testcontainers.ContainerRequest{
+		Image:        seaweedImage,
+		ExposedPorts: []string{seaweedPort},
+		Cmd:          []string{"server", "-dir=/data", "-ip.bind=0.0.0.0", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json"},
+		Files: []testcontainers.ContainerFile{{
+			Reader:            strings.NewReader(identities),
+			ContainerFilePath: "/etc/seaweedfs/s3.json",
+			FileMode:          0o644,
+		}},
+		WaitingFor: wait.ForListeningPort(seaweedPort).WithStartupTimeout(3 * time.Minute),
+	}, seaweedPort, access, secret)
+}
 
-	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        seaweedImage,
-			ExposedPorts: []string{s3Port},
-			Cmd:          []string{"server", "-dir=/data", "-ip.bind=0.0.0.0", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json"},
-			Files: []testcontainers.ContainerFile{{
-				Reader:            strings.NewReader(identities),
-				ContainerFilePath: "/etc/seaweedfs/s3.json",
-				FileMode:          0o644,
-			}},
-			WaitingFor: wait.ForListeningPort(s3Port).WithStartupTimeout(3 * time.Minute),
-		},
-		Started: true,
-	})
+// startFloci runs Floci with signature checks on: without them it accepts any credentials and any
+// presigned URL, and the security tests below would pass for the wrong reason. Floci's built-in
+// credentials are the access key "test" with the secret "test".
+func startFloci(ctx context.Context) (*s3server, testcontainers.Container, error) {
+	return start(ctx, testcontainers.ContainerRequest{
+		Image:        flociImage,
+		ExposedPorts: []string{flociPort},
+		Env:          map[string]string{"FLOCI_AUTH_VALIDATE_SIGNATURES": "true"},
+		WaitingFor:   wait.ForHTTP("/_localstack/health").WithPort(flociPort).WithStartupTimeout(3 * time.Minute),
+	}, flociPort, "test", "test")
+}
+
+// start runs the container, finds the host forms it is reachable at and creates the test buckets.
+func start(ctx context.Context, req testcontainers.ContainerRequest, s3Port, access, secret string) (*s3server, testcontainers.Container, error) {
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 	if err != nil {
 		return nil, c, fmt.Errorf("start container: %w", err)
 	}
@@ -110,7 +141,7 @@ func startSeaweed(ctx context.Context) (*seaweed, testcontainers.Container, erro
 	if err != nil {
 		return nil, c, fmt.Errorf("container host: %w", err)
 	}
-	s := &seaweed{internalHost: "127.0.0.1", publicHost: "localhost", port: port.Port(), accessKey: access, secretKey: secret}
+	s := &s3server{internalHost: "127.0.0.1", publicHost: "localhost", port: port.Port(), accessKey: access, secretKey: secret}
 	if host != "localhost" && host != "127.0.0.1" {
 		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 		if err != nil || len(addrs) == 0 {
@@ -126,7 +157,7 @@ func startSeaweed(ctx context.Context) (*seaweed, testcontainers.Container, erro
 
 // createBuckets is test setup only: bucket creation is outside the storage port. The master and
 // volume server need a moment after the S3 port opens, so it retries.
-func (s *seaweed) createBuckets(ctx context.Context, names ...string) error {
+func (s *s3server) createBuckets(ctx context.Context, names ...string) error {
 	client := s3.New(s3.Options{
 		Region:       "us-east-1",
 		BaseEndpoint: aws.String(s.internalURL()),
@@ -149,11 +180,11 @@ func (s *seaweed) createBuckets(ctx context.Context, names ...string) error {
 	return nil
 }
 
-func (s *seaweed) internalURL() string { return "http://" + s.internalHost + ":" + s.port }
-func (s *seaweed) publicURL() string   { return "http://" + s.publicHost + ":" + s.port }
+func (s *s3server) internalURL() string { return "http://" + s.internalHost + ":" + s.port }
+func (s *s3server) publicURL() string   { return "http://" + s.publicHost + ":" + s.port }
 
 // cfg returns a configuration whose internal and public endpoints use different host forms.
-func (s *seaweed) cfg() config.S3 {
+func (s *s3server) cfg() config.S3 {
 	return config.S3{
 		Endpoint:        s.internalURL(),
 		PublicEndpoint:  s.publicURL(),
@@ -168,7 +199,7 @@ func (s *seaweed) cfg() config.S3 {
 
 func newBuckets(t *testing.T) *storage.Buckets {
 	t.Helper()
-	b, err := storage.New(context.Background(), sw.cfg())
+	b, err := storage.New(context.Background(), srv.cfg())
 	if err != nil {
 		t.Fatalf("storage.New: %v", err)
 	}
@@ -215,15 +246,15 @@ func TestPresignedURLUsesPublicEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Host != sw.publicHost+":"+sw.port {
-		t.Fatalf("presigned host = %q, want the public endpoint %s:%s", u.Host, sw.publicHost, sw.port)
+	if u.Host != srv.publicHost+":"+srv.port {
+		t.Fatalf("presigned host = %q, want the public endpoint %s:%s", u.Host, srv.publicHost, srv.port)
 	}
 	if body := fetch(t, req.URL); body != "public" {
 		t.Fatalf("GET through the public host returned %q", body)
 	}
 
 	// The signature covers the host: the same URL aimed at the internal host must be refused.
-	u.Host = sw.internalHost + ":" + sw.port
+	u.Host = srv.internalHost + ":" + srv.port
 	resp := do(t, u.String())
 	if resp != http.StatusForbidden {
 		t.Fatalf("URL re-aimed at the internal host: status %d, want 403 (signature covers the host)", resp)
@@ -264,7 +295,7 @@ func do(t *testing.T, u string) int {
 }
 
 func TestWrongCredentialsArePermissionDenied(t *testing.T) {
-	cfg := sw.cfg()
+	cfg := srv.cfg()
 	cfg.SecretAccessKey = config.NewStaticCredential(randomHex(20))
 	b, err := storage.New(context.Background(), cfg)
 	if err != nil {
@@ -280,7 +311,7 @@ func TestWrongCredentialsArePermissionDenied(t *testing.T) {
 }
 
 func TestMissingBucketIsNotNotFound(t *testing.T) {
-	cfg := sw.cfg()
+	cfg := srv.cfg()
 	s, err := storage.NewStore(context.Background(), cfg, "no-such-bucket-"+randomHex(4), keys.Source)
 	if err != nil {
 		t.Fatal(err)
@@ -295,7 +326,7 @@ func TestMissingBucketIsNotNotFound(t *testing.T) {
 }
 
 func TestUnreachableEndpointIsUnavailable(t *testing.T) {
-	cfg := sw.cfg()
+	cfg := srv.cfg()
 	cfg.Endpoint = "http://127.0.0.1:1" // nothing listens on port 1
 	cfg.PublicEndpoint = cfg.Endpoint
 	b, err := storage.New(context.Background(), cfg)

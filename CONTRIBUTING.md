@@ -91,6 +91,13 @@ CIPHERFRAME_TEST_PG_IMAGE=postgres:16.15 go test -race -tags=integration ./inter
 After changing a migration or a query in `internal/db/queries/`, run `sqlc generate` and commit the
 result.
 
+The storage tests run against SeaweedFS. Set `CIPHERFRAME_TEST_S3_BACKEND=floci` to run them against
+the Floci emulator instead, as CI also does (ADR 0035):
+
+```sh
+CIPHERFRAME_TEST_S3_BACKEND=floci go test -race -tags=integration ./internal/storage/
+```
+
 ### Media and pipeline tests
 
 The tests tagged `media` run the real FFmpeg and FFprobe, and the pipeline test
