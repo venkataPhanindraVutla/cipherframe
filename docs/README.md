@@ -10,4 +10,5 @@
 | [api.md](api.md) | API surfaces and conventions |
 | [usage.md](usage.md) | End-to-end usage |
 | [visuals/](visuals/) | Interactive explainers: recording lifecycle, adaptive playback |
+| [roadmap.md](roadmap.md) | Milestone status, pending work, open decision gates |
 | [adr/](adr/) | Architecture decision records |
