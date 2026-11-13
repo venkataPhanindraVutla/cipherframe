@@ -1,6 +1,6 @@
 # 0023. KMS provider test strategy
 
-- Status: Accepted
+- Status: Accepted (test targets extended by [0035](0035-floci-cloud-emulators-in-tests.md))
 - Date: 2026-11-11
 - Gate: none (M2-2)
 - Deciders: project owner
