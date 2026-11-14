@@ -671,3 +671,53 @@ func TestCreateAssetMaskFaces(t *testing.T) {
 	// A bad type is a 400.
 	e.call(e.admin, "POST", "/v1/assets", map[string]any{"size_bytes": 100, "upload_method": "multipart", "mask_faces": "yes"}, 400)
 }
+
+// A committed mask_faces asset gets asset.process and asset.mask in the same transaction, on their
+// own queues (ADR 0037); an asset without it gets asset.process only.
+func TestCommitEnqueuesMaskJobOnlyForMaskFaces(t *testing.T) {
+	e := newUpEnv(t)
+	created, _ := e.call(e.admin, "POST", "/v1/assets", map[string]any{"size_bytes": 100, "upload_method": "multipart", "content_type": "video/mp4", "mask_faces": true}, 201)
+	masking := upload{
+		assetID: created["asset"].(map[string]any)["id"].(string), token: created["upload"].(map[string]any)["token"].(string),
+		url: created["upload"].(map[string]any)["url"].(string), method: "multipart", size: 100,
+	}
+	e.putPart(masking, 1, make([]byte, 100), 200)
+	plain := e.create(e.admin, 100, "multipart")
+	e.putPart(plain, 1, make([]byte, 100), 200)
+
+	jobsOf := func(kind string) (n int, queue string) {
+		t.Helper()
+		rows, err := e.pool.Query(context.Background(), `SELECT queue FROM river_job WHERE kind = $1`, kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			if err := rows.Scan(&queue); err != nil {
+				t.Fatal(err)
+			}
+			n++
+		}
+		return n, queue
+	}
+	e.call(e.admin, "POST", "/v1/assets/"+plain.assetID+"/commit", nil, 200)
+	if p, _ := jobsOf("asset.process"); p != 1 {
+		t.Fatalf("%d asset.process jobs, want 1", p)
+	}
+	if n, _ := jobsOf("asset.mask"); n != 0 {
+		t.Fatalf("%d asset.mask jobs for an asset without mask_faces", n)
+	}
+	e.call(e.admin, "POST", "/v1/assets/"+masking.assetID+"/commit", nil, 200)
+	e.call(e.admin, "POST", "/v1/assets/"+masking.assetID+"/commit", nil, 200) // idempotent
+	if p, q := jobsOf("asset.process"); p != 2 || q != "media" {
+		t.Fatalf("asset.process: %d jobs on %q", p, q)
+	}
+	if n, q := jobsOf("asset.mask"); n != 1 || q != "mask" {
+		t.Fatalf("asset.mask: %d jobs on %q, want 1 on mask", n, q)
+	}
+	// Pending from the start, before the original is ready.
+	got, _ := e.call(e.admin, "GET", "/v1/assets/"+masking.assetID, nil, 200)
+	if got["masking"].(map[string]any)["state"] != "pending" {
+		t.Fatalf("GET: %v", got)
+	}
+}

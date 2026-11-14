@@ -137,6 +137,9 @@ type fakeRepo struct {
 	// maskingCompletes counts CompleteMasking calls; maskingStates is every state SetMasking got.
 	maskingCompletes int
 	maskingStates    []string
+	// onGet, when set, runs before every GetAsset with the 1-based call number (without the lock).
+	onGet func(n int)
+	gets  int
 }
 
 func newFakeRepo(a db.Asset) *fakeRepo {
@@ -144,6 +147,13 @@ func newFakeRepo(a db.Asset) *fakeRepo {
 }
 
 func (r *fakeRepo) GetAsset(context.Context, id.TenantID, id.AssetID) (db.Asset, error) {
+	r.mu.Lock()
+	r.gets++
+	n, hook := r.gets, r.onGet
+	r.mu.Unlock()
+	if hook != nil {
+		hook(n)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.asset, nil

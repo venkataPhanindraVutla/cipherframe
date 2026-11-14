@@ -47,7 +47,6 @@ func newMaskRig(t *testing.T) *rig {
 		t.Fatal(err)
 	}
 	repo := pipeline.NewDBRepo(r.pool)
-	repo.Queue = q
 	r.proc, err = pipeline.NewProcessor(pipeline.Deps{
 		Repo: repo, Source: r.buckets.Source, Delivery: r.buckets.Delivery,
 		Keys: pipeline.ContentKeys{Pool: r.pool, Manager: r.mgr}, Tools: r.tools, Signer: r.signer,
@@ -147,7 +146,8 @@ func TestMaskEndToEnd(t *testing.T) {
 	src := generate(t, testmedia.Spec{Name: "source.mp4", Width: 640, Height: 360, Duration: 8 * time.Second, FPS: 30, Audio: true})
 	asset, sourceSum := r.commitAs(src, true)
 
-	// asset.process completes the asset and enqueues asset.mask in the same transaction.
+	// asset.process completes the asset. It no longer enqueues asset.mask: the upload commit does,
+	// beside asset.process (ADR 0037; the contract tests cover that), so the test runs the job itself.
 	if err := r.process(asset); err != nil {
 		t.Fatalf("asset.process: %v\n%s", err, r.logs.String())
 	}
@@ -158,8 +158,8 @@ func TestMaskEndToEnd(t *testing.T) {
 	if a.State != db.AssetReady || a.MaskingState != db.MaskingPending {
 		t.Fatalf("after asset.process: state %s, masking %q", a.State, a.MaskingState)
 	}
-	if n := r.riverJobs(pipeline.MaskKind); n != 1 {
-		t.Fatalf("%d asset.mask jobs enqueued, want 1", n)
+	if n := r.riverJobs(pipeline.MaskKind); n != 0 {
+		t.Fatalf("asset.process enqueued %d asset.mask jobs, want 0", n)
 	}
 	if _, err := playback.ResolveVariant(a, keys.Masked); !isVariantNotReady(err) {
 		t.Fatalf("a masked session before masking: %v", err)
@@ -433,4 +433,32 @@ func (r *rig) maskedKey(a db.Asset) []byte {
 func isVariantNotReady(err error) bool {
 	var e *errs.Error
 	return errors.As(err, &e) && e.Code == errs.VariantNotReady
+}
+
+// asset.mask starts on a committed asset, beside asset.process, and finishes after it (ADR 0037).
+func TestMaskRunsBesideProcess(t *testing.T) {
+	r := newMaskRig(t)
+	ctx := context.Background()
+	src := generate(t, testmedia.Spec{Name: "source.mp4", Width: 640, Height: 360, Duration: 6 * time.Second, FPS: 30, Audio: true})
+	asset, _ := r.commitAs(src, true)
+	r.startMasker(`{"faces_detected":2,"frames":180}`, false)
+
+	maskErr := make(chan error, 1)
+	go func() { maskErr <- r.mask(asset) }()
+	if err := r.process(asset); err != nil {
+		t.Fatalf("asset.process: %v\n%s", err, r.logs.String())
+	}
+	if err := <-maskErr; err != nil {
+		t.Fatalf("asset.mask: %v\n%s", err, r.logs.String())
+	}
+	a, err := r.repos.GetAsset(ctx, asset.TenantID, asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.State != db.AssetReady || a.MaskingState != db.MaskingReady || a.FacesDetected == nil || *a.FacesDetected != 2 {
+		t.Fatalf("asset = %+v", a)
+	}
+	if bytes.Equal(r.key(a), r.maskedKey(a)) {
+		t.Fatal("both variants share a content key")
+	}
 }

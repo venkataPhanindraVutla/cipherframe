@@ -71,7 +71,7 @@ func TestLadder(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := Ladder(c.info)
+			got := Ladder(c.info, nil)
 			if len(got) != len(c.want) {
 				t.Fatalf("got %d renditions %v, want %v", len(got), got, c.want)
 			}
@@ -100,13 +100,13 @@ func TestLadder(t *testing.T) {
 
 func TestLadderRateCaps(t *testing.T) {
 	want := map[string]int{"1080p": 4500, "720p": 2500, "480p": 1200, "360p": 700, "240p": 350}
-	for _, r := range Ladder(infoWithDisplay(3840, 2160, true)) {
+	for _, r := range Ladder(infoWithDisplay(3840, 2160, true), nil) {
 		if r.MaxrateKbps != want[r.Name] {
 			t.Errorf("%s: maxrate %d, want %d", r.Name, r.MaxrateKbps, want[r.Name])
 		}
 	}
 	// Below the smallest rung the smallest rung's caps apply.
-	r := Ladder(infoWithDisplay(256, 144, true))[0]
+	r := Ladder(infoWithDisplay(256, 144, true), nil)[0]
 	if r.MaxrateKbps != 350 || r.BufsizeKbps != 700 {
 		t.Errorf("144p caps: %+v", r)
 	}
@@ -120,7 +120,7 @@ func TestLadderUsesDisplayHeightAfterRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := Ladder(info)
+	got := Ladder(info, nil)
 	if len(got) != 5 || got[0].Name != "1080p" || got[0].Width != 608 || got[0].Height != 1080 {
 		t.Fatalf("rotated 1920x1080: %+v", got)
 	}
@@ -131,7 +131,7 @@ func TestLadderUsesDisplayHeightAfterRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = Ladder(info)
+	got = Ladder(info, nil)
 	if len(got) != 5 || got[0].Width != 1920 || got[0].Height != 1080 {
 		t.Fatalf("rotated 1080x1920: %+v", got)
 	}
@@ -142,7 +142,7 @@ func TestLadderUsesDisplayHeightAfterRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = Ladder(info)
+	got = Ladder(info, nil)
 	if len(got) != 3 || got[0].Name != "480p" {
 		t.Fatalf("rotated 640x360: %+v", got)
 	}
@@ -151,17 +151,17 @@ func TestLadderUsesDisplayHeightAfterRotation(t *testing.T) {
 // Resolution and bitrate are decided separately: the ladder never looks at the source's bitrate,
 // so Info has no bitrate field at all. This test pins that every rung of a resolution is present.
 func TestLadderIgnoresSourceBitrate(t *testing.T) {
-	a := Ladder(infoWithDisplay(1920, 1080, true))
+	a := Ladder(infoWithDisplay(1920, 1080, true), nil)
 	if len(a) != 5 {
 		t.Fatalf("1080p source must get all five rungs, got %d", len(a))
 	}
 }
 
 func TestLadderNoVideo(t *testing.T) {
-	if got := Ladder(Info{}); got != nil {
+	if got := Ladder(Info{}, nil); got != nil {
 		t.Fatalf("got %v", got)
 	}
-	if got := Ladder(Info{Video: &VideoStream{}}); got != nil {
+	if got := Ladder(Info{Video: &VideoStream{}}, nil); got != nil {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -176,7 +176,7 @@ func TestLadderInvariants(t *testing.T) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%dx%d", w, h), func(t *testing.T) {
-				got := Ladder(infoWithDisplay(w, h, true))
+				got := Ladder(infoWithDisplay(w, h, true), nil)
 				if len(got) == 0 {
 					t.Fatal("no renditions")
 				}

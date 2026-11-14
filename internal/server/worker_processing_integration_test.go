@@ -46,7 +46,7 @@ func TestNewWorkerRegistersAssetProcess(t *testing.T) {
 	work := filepath.Join(t.TempDir(), "work")
 	cfg := &config.Config{Media: config.Media{
 		FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", MaxSourceDuration: time.Hour, MaxSourceWidth: 3840, MaxSourceHeight: 2160,
-		TranscodeTimeout: time.Hour, MaskTimeout: time.Hour, WorkDir: work, Concurrency: 1,
+		TranscodeTimeout: time.Hour, MaskTimeout: time.Hour, WorkDir: work, Concurrency: 1, MaskConcurrency: 1,
 	}}
 	w, err := newWorker(pool, managerFor(t, pool, localAt(t, 1)), slog.New(slog.DiscardHandler), &processing{Buckets: buckets, Config: cfg, Signer: stubSigner{}})
 	if err != nil {

@@ -44,7 +44,7 @@ func testSpec() TranscodeSpec {
 		Video: &VideoStream{Index: 0, Codec: "h264", Width: 1280, Height: 720, DisplayWidth: 1280, DisplayHeight: 720, FrameRate: 30},
 		Audio: &AudioStream{Index: 1, Codec: "aac", Channels: 2, SampleRate: 48000},
 	}
-	return TranscodeSpec{Source: "/work/job/source", OutDir: "/work/job/out", Info: info, Renditions: Ladder(info)}
+	return TranscodeSpec{Source: "/work/job/source", OutDir: "/work/job/out", Info: info, Renditions: Ladder(info, nil)}
 }
 
 func argValues(args []string, flag string) []string {
@@ -139,7 +139,7 @@ func TestTranscodeArgsSourceWithoutAudioAndNTSC(t *testing.T) {
 	spec := testSpec()
 	spec.Info.Audio = nil
 	spec.Info.Video.FrameRate = 30000.0 / 1001
-	spec.Renditions = Ladder(spec.Info)
+	spec.Renditions = Ladder(spec.Info, nil)
 	args, err := TranscodeArgs(spec)
 	if err != nil {
 		t.Fatal(err)

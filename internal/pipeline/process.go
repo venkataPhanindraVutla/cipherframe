@@ -71,7 +71,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	if err := media.Validate(info, p.Limits); err != nil {
 		return classifyMedia(err)
 	}
-	renditions := media.Ladder(info)
+	renditions := media.Ladder(info, p.LadderHeights)
 	if len(renditions) == 0 {
 		return permanent(FailureInvalidMedia, errors.New("no renditions can be made from the file"))
 	}
@@ -91,7 +91,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		return fmt.Errorf("pipeline: create the output directory: %w", err)
 	}
 	spec := media.TranscodeSpec{Source: srcPath, OutDir: outDir, Info: info, Renditions: renditions}
-	if err := p.transcode(ctx, asset, spec, log); err != nil {
+	if err := p.transcode(ctx, asset, spec, true, log); err != nil {
 		return err
 	}
 
@@ -138,11 +138,16 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	return err
 }
 
-// transcode runs FFmpeg under the transcode timeout and reports progress.
-func (p *Processor) transcode(ctx context.Context, asset db.Asset, spec media.TranscodeSpec, log *slog.Logger) error {
-	rep := startReporter(ctx, p.ProgressInterval, func(ctx context.Context, percent int) error {
-		return p.Repo.SetProgress(ctx, asset.TenantID, asset.ID, percent)
-	})
+// transcode runs FFmpeg under the transcode timeout. With track it reports progress on the asset;
+// the masked variant does not, since it runs while the original owns the progress column.
+func (p *Processor) transcode(ctx context.Context, asset db.Asset, spec media.TranscodeSpec, track bool, log *slog.Logger) error {
+	set := func(context.Context, int) error { return nil }
+	if track {
+		set = func(ctx context.Context, percent int) error {
+			return p.Repo.SetProgress(ctx, asset.TenantID, asset.ID, percent)
+		}
+	}
+	rep := startReporter(ctx, p.ProgressInterval, set)
 	defer rep.stop()
 
 	t0 := p.Now()

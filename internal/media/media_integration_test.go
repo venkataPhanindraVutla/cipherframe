@@ -116,7 +116,7 @@ func TestProbeLandscape(t *testing.T) {
 	if err := media.Validate(info, defaultLimits); err != nil {
 		t.Errorf("validate: %v", err)
 	}
-	if got := media.Ladder(info); len(got) != 1 || got[0].Name != "180p" || got[0].Width != 320 || got[0].AudioKbps != 96 {
+	if got := media.Ladder(info, nil); len(got) != 1 || got[0].Name != "180p" || got[0].Width != 320 || got[0].AudioKbps != 96 {
 		t.Errorf("ladder: %+v", got)
 	}
 }
@@ -163,7 +163,7 @@ func TestProbeWithoutAudioAndMatroska(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 144p source: one rendition at its own height.
-	if got := media.Ladder(info); len(got) != 1 || got[0].Height != 144 || got[0].Width != 256 || got[0].AudioKbps != 0 {
+	if got := media.Ladder(info, nil); len(got) != 1 || got[0].Height != 144 || got[0].Width != 256 || got[0].AudioKbps != 0 {
 		t.Fatalf("ladder: %+v", got)
 	}
 }
@@ -231,7 +231,7 @@ func TestProbeHonoursContext(t *testing.T) {
 func TestTranscodeToLadderRung(t *testing.T) {
 	src := generate(t, testmedia.Spec{Name: "src.mp4", Width: 640, Height: 360, Audio: true, Rotation: 90})
 	info := probe(t, src)
-	rungs := media.Ladder(info)
+	rungs := media.Ladder(info, nil)
 	if len(rungs) != 3 || rungs[0].Name != "480p" || rungs[0].Width != 270 || rungs[0].Height != 480 {
 		t.Fatalf("ladder: %+v", rungs)
 	}

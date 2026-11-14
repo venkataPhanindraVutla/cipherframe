@@ -148,7 +148,7 @@ request bodies there.
 
 Create the asset with `"mask_faces": true` to get a second, face-masked variant next to the original.
 The asset becomes `ready` with its original variant as usual and records `masking.state: pending`;
-the `asset.mask` job then builds the masked variant (see [Face masking](#face-masking)) and the state
+the `asset.mask` job, which runs beside `asset.process`, publishes the masked variant (see [Face masking](#face-masking)) and the state
 becomes `ready`, or `failed` with the original unaffected. Playback sessions are bound to one variant. For a masking asset the default is `masked`,
 and your server must ask for `"variant": "original"` to play the original. For browser-started
 sessions the viewer cannot choose: put an optional `variant` claim in the JWT you sign, or approve the
@@ -164,10 +164,11 @@ a masker, an asset created with `mask_faces` still becomes `ready` and playable 
 `asset.mask` job waits for `CIPHERFRAME_WORKER_MASK_TIMEOUT` (default 2 hours), then marks the masked
 variant `failed`.
 
-How a masking asset flows:
+How a masking asset flows ([ADR 0037](adr/0037-faster-face-masking.md)):
 
-1. `asset.process` finishes the original variant, and in the same transaction enqueues `asset.mask`
-   (on the `media` queue) and sets `masking.state` to `pending`.
+1. Committing the upload enqueues `asset.process` (on the `media` queue) and, in the same
+   transaction, `asset.mask` (on the `mask` queue), so the two run side by side. `masking.state` is
+   `pending` from the start.
 2. `asset.mask` downloads the source into its own job directory under `CIPHERFRAME_WORK_DIR`
    (`job-mask-*`), writes a `media.mask_faces` task whose payload names `<job dir>/source` and
    `<job dir>/masked.mp4` relative to the work directory, and waits.
@@ -221,13 +222,17 @@ Requirements, none of which can be skipped:
   `external_tasks` (the grants are in [spec/jobs/README.md](../spec/jobs/README.md); the Compose stack
   creates `cipherframe_masker` from `deploy/compose/masker-role.sql`, a script rather than a migration
   because a role is cluster-wide and carries a password that belongs to the deployment).
-- **Media queue slots.** `asset.mask` holds a `media` queue slot while it waits for the masker. With
-  the default `CIPHERFRAME_WORKER_MEDIA_CONCURRENCY=1`, an asset being masked blocks other
-  `asset.process` jobs on that worker until it is done; raise the setting (masking itself runs in the
-  masker, not on the worker's cores) or run more workers.
+- **Queues and speed.** `asset.mask` runs on its own `mask` queue (`CIPHERFRAME_WORKER_MASK_CONCURRENCY`,
+  default 1), so it never blocks `asset.process`, and it starts when the upload is committed instead of
+  when the original is ready. The masked variant is published only after the original is `ready`; if
+  the asset fails or is deleted first, masking ends as `failed` and leaves nothing behind. On a
+  42 s 720p recording the masked variant used to be ready after the sum of the two (about 85 s: 22 s
+  for the original, then 41 s masker and 21 s transcode); it is now ready after about the longer of
+  the two, with the original still ready at about the same time when cores allow. Set
+  `CIPHERFRAME_WORKER_LADDER_HEIGHTS` (for example `720,360`) to transcode fewer rungs in both variants.
 - **Disk.** A masking job needs the source plus the masked file (re-encoded at a high quality, so
   often larger than the source) plus the transcode output: plan for several times the source size in
-  `CIPHERFRAME_WORK_DIR` per concurrent masking job.
+  `CIPHERFRAME_WORK_DIR` per concurrent masking job, on top of the media jobs that now run beside it.
 
 Masking is a privacy aid, not a guarantee. Detection can miss profiles, small faces and heavily
 occluded ones (ADR 0036). Voices are not changed.
@@ -474,7 +479,9 @@ variable, never its value.
 | `CIPHERFRAME_TRANSCODE_TIMEOUT` | `6h` | no | no | Longest one transcode may run, a Go duration above zero and at most `168h`. A transcode that exceeds it fails the asset with `transcode_timeout`. |
 | `CIPHERFRAME_WORK_DIR` | `<OS temp dir>/cipherframe` | no | no | Absolute path of the **worker's** private scratch directory. Created with mode 0700 (and tightened if it already exists with wider permissions). Each `asset.process` job works in its own subdirectory, which holds the downloaded source and the plaintext segments FFmpeg writes and is deleted when the job ends. See [Processing](#processing-and-the-work-directory). |
 | `CIPHERFRAME_WORKER_MEDIA_CONCURRENCY` | `1` | no | no | How many `asset.process` jobs one **worker** process transcodes at once, 1 to 64. They run on their own `media` queue, so transcodes never take a slot from other jobs such as `kms.rewrap` (those keep 10 slots). Each FFmpeg run already uses all cores, so scale throughput by adding worker replicas rather than raising this. Disk need is 2 to 3 times the source size per concurrent job in `CIPHERFRAME_WORK_DIR`. |
-| `CIPHERFRAME_WORKER_MASK_TIMEOUT` | `2h` | no | no | How long an `asset.mask` job waits for the masker to finish one video, a Go duration above zero and at most `168h`. Past it the asset's masked variant is marked `failed` and the original stays playable. The job holds a `media` queue slot while it waits, so allow for it in `CIPHERFRAME_WORKER_MEDIA_CONCURRENCY`. See [Face masking](#face-masking). |
+| `CIPHERFRAME_WORKER_MASK_TIMEOUT` | `2h` | no | no | How long an `asset.mask` job waits for the masker to finish one video, and again for the original variant to become `ready` before it publishes, a Go duration above zero and at most `168h`. Past it the asset's masked variant is marked `failed` and the original stays playable. See [Face masking](#face-masking). |
+| `CIPHERFRAME_WORKER_MASK_CONCURRENCY` | `1` | no | no | How many `asset.mask` jobs one **worker** process runs at once, 1 to 64. They run on their own `mask` queue, apart from `media`, so masking never takes a slot from `asset.process` and the two overlap. The masker itself uses several cores, so scale by adding masker and worker replicas. Disk need adds up with the media concurrency. See [Face masking](#face-masking). |
+| `CIPHERFRAME_WORKER_LADDER_HEIGHTS` | all rungs | no | no | Restricts the renditions of both variants to a comma-separated subset of the rung heights `1080,720,480,360,240` (ADR 0024), for example `720,360`. Known heights only, no duplicates. A rung taller than the source is skipped; a source shorter than every selected rung gets one rendition at its own height. Fewer rungs mean a proportionally faster transcode. |
 
 Empty values of non-secret variables mean "use the default".
 

@@ -4,6 +4,7 @@
 - Date: 2026-11-11
 - Gate: P8
 - Deciders: project owner
+- Amended by: [0037](0037-faster-face-masking.md) (the ladder may be restricted)
 
 ## Context
 

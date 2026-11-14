@@ -44,18 +44,10 @@ type Repo interface {
 	SetMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, state string, faces *int, at time.Time) error
 }
 
-// Enqueuer inserts a job in the caller's transaction. *jobs.Queue implements it.
-type Enqueuer interface {
-	Enqueue(ctx context.Context, tx pgx.Tx, args jobs.Args, opts *jobs.EnqueueOpts) (int64, error)
-}
-
 // DBRepo is the Postgres implementation of Repo.
 type DBRepo struct {
 	*db.Repos
 	pool *pgxpool.Pool
-	// Queue enqueues asset.mask when a masking asset completes. Complete fails for a masking asset
-	// while it is nil, so the job is never silently skipped.
-	Queue Enqueuer
 }
 
 // NewDBRepo returns a Repo over pool.
@@ -74,11 +66,10 @@ func inTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx, *db.Repos) er
 	return db.MapError(tx.Commit(ctx))
 }
 
-// Complete implements Repo. For an asset created with mask_faces it also enqueues asset.mask in the
-// same transaction, so the masked variant is built if and only if the asset became ready.
+// Complete implements Repo.
 func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, c db.Completion) (db.Asset, error) {
 	var out db.Asset
-	err := inTx(ctx, r.pool, func(tx pgx.Tx, repos *db.Repos) error {
+	err := inTx(ctx, r.pool, func(_ pgx.Tx, repos *db.Repos) error {
 		for _, a := range arts {
 			if err := repos.RecordArtifact(ctx, a); err != nil {
 				return err
@@ -86,13 +77,6 @@ func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.Asse
 		}
 		var err error
 		out, err = repos.CompleteProcessing(ctx, tenant, asset, c)
-		if err != nil || !out.MaskFaces {
-			return err
-		}
-		if r.Queue == nil {
-			return errs.New(errs.InternalError, "no queue to enqueue the masking job")
-		}
-		_, err = r.Queue.Enqueue(ctx, tx, MaskArgs{TenantID: tenant, AssetID: asset}, nil)
 		return err
 	})
 	return out, err

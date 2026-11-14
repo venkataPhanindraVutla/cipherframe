@@ -163,7 +163,14 @@ func newUpEnvWith(t *testing.T, limits uploads.Limits) *upEnv {
 	e.edgeSrv = httptest.NewUnstartedServer(nil)
 	edgeURL := "http://" + e.edgeSrv.Listener.Addr().String()
 
-	queue, err := jobs.NewQueue(e.pool, jobs.NewRegistry(), jobs.Config{})
+	reg := jobs.NewRegistry()
+	if err := jobs.Declare[uploads.ProcessArgs](reg, jobs.KindConfig{Queue: jobs.QueueMedia}); err != nil {
+		t.Fatal(err)
+	}
+	if err := jobs.Declare[uploads.MaskArgs](reg, jobs.KindConfig{Queue: jobs.QueueMask}); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewQueue(e.pool, reg, jobs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

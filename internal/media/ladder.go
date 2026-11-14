@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"math"
+	"slices"
 )
 
 // Encoding defaults of ADR 0024.
@@ -29,6 +30,15 @@ var ladderRungs = [...]rung{
 	{240, 350},
 }
 
+// RungHeights returns the heights of the ADR 0024 rungs, tallest first.
+func RungHeights() []int {
+	out := make([]int, len(ladderRungs))
+	for i, r := range ladderRungs {
+		out[i] = r.height
+	}
+	return out
+}
+
 // Rendition is one output of the ladder: a size and its rate-control settings. The transcoder
 // scales the source to Width x Height after applying the display rotation.
 type Rendition struct {
@@ -49,9 +59,13 @@ type Rendition struct {
 // aspect ratio, rounded to an even number. Resolution decides the rungs; the source's bitrate does
 // not, so a low-bitrate source still gets every rung its resolution allows.
 //
+// heights, when not empty, restricts the ladder to those rungs (ADR 0037); it holds heights from
+// RungHeights, the config layer validates it. If the source is shorter than every selected rung
+// it gets one rendition at its own height with the caps of the smallest selected rung.
+//
 // Ladder expects a source that passed Validate. A source with no video stream or no usable size
 // gives no renditions.
-func Ladder(info Info) []Rendition {
+func Ladder(info Info, heights []int) []Rendition {
 	v := info.Video
 	if v == nil || v.DisplayWidth <= 0 || v.DisplayHeight <= 0 {
 		return nil
@@ -61,14 +75,18 @@ func Ladder(info Info) []Rendition {
 		audio = AudioKbps
 	}
 	var out []Rendition
+	last := ladderRungs[len(ladderRungs)-1]
 	for _, r := range ladderRungs {
+		if len(heights) > 0 && !slices.Contains(heights, r.height) {
+			continue
+		}
+		last = r
 		if v.DisplayHeight >= r.height {
 			out = append(out, rendition(v, r.height, r.maxrateKbps, audio))
 		}
 	}
 	if len(out) == 0 {
-		// Smaller than the smallest rung: keep the source's own height, with the smallest rung's caps.
-		last := ladderRungs[len(ladderRungs)-1]
+		// Smaller than the smallest selected rung: keep the source's own height, with that rung's caps.
 		h := max(v.DisplayHeight&^1, 2)
 		out = append(out, rendition(v, h, last.maxrateKbps, audio))
 	}

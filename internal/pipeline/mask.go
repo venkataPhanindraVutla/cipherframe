@@ -15,36 +15,32 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
-	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 )
 
 // MaskKind is the River job kind that builds the masked variant of an asset (ADR 0036). Do not
-// rename it once jobs of that kind exist.
-const MaskKind = "asset.mask"
+// rename it once jobs of that kind exist. The api role enqueues it with asset.process (ADR 0037).
+const MaskKind = uploads.MaskKind
 
 // MaskTaskKind is the kind of the hand-off task the masker claims (spec/jobs/kinds).
 const MaskTaskKind = "media.mask_faces"
 
-// Failure codes of the masked variant. They are only logged: the asset itself stays ready.
+// Failure codes of the masked variant. They are only logged: the original variant is not affected.
 const (
 	// FailureMasking: the masker reported a final failure, or its result did not follow the contract.
 	FailureMasking = "masking_failed"
 	// FailureMaskTimeout: the masker did not finish within CIPHERFRAME_WORKER_MASK_TIMEOUT.
 	FailureMaskTimeout = "masking_timeout"
+	// FailureMaskAssetGone: the asset failed or was deleted before its original variant was ready.
+	FailureMaskAssetGone = "masking_asset_unavailable"
 )
 
 // MaskArgs are the arguments of the asset.mask job: identifiers only.
-type MaskArgs struct {
-	TenantID id.TenantID `json:"tenant_id"`
-	AssetID  id.AssetID  `json:"asset_id"`
-}
-
-// Kind implements jobs.Args.
-func (MaskArgs) Kind() string { return MaskKind }
+type MaskArgs = uploads.MaskArgs
 
 // Names inside the job directory that the masker task refers to.
 const (
@@ -88,9 +84,9 @@ func (p *Processor) HandleMask(ctx context.Context, job jobs.Job[MaskArgs]) erro
 	switch {
 	case !asset.MaskFaces:
 		return jobs.Cancel(errs.New(errs.Conflict, "the asset was not created with mask_faces"))
-	case asset.State != db.AssetReady:
-		log.InfoContext(ctx, "nothing to do: the asset is not ready", slog.String("state", string(asset.State)))
-		return nil
+	case asset.State == db.AssetFailed || asset.State == db.AssetDeleted:
+		log.InfoContext(ctx, "nothing to do: the asset is gone", slog.String("state", string(asset.State)))
+		return p.failMasking(ctx, asset, log)
 	case asset.MaskingState == db.MaskingReady:
 		log.InfoContext(ctx, "nothing to do: the masked variant is already published")
 		return nil
@@ -105,7 +101,8 @@ func (p *Processor) HandleMask(ctx context.Context, job jobs.Job[MaskArgs]) erro
 	return p.handleMaskFailure(ctx, job, asset, err, log)
 }
 
-// mask runs every step for an asset whose original variant is ready.
+// mask runs every step for an asset. It starts as soon as the upload is committed, in parallel
+// with asset.process, and publishes only once the original variant is ready (ADR 0037).
 func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) error {
 	// A retry starts clean: whatever an earlier attempt uploaded or registered for the masked
 	// variant is removed first. The original variant and the manifest are not touched.
@@ -122,7 +119,8 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	// 1. The source, hashed in the same pass. The source object is still there: nothing deletes
-	// it when asset.process completes, and the hash must be the one recorded at that time.
+	// it when asset.process completes. The size is checked now; the hash is checked against the
+	// one asset.process records (RecordSource) once the asset is ready, before anything is published.
 	if asset.SourceKey == "" {
 		return permanent(FailureSourceMissing, errors.New("the asset has no source object"))
 	}
@@ -133,8 +131,8 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 		return permanent(FailureSourceMissing, err)
 	case err != nil:
 		return err
-	case storedSize != asset.SizeBytes || src.Size != asset.SourceSizeBytes || !bytes.Equal(src.SHA256[:], asset.SourceSHA256):
-		return permanent(FailureSourceMismatch, errors.New("the stored source is not the one that was processed"))
+	case storedSize != asset.SizeBytes || src.Size != asset.SizeBytes:
+		return permanent(FailureSourceMismatch, errors.New("the stored source is not the size that was declared"))
 	}
 
 	// 2. Hand the file to the masker and wait.
@@ -149,7 +147,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	if err != nil {
 		return classifyMedia(err)
 	}
-	renditions := media.Ladder(info)
+	renditions := media.Ladder(info, p.LadderHeights)
 	if len(renditions) == 0 {
 		return permanent(FailureInvalidMedia, errors.New("no renditions can be made from the masked file"))
 	}
@@ -166,7 +164,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 		return fmt.Errorf("pipeline: create the output directory: %w", err)
 	}
 	spec := media.TranscodeSpec{Source: maskedPath, OutDir: outDir, Info: info, Renditions: renditions}
-	if err := p.transcode(ctx, asset, spec, log); err != nil {
+	if err := p.transcode(ctx, asset, spec, false, log); err != nil {
 		return err
 	}
 	_ = os.Remove(maskedPath) // plaintext no longer needed on disk
@@ -180,6 +178,15 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	}
 	if err := media.CheckAligned(outs, alignTolerance); err != nil {
 		return permanent(FailureTranscode, err)
+	}
+	// Nothing is published before the original is: the manifest to re-sign needs it, and an asset
+	// that failed or was deleted meanwhile gets no masked output.
+	ready, err := p.waitReady(ctx, asset, log)
+	if err != nil {
+		return err
+	}
+	if src.Size != ready.SourceSizeBytes || !bytes.Equal(src.SHA256[:], ready.SourceSHA256) {
+		return permanent(FailureSourceMismatch, errors.New("the stored source is not the one that was processed"))
 	}
 	pub, err := p.publish(ctx, asset, keys.Masked, key, outs, info, log)
 	if err != nil {
@@ -204,6 +211,43 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 		return p.cleanVariant(context.WithoutCancel(ctx), asset, keys.Masked)
 	}
 	return err
+}
+
+// waitReady polls (every MaskPoll, for at most MaskTimeout) until the asset's original variant is
+// ready and returns the asset then. An asset that failed or was deleted meanwhile ends the job.
+func (p *Processor) waitReady(ctx context.Context, asset db.Asset, log *slog.Logger) (db.Asset, error) {
+	wctx, cancel := context.WithTimeout(ctx, p.MaskTimeout)
+	defer cancel()
+	tick := time.NewTicker(p.MaskPoll)
+	defer tick.Stop()
+	logged := false
+	for {
+		cur, err := p.Repo.GetAsset(wctx, asset.TenantID, asset.ID)
+		switch {
+		case wctx.Err() != nil:
+		case isCode(err, errs.NotFound):
+			return db.Asset{}, permanent(FailureMaskAssetGone, err)
+		case err != nil:
+			return db.Asset{}, err
+		case cur.State == db.AssetReady:
+			return cur, nil
+		case cur.State == db.AssetFailed || cur.State == db.AssetDeleted:
+			return db.Asset{}, permanent(FailureMaskAssetGone, fmt.Errorf("the asset is %s", cur.State))
+		default:
+			if !logged {
+				log.InfoContext(ctx, "masked output is ready; waiting for the original", slog.String("state", string(cur.State)))
+				logged = true
+			}
+		}
+		select {
+		case <-wctx.Done():
+			if ctx.Err() != nil {
+				return db.Asset{}, ctx.Err()
+			}
+			return db.Asset{}, permanent(FailureMaskTimeout, errors.New("the original did not become ready in time"))
+		case <-tick.C:
+		}
+	}
 }
 
 // runMasker creates the hand-off task for the files in the job directory and waits for its
@@ -316,7 +360,7 @@ func (p *Processor) failMasking(ctx context.Context, asset db.Asset, log *slog.L
 	if err := p.cleanVariant(ctx, asset, keys.Masked); err != nil {
 		log.WarnContext(ctx, "could not remove partial masked output", slog.String("error", err.Error()))
 	}
-	if err := p.Repo.SetMasking(ctx, asset.TenantID, asset.ID, db.MaskingFailed, nil, p.Now().UTC()); err != nil {
+	if err := p.Repo.SetMasking(ctx, asset.TenantID, asset.ID, db.MaskingFailed, nil, p.Now().UTC()); err != nil && !isCode(err, errs.NotFound) {
 		log.ErrorContext(ctx, "could not record the masking failure", slog.String("error", err.Error()))
 		return err
 	}

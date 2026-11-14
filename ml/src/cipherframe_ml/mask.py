@@ -74,7 +74,7 @@ def _ffmpeg_cmd(ffmpeg: str, src: Path, dst: Path, w: int, h: int, fps: float) -
         "-i", "pipe:0",
         "-i", f"file:{src}",
         "-map", "0:v:0", "-map", "1:a?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         "-movflags", "+faststart", "-f", "mp4", f"file:{dst}",
     ]  # fmt: skip
