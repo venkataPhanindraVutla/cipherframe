@@ -81,7 +81,8 @@ RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-comp
 
 # ---------------------------------------------------------------------------------------------
 # The shipped FFmpeg: only what ADR 0024 lists.
-#   input   protocols file,pipe; demuxers mov (MP4/MOV), matroska (MKV/WebM)
+#   input   protocols file,pipe; demuxers mov (MP4/MOV), matroska (MKV/WebM), rawvideo (the face masker
+#           pipes raw frames in, ADR 0036)
 #   decode  h264 hevc vp8 vp9 libdav1d(av1) aac opus mp3 (+ parsers)
 #   encode  libx264, aac
 #   output  muxers mp4 and hls (fMP4 segments); null (decode checks and tests)
@@ -103,8 +104,8 @@ RUN ./configure \
         --disable-ffplay --disable-avdevice \
         --enable-gpl --enable-libx264 --enable-libdav1d \
         --enable-protocol=file,pipe \
-        --enable-demuxer=mov,matroska \
-        --enable-decoder=h264,hevc,vp8,vp9,libdav1d,aac,opus,mp3,mp3float \
+        --enable-demuxer=mov,matroska,rawvideo \
+        --enable-decoder=h264,hevc,vp8,vp9,libdav1d,aac,opus,mp3,mp3float,rawvideo \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
         --enable-encoder=libx264,aac \
         --enable-muxer=mp4,hls,null \
