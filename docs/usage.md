@@ -17,6 +17,15 @@
 
 The `cipherframe` CLI (M8-1) covers each step.
 
+## Verifying files offline
+
+`cipherframe verify` checks downloaded HLS files against a signed manifest with public keys only
+(ADR 0039, [integrity.md](integrity.md#verifying)). Build it with `CGO_ENABLED=0 go build -o cipherframe ./cmd/cipherframe`.
+
+```sh
+cipherframe verify --manifest manifest.json --keys keys.json ./download/   # exit 0 ours, 1 modified, 2 cannot say
+```
+
 ## Running the server
 
 `cipherframe-server` is one binary with three roles (ADR 0008). Choose the roles with `--role`, a

@@ -3,7 +3,7 @@
 > Status: the primitives described under "Construction", the signed manifest written by the
 > pipeline (see "Manifest format") and the API that serves manifests and proofs and answers
 > "is this ours?" (see "Serving manifests and proofs") are implemented (ADR 0033, 0039, gate P9).
-> The offline verifier follows in M5-4. Timestamp authority recommendations remain pending gate P10.
+> The offline verifier and `cipherframe verify` (M5-4) are implemented. Timestamp authority recommendations remain pending gate P10.
 
 ## Integrity manifests
 
@@ -263,9 +263,61 @@ signed record. It is off by default; records without a timestamp are reported as
 
 ## Verifying
 
-The verifier needs **public keys only**. Its three outcomes are: "ours", "modified version of ours",
-and "cannot say". Network, permission and timeout errors are reported as such, never as "tampered" or
-"missing".
+The verifier needs **public keys only**: the manifest envelope (`GET /v1/assets/{id}/manifest`, or a
+copy stored next to the files) and the published key set. It never calls Cipherframe, except for the
+optional `--keys-url` fetch of the key set. The library is `internal/integrity/verify/offline`; the
+tool is the static binary `cipherframe` (`CGO_ENABLED=0 go build ./cmd/cipherframe`).
+
+```sh
+# Every file under an HLS download that the manifest lists (paths are relative to that directory).
+cipherframe verify --manifest manifest.json --keys keys.json ./download/
+# The face-masked variant: its own directory, its own section of the manifest.
+cipherframe verify --manifest manifest.json --keys keys.json --variant masked ./download-masked/
+# One file, named by its manifest path, with the key set fetched over https.
+cipherframe verify --manifest manifest.json --keys-url https://cipherframe.example/.well-known/cipherframe-keys.json \
+  --path 720p/seg-0.m4s seg-0.m4s
+# One file with an inclusion proof (GET /v1/assets/{id}/proof?path=...): the audit paths are checked
+# up to the signed rendition and top-level roots.
+cipherframe verify --manifest manifest.json --keys keys.json --proof proof.json seg-0.m4s
+```
+
+Output is one line per file, then a summary; `--json` prints the same as JSON:
+
+```
+ours        master.m3u8  (verified)
+modified    720p/seg-1.m4s  (modified: sha256 9f..., the signed manifest records 3c...)
+missing     480p/init.mp4  (missing)
+9 ours, 1 modified, 0 cannot say, 1 missing
+```
+
+A file argument without `--path` is matched by its path relative to `--root` (default: as given;
+an absolute path without `--root` uses its base name). A directory argument checks every file under
+it that the manifest lists; manifest entries with no file are reported as `missing` (not modified,
+and they make the exit code 2). Files in the directory that the manifest does not list are ignored.
+
+**Exit codes:** 0 every file is ours; 1 at least one file is modified; 2 at least one cannot say or
+is missing, and none modified; 3 usage error.
+
+**Outcomes.** The five internal outcomes above, plus the precise reason, map onto three public ones:
+
+| Public outcome | Reason shown | When |
+| --- | --- | --- |
+| ours | `verified` | The signature verified under a trusted key and the file's SHA-256 is the one the manifest records for the path (with `--proof`, also under the signed roots). |
+| modified | `modified` | The signature verified under a trusted key, the path is in the manifest, and the file's hash differs: "a modified version of ours". |
+| cannot say | `untrusted-key` | No signature is from a key in the key set. |
+| cannot say | `tampered-envelope` | A trusted key id's signature does not verify. The envelope was altered or forged; that says nothing about the file, so it is never "modified". |
+| cannot say | `malformed` | The envelope, key set, manifest or proof is not a valid document, or the proof does not belong to the manifest or its audit path is wrong. |
+| cannot say | `unknown-path`, `no-variant` | The manifest has no such path, or no masked section. |
+| cannot say | `cannot-say` | Anything else: an unreadable file, a failed or oversized `--keys-url` fetch. |
+
+The signature is checked first, always. "Modified" is only ever claimed on the strength of a valid
+signature by a trusted key. Active and retired keys are both trusted, so a record signed before a
+rotation still verifies against the current published set; keys with another status or algorithm
+are ignored. `--keys-url` must be https (plain http only for localhost), allows one GET with a
+10-second timeout and 1 MiB, and is the only network access.
+
+Not checked: file sizes (a matching SHA-256 makes them redundant), timestamps (M5-5), and whether
+a key set you fetched is the genuine one: pass a key set you obtained out of band when that matters.
 
 ## What this does not protect against
 
