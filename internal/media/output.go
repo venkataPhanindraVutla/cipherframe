@@ -96,6 +96,45 @@ func ReadRenditionOutput(dir string, r Rendition) (RenditionOutput, error) {
 			return out, errors.New("media: a segment file is not in the rendition playlist")
 		}
 	}
+	return mergeShortTail(out)
+}
+
+// MinFinalSegment is the shortest final segment kept. A shorter tail (a frame or two left over when
+// the audio runs past the video, say) is merged into the segment before it: players such as hls.js
+// can stall before such a segment and never reach the end.
+const MinFinalSegment = time.Second
+
+// mergeShortTail appends the last segment's bytes to the one before it and drops it from out, when
+// there are at least two segments and the last is shorter than MinFinalSegment. fMP4 media segments
+// are moof+mdat sequences, so concatenation is lossless. Every rendition is cut on the same frames,
+// so each makes the same decision and segment numbering stays aligned.
+func mergeShortTail(out RenditionOutput) (RenditionOutput, error) {
+	n := len(out.Segments)
+	if n < 2 || out.Segments[n-1].Duration >= MinFinalSegment {
+		return out, nil
+	}
+	last, prev := out.Segments[n-1], out.Segments[n-2]
+	tail, err := os.ReadFile(last.Path) //nolint:gosec // a file FFmpeg wrote in the job's private directory
+	if err != nil {
+		return out, fmt.Errorf("media: read the final segment: %w", err)
+	}
+	f, err := os.OpenFile(prev.Path, os.O_WRONLY|os.O_APPEND, 0) //nolint:gosec // as above
+	if err != nil {
+		return out, fmt.Errorf("media: open the previous segment: %w", err)
+	}
+	if _, err := f.Write(tail); err != nil {
+		_ = f.Close()
+		return out, fmt.Errorf("media: merge the final segment: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return out, fmt.Errorf("media: merge the final segment: %w", err)
+	}
+	if err := os.Remove(last.Path); err != nil {
+		return out, fmt.Errorf("media: remove the merged segment: %w", err)
+	}
+	out.Segments = slices.Clone(out.Segments[:n-1])
+	out.Segments[n-2].Duration += last.Duration
+	out.Segments[n-2].Size += last.Size
 	return out, nil
 }
 

@@ -812,3 +812,72 @@ func TestPipelineSmallSilentSource(t *testing.T) {
 		t.Errorf("master playlist:\n%s", master)
 	}
 }
+
+// A source whose audio runs past its last video frame must not end in a one-frame segment (hls.js
+// stalls before it) and must not be longer than its video: the tail is merged into the previous
+// segment, and the audio is cut at the last video frame.
+func TestPipelineAudioLongerThanVideo(t *testing.T) {
+	r := newRig(t)
+	src := generate(t, testmedia.Spec{
+		Name: "long-audio.mp4", Width: 640, Height: 360, Duration: 12040 * time.Millisecond,
+		FPS: 30, FrameRate: "30000/1001", Audio: true, AudioExtra: 100 * time.Millisecond,
+	})
+	asset, _ := r.commit(src)
+	if err := r.process(asset); err != nil {
+		t.Fatalf("asset.process: %v\n%s", err, r.logs.String())
+	}
+	a, err := r.repos.GetAsset(context.Background(), asset.TenantID, asset.ID)
+	if err != nil || a.State != db.AssetReady {
+		t.Fatalf("asset: %v, %v", a.State, err)
+	}
+	key := r.key(a)
+	defer clear(key)
+	videoDur := probeStreamDuration(t, r.tools, src, "video")
+	for _, s := range summaryOf(t, a) {
+		name, _ := keys.ParseRendition(s.Name)
+		pl := parsePlaylist(t, string(r.get(r.buckets.Delivery, keys.Playlist(a.TenantID, a.ID, name))))
+		var total float64
+		for i, d := range pl.durs {
+			total += d
+			if d < 1 {
+				t.Errorf("%s: segment %d is %.3f s", s.Name, i, d)
+			}
+		}
+		if math.Abs(total-videoDur) > 0.1 {
+			t.Errorf("%s: playlist is %.3f s, video is %.3f s", s.Name, total, videoDur)
+		}
+		last := len(pl.segments) - 1
+		file := r.segmentFile(a, s.Name, last, key, pl.ivs[last], false)
+		ps, err := probePackets(t, r.tools, file)
+		if err != nil {
+			t.Fatalf("%s: last segment is not valid fMP4: %v", s.Name, err)
+		}
+		var endV, endA float64
+		for _, p := range ps {
+			if p.Type == "video" {
+				endV = max(endV, p.PTS+1.0/29.97)
+			} else {
+				endA = max(endA, p.PTS+1024.0/48000)
+			}
+		}
+		if endA > endV+1024.0/48000+0.001 {
+			t.Errorf("%s: audio ends at %.3f s, video at %.3f s", s.Name, endA, endV)
+		}
+	}
+}
+
+// probeStreamDuration is a stream's duration in seconds, from the worker's ffprobe.
+func probeStreamDuration(t *testing.T, tools media.Tools, file, typ string) float64 {
+	t.Helper()
+	ps, err := probePackets(t, tools, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var end float64
+	for _, p := range ps {
+		if p.Type == typ {
+			end = max(end, p.PTS)
+		}
+	}
+	return end + 1.0/29.97
+}

@@ -61,6 +61,8 @@ type VideoStream struct {
 	// FrameRate is frames per second, 0 when unknown.
 	FrameRate   float64
 	PixelFormat string
+	// Duration is the stream's own duration, zero when FFprobe could not tell.
+	Duration time.Duration
 }
 
 // AudioStream describes the chosen audio stream.
@@ -193,6 +195,7 @@ func videoStream(s *probeStream) (*VideoStream, error) {
 		Height:      s.Height,
 		PixelFormat: s.PixFmt,
 		FrameRate:   parseRate(s.AvgFrameRate),
+		Duration:    parseDuration(s.Duration),
 	}
 	if v.FrameRate == 0 {
 		v.FrameRate = parseRate(s.RFrameRate)
