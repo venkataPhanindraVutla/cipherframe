@@ -14,12 +14,12 @@ WHERE tenant_id = $1 AND id = $2;
 -- The client must belong to the tenant; otherwise no row is inserted.
 INSERT INTO assets (
     id, tenant_id, created_by_client_id, state, size_bytes, content_type, upload_method,
-    source_key, s3_upload_id, upload_expires_at, mask_faces
+    source_key, s3_upload_id, upload_expires_at, mask_faces, expires_at
 )
 SELECT sqlc.arg(id)::uuid, c.tenant_id, c.id, 'created', sqlc.arg(size_bytes)::bigint,
        sqlc.narg(content_type)::text, sqlc.arg(upload_method)::text, sqlc.arg(source_key)::text,
        sqlc.narg(s3_upload_id)::text, sqlc.arg(upload_expires_at)::timestamptz,
-       sqlc.arg(mask_faces)::boolean
+       sqlc.arg(mask_faces)::boolean, sqlc.narg(expires_at)::timestamptz
 FROM clients c
 WHERE c.id = sqlc.arg(client_id)::uuid AND c.tenant_id = sqlc.arg(tenant_id)::uuid
 RETURNING *;
@@ -172,3 +172,20 @@ WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND id = sqlc.arg(id)::uuid
   AND state = 'deleting'
 RETURNING *;
+
+-- name: SetAssetExpiry :one
+-- Sets (or, with a NULL, clears) the time the retention job deletes the asset. An asset that is
+-- being deleted or is deleted no longer takes a new expiry.
+UPDATE assets SET expires_at = sqlc.narg(expires_at)::timestamptz, updated_at = sqlc.arg(at)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state NOT IN ('deleting', 'deleted')
+RETURNING *;
+
+-- name: ListExpiredAssets :many
+-- Assets whose time-to-live ran out and that nobody is deleting yet, the earliest first.
+SELECT * FROM assets
+WHERE expires_at IS NOT NULL AND expires_at <= sqlc.arg(now)::timestamptz
+  AND state NOT IN ('deleting', 'deleted')
+ORDER BY expires_at, id
+LIMIT sqlc.arg(max_rows)::integer;

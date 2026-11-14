@@ -442,6 +442,47 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateAsset
+      summary: Set or clear an asset's time-to-live
+      description: |
+        Changes when the retention job deletes the asset (M6-4, ADR 0040). Send exactly one of
+        `expires_at` (an absolute time) and `ttl_seconds` (seconds from now), each between a minute
+        and ten years from now, or set either to `null` to clear the expiry so the asset is kept
+        until deleted. Any other body is `invalid_request`. An asset that is being deleted is
+        `409 conflict`; a deleted one, and another tenant's, `404 not_found`. Requires the
+        `assets:write` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAssetRequest"
+      responses:
+        "200":
+          description: The asset with its new expiry.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/assets/{asset_id}/commit:
     post:
       operationId: commitAsset
@@ -2652,6 +2693,41 @@ components:
             Also make a variant of this asset with every detected face blurred (ADR 0036). It is
             built after the asset is `ready`; see `masking` on the asset. Chosen at creation and
             not changeable afterwards.
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            Delete the asset (and everything stored for it) at this time (M6-4, ADR 0040). It must be
+            between a minute and ten years from now. Give `expires_at` or `ttl_seconds`, not both.
+            Without either, the tenant's default time-to-live applies (`asset_ttl_seconds` in the
+            privacy settings), and without one the asset is kept until deleted.
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 315360000
+          description: |
+            The same as `expires_at`, as a number of seconds from now (60 to 315360000, ten years).
+    UpdateAssetRequest:
+      description: |
+        A change of the asset's time-to-live: exactly one member, `expires_at` (a date-time or
+        `null`) or `ttl_seconds` (an integer or `null`). `null` clears the expiry. The generated
+        server reads the members raw, so that `null` can be told apart from a missing member.
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      maxProperties: 1
+      x-go-type: map[string]rawjson.RawMessage
+      x-go-type-import:
+        name: rawjson
+        path: encoding/json
+      properties:
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+        ttl_seconds:
+          type: [integer, "null"]
+          minimum: 60
+          maximum: 315360000
     Variant:
       type: string
       enum: [original, masked]
@@ -2723,6 +2799,12 @@ components:
         failure_code:
           type: string
           description: Why the asset failed, for example `upload_aborted`. A stable lower_snake_case code.
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            When the retention job deletes the asset. Absent when the asset is kept until deleted
+            (the default). Set at creation or with `PATCH /v1/assets/{asset_id}`.
         deletion:
           allOf:
             - $ref: "#/components/schemas/Deletion"
@@ -2931,7 +3013,7 @@ components:
           description: Present when there are older events. Pass it as `cursor`.
     PrivacySettings:
       description: |
-        A tenant's effective privacy settings. Gate P11 sets the final defaults and adds fields.
+        A tenant's effective privacy settings (ADR 0040).
       type: object
       additionalProperties: false
       required: [store_ip, store_user_agent]
@@ -2943,6 +3025,15 @@ components:
         store_user_agent:
           type: boolean
           description: Keep the viewer's `User-Agent` (cut to 256 characters) in the access trail. Default `false`.
+        asset_ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 315360000
+          description: |
+            The tenant's default time-to-live: assets created from now on are deleted this many
+            seconds after creation unless the request for the asset says otherwise (M6-4, ADR 0040).
+            Absent (the default) means assets are kept until deleted. Assets that already exist keep
+            the expiry they were created with.
         updated_at:
           type: string
           format: date-time
@@ -2958,6 +3049,11 @@ components:
           type: boolean
         store_user_agent:
           type: boolean
+        asset_ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 315360000
+          description: The default time-to-live for new assets; leave it out for none. A replacement like the rest.
     SessionId:
       type: string
       pattern: "^ses_[0-9a-hjkmnp-tv-z]{52}$"

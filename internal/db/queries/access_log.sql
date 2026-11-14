@@ -36,7 +36,7 @@ LIMIT sqlc.arg(max_rows)::integer;
 SELECT playback_access_log_ensure_partition(sqlc.arg(month)::date)::boolean;
 
 -- name: DropAccessLogPartitionsBefore :many
--- Not called by the service yet (retention is M6-4); see the function's comment.
+-- Retention (M6-4): whole monthly partitions that lie entirely before the cutoff.
 SELECT playback_access_log_drop_partitions_before(sqlc.arg(before)::date)::text;
 
 -- name: SessionViewers :many
@@ -48,8 +48,19 @@ SELECT id_hash, viewer_id, auth_method FROM playback_sessions WHERE id_hash = AN
 SELECT * FROM privacy_settings WHERE tenant_id = $1;
 
 -- name: UpsertPrivacySettings :one
-INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, updated_at)
-VALUES (sqlc.arg(tenant_id)::uuid, sqlc.arg(store_ip)::boolean, sqlc.arg(store_user_agent)::boolean, sqlc.arg(at)::timestamptz)
+INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, asset_ttl_seconds, updated_at)
+VALUES (sqlc.arg(tenant_id)::uuid, sqlc.arg(store_ip)::boolean, sqlc.arg(store_user_agent)::boolean,
+        sqlc.narg(asset_ttl_seconds)::integer, sqlc.arg(at)::timestamptz)
 ON CONFLICT (tenant_id) DO UPDATE SET
-    store_ip = EXCLUDED.store_ip, store_user_agent = EXCLUDED.store_user_agent, updated_at = EXCLUDED.updated_at
+    store_ip = EXCLUDED.store_ip, store_user_agent = EXCLUDED.store_user_agent,
+    asset_ttl_seconds = EXCLUDED.asset_ttl_seconds, updated_at = EXCLUDED.updated_at
 RETURNING *;
+
+-- name: DeleteAccessLogBefore :execrows
+-- Retention (M6-4): one bounded batch of rows older than the cutoff, in the partitions that were
+-- not dropped whole (the one the cutoff falls in). The id comes from one sequence, so it picks
+-- exactly the rows chosen.
+DELETE FROM playback_access_log
+WHERE id IN (
+    SELECT l.id FROM playback_access_log l WHERE l.at < sqlc.arg(cutoff)::timestamptz ORDER BY l.at LIMIT sqlc.arg(batch)::integer
+);

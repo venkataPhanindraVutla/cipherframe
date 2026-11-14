@@ -237,7 +237,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		services = append(services, workerService{w: w})
+		ret, err := newRetention(pool, cfg, log)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		services = append(services, workerService{w: w}, ret)
 	}
 
 	log.InfoContext(ctx, "serving", slog.Any("roles", opts.Roles))

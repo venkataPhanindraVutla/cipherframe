@@ -341,8 +341,8 @@ func (r *Repos) EnsureAccessLogPartitions(ctx context.Context, now time.Time, ah
 // DropAccessLogPartitionsBefore drops every monthly partition whose whole range ends at or before
 // the UTC date of before, and returns the names it dropped. It refuses a date in the future.
 //
-// NOTHING CALLS THIS YET. Access-log retention is M6-4 and its default is gate P11. M6 will call it
-// from a scheduled job with the retention cutoff; until then no partition is ever dropped.
+// The retention job (package retention) calls it with the retention cutoff. The SQL function is
+// SECURITY DEFINER, so it works from any role the service connects as.
 func (r *Repos) DropAccessLogPartitionsBefore(ctx context.Context, before time.Time) ([]string, error) {
 	names, err := r.q.DropAccessLogPartitionsBefore(ctx, pgtype.Date{Time: firstOfDay(before), Valid: true})
 	if err != nil {
@@ -361,15 +361,18 @@ func firstOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// PrivacySettings are a tenant's privacy choices (gate P11 will set the final defaults and add
-// fields). A tenant without a stored row uses DefaultPrivacySettings: everything off. UpdatedAt is
-// the zero time for the defaults.
+// PrivacySettings are a tenant's privacy choices (ADR 0040). A tenant without a stored row uses
+// DefaultPrivacySettings: everything off and no default time-to-live. UpdatedAt is the zero time
+// for the defaults.
 type PrivacySettings struct {
 	// StoreIP keeps the viewer's IP address (the connecting peer address) in the access trail.
 	StoreIP bool
 	// StoreUserAgent keeps the viewer's User-Agent header, cut to 256 characters.
 	StoreUserAgent bool
-	UpdatedAt      time.Time
+	// AssetTTLSeconds is the tenant's default time-to-live for assets created from now on
+	// (M6-4); nil means assets are kept until deleted.
+	AssetTTLSeconds *int
+	UpdatedAt       time.Time
 }
 
 // DefaultPrivacySettings returns the most private choices.
@@ -388,7 +391,16 @@ func (r *Repos) GetPrivacySettings(ctx context.Context, tenantID id.TenantID) (P
 	if err != nil {
 		return PrivacySettings{}, mapError(err)
 	}
-	return PrivacySettings{StoreIP: row.StoreIp, StoreUserAgent: row.StoreUserAgent, UpdatedAt: row.UpdatedAt.UTC()}, nil
+	return privacyFromRow(row), nil
+}
+
+func privacyFromRow(row dbgen.PrivacySetting) PrivacySettings {
+	out := PrivacySettings{StoreIP: row.StoreIp, StoreUserAgent: row.StoreUserAgent, UpdatedAt: row.UpdatedAt.UTC()}
+	if row.AssetTtlSeconds != nil {
+		n := int(*row.AssetTtlSeconds)
+		out.AssetTTLSeconds = &n
+	}
+	return out
 }
 
 // PutPrivacySettings replaces the tenant's privacy settings.
@@ -397,11 +409,29 @@ func (r *Repos) PutPrivacySettings(ctx context.Context, tenantID id.TenantID, s 
 	if err != nil {
 		return PrivacySettings{}, err
 	}
+	var ttl *int32
+	if s.AssetTTLSeconds != nil {
+		if *s.AssetTTLSeconds < MinAssetTTLSeconds || *s.AssetTTLSeconds > MaxAssetTTLSeconds {
+			return PrivacySettings{}, errs.New(errs.InvalidRequest, "invalid asset time-to-live")
+		}
+		n := int32(*s.AssetTTLSeconds) //nolint:gosec // range checked above
+		ttl = &n
+	}
 	row, err := r.q.UpsertPrivacySettings(ctx, dbgen.UpsertPrivacySettingsParams{
-		TenantID: tid, StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent, At: at,
+		TenantID: tid, StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent, AssetTtlSeconds: ttl, At: at,
 	})
 	if err != nil {
 		return PrivacySettings{}, mapError(err)
 	}
-	return PrivacySettings{StoreIP: row.StoreIp, StoreUserAgent: row.StoreUserAgent, UpdatedAt: row.UpdatedAt.UTC()}, nil
+	return privacyFromRow(row), nil
+}
+
+// DeleteAccessLogBefore deletes up to batch rows of the access trail older than cutoff and returns
+// how many it deleted. Call it until it returns less than batch.
+func (r *Repos) DeleteAccessLogBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error) {
+	if batch < 1 {
+		return 0, errs.New(errs.InvalidRequest, "invalid batch size")
+	}
+	n, err := r.q.DeleteAccessLogBefore(ctx, dbgen.DeleteAccessLogBeforeParams{Cutoff: cutoff.UTC(), Batch: int32(batch)}) //nolint:gosec // bounded by the caller
+	return n, mapError(err)
 }

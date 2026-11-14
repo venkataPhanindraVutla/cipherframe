@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"time"
 
+	rawjson "encoding/json"
+
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -813,8 +815,12 @@ type Asset struct {
 	CreatedAt   time.Time  `json:"created_at"`
 
 	// Deletion Present from `deleting` on.
-	Deletion *Deletion  `json:"deletion,omitempty"`
-	FailedAt *time.Time `json:"failed_at,omitempty"`
+	Deletion *Deletion `json:"deletion,omitempty"`
+
+	// ExpiresAt When the retention job deletes the asset. Absent when the asset is kept until deleted
+	// (the default). Set at creation or with `PATCH /v1/assets/{asset_id}`.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	FailedAt  *time.Time `json:"failed_at,omitempty"`
 
 	// FailureCode Why the asset failed, for example `upload_aborted`. A stable lower_snake_case code.
 	FailureCode *string      `json:"failure_code,omitempty"`
@@ -882,13 +888,22 @@ type CreateAssetRequest struct {
 	// ContentType Optional lower-case media type such as `video/mp4`. Stored as object metadata only.
 	ContentType *string `json:"content_type,omitempty"`
 
+	// ExpiresAt Delete the asset (and everything stored for it) at this time (M6-4, ADR 0040). It must be
+	// between a minute and ten years from now. Give `expires_at` or `ttl_seconds`, not both.
+	// Without either, the tenant's default time-to-live applies (`asset_ttl_seconds` in the
+	// privacy settings), and without one the asset is kept until deleted.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+
 	// MaskFaces Also make a variant of this asset with every detected face blurred (ADR 0036). It is
 	// built after the asset is `ready`; see `masking` on the asset. Chosen at creation and
 	// not changeable afterwards.
 	MaskFaces *bool `json:"mask_faces,omitempty"`
 
 	// SizeBytes The exact size of the source in bytes. Edge and commit both enforce it.
-	SizeBytes    int64        `json:"size_bytes"`
+	SizeBytes int64 `json:"size_bytes"`
+
+	// TtlSeconds The same as `expires_at`, as a number of seconds from now (60 to 315360000, ten years).
+	TtlSeconds   *int         `json:"ttl_seconds,omitempty"`
 	UploadMethod UploadMethod `json:"upload_method"`
 }
 
@@ -1406,8 +1421,14 @@ type PlaybackSettingsInputAutoRevoke string
 // the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
 type PlaybackSettingsInputDelivery string
 
-// PrivacySettings A tenant's effective privacy settings. Gate P11 sets the final defaults and adds fields.
+// PrivacySettings A tenant's effective privacy settings (ADR 0040).
 type PrivacySettings struct {
+	// AssetTtlSeconds The tenant's default time-to-live: assets created from now on are deleted this many
+	// seconds after creation unless the request for the asset says otherwise (M6-4, ADR 0040).
+	// Absent (the default) means assets are kept until deleted. Assets that already exist keep
+	// the expiry they were created with.
+	AssetTtlSeconds *int `json:"asset_ttl_seconds,omitempty"`
+
 	// StoreIp Keep the connecting peer's IP address in the access trail. Default `false`.
 	StoreIp bool `json:"store_ip"`
 
@@ -1421,8 +1442,10 @@ type PrivacySettings struct {
 // PrivacySettingsInput Every privacy setting. The schema does not mark the fields `required` so that a missing one
 // can be told apart from `false`: it is `invalid_request` with an `errors` entry naming it.
 type PrivacySettingsInput struct {
-	StoreIp        *bool `json:"store_ip,omitempty"`
-	StoreUserAgent *bool `json:"store_user_agent,omitempty"`
+	// AssetTtlSeconds The default time-to-live for new assets; leave it out for none. A replacement like the rest.
+	AssetTtlSeconds *int  `json:"asset_ttl_seconds,omitempty"`
+	StoreIp         *bool `json:"store_ip,omitempty"`
+	StoreUserAgent  *bool `json:"store_user_agent,omitempty"`
 }
 
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
@@ -1604,6 +1627,11 @@ type SigningKeyList struct {
 type SigningKeySet struct {
 	Keys []PublishedSigningKey `json:"keys"`
 }
+
+// UpdateAssetRequest A change of the asset's time-to-live: exactly one member, `expires_at` (a date-time or
+// `null`) or `ttl_seconds` (an integer or `null`). `null` clears the expiry. The generated
+// server reads the members raw, so that `null` can be told apart from a missing member.
+type UpdateAssetRequest = map[string]rawjson.RawMessage
 
 // UploadInstructions defines model for UploadInstructions.
 type UploadInstructions struct {
@@ -1852,6 +1880,9 @@ type GetPlaybackSessionAccessLogParams struct {
 // CreateAssetJSONRequestBody defines body for CreateAsset for application/json ContentType.
 type CreateAssetJSONRequestBody = CreateAssetRequest
 
+// UpdateAssetJSONRequestBody defines body for UpdateAsset for application/json ContentType.
+type UpdateAssetJSONRequestBody = UpdateAssetRequest
+
 // CreateClientJSONRequestBody defines body for CreateClient for application/json ContentType.
 type CreateClientJSONRequestBody = CreateClientRequest
 
@@ -2092,6 +2123,9 @@ type ServerInterface interface {
 	// GetAsset Get an asset
 	// (GET /v1/assets/{asset_id})
 	GetAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// UpdateAsset Set or clear an asset's time-to-live
+	// (PATCH /v1/assets/{asset_id})
+	UpdateAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
 	// AbortAsset Abort an upload
 	// (POST /v1/assets/{asset_id}/abort)
 	AbortAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
@@ -2347,6 +2381,32 @@ func (siw *ServerInterfaceWrapper) GetAsset(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAsset(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAsset operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAsset(w, r, assetId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3457,6 +3517,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets", wrapper.CreateAsset)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.DeleteAsset)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.GetAsset)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.UpdateAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/access-log", wrapper.GetAssetAccessLog)
@@ -4128,6 +4189,139 @@ type GetAssetdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetAssetdefaultApplicationProblemPlusJSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAssetRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+	Body    *UpdateAssetJSONRequestBody
+}
+
+type UpdateAssetResponseObject interface {
+	VisitUpdateAssetResponse(w http.ResponseWriter) error
+}
+
+type UpdateAsset200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateAsset200JSONResponse struct {
+	Body    Asset
+	Headers UpdateAsset200ResponseHeaders
+}
+
+func (response UpdateAsset200JSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAsset401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAsset401ApplicationProblemPlusJSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAsset403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAsset403ApplicationProblemPlusJSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAsset404ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateAsset404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateAsset404ResponseHeaders
+}
+
+func (response UpdateAsset404ApplicationProblemPlusJSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAsset409ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateAsset409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateAsset409ResponseHeaders
+}
+
+func (response UpdateAsset409ApplicationProblemPlusJSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAssetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateAssetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdateAssetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdateAssetdefaultApplicationProblemPlusJSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -8041,6 +8235,9 @@ type StrictServerInterface interface {
 	// GetAsset Get an asset
 	// (GET /v1/assets/{asset_id})
 	GetAsset(ctx context.Context, request GetAssetRequestObject) (GetAssetResponseObject, error)
+	// UpdateAsset Set or clear an asset's time-to-live
+	// (PATCH /v1/assets/{asset_id})
+	UpdateAsset(ctx context.Context, request UpdateAssetRequestObject) (UpdateAssetResponseObject, error)
 	// AbortAsset Abort an upload
 	// (POST /v1/assets/{asset_id}/abort)
 	AbortAsset(ctx context.Context, request AbortAssetRequestObject) (AbortAssetResponseObject, error)
@@ -8355,6 +8552,39 @@ func (sh *strictHandler) GetAsset(w http.ResponseWriter, r *http.Request, assetI
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetAssetResponseObject); ok {
 		if err := validResponse.VisitGetAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateAsset operation middleware
+func (sh *strictHandler) UpdateAsset(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request UpdateAssetRequestObject
+
+	request.AssetId = assetId
+
+	var body UpdateAssetJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateAsset(ctx, request.(UpdateAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateAssetResponseObject); ok {
+		if err := validResponse.VisitUpdateAssetResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

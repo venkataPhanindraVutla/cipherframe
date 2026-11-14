@@ -14,6 +14,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/retention"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
@@ -23,6 +24,8 @@ const (
 	AuditAssetCreate = "asset.create"
 	AuditAssetCommit = "asset.commit"
 	AuditAssetAbort  = "asset.abort"
+	// AuditAssetRetention is written when an asset's expiry is set, changed or cleared.
+	AuditAssetRetention = "asset.retention"
 )
 
 // FailureUploadAborted is the failure code of an asset whose upload was aborted.
@@ -124,6 +127,10 @@ type CreateInput struct {
 	ContentType string
 	Method      db.UploadMethod
 	MaskFaces   bool // ADR 0036
+	// ExpiresAt or TTLSeconds (not both) set the asset's time-to-live (M6-4). With neither, the
+	// tenant's default applies, and without one the asset is kept until deleted.
+	ExpiresAt  *time.Time
+	TTLSeconds *int
 }
 
 // Instructions tell the caller how to upload. Token is the only place the upload token ever
@@ -154,6 +161,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 	if err := CheckContentType(in.ContentType); err != nil {
 		return Created{}, err
 	}
+	expiry, err := s.expiryFor(ctx, in)
+	if err != nil {
+		return Created{}, err
+	}
 	tok, err := NewToken()
 	if err != nil {
 		return Created{}, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
@@ -175,7 +186,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 		asset, err = r.CreateUploadAsset(ctx, db.NewUploadAsset{
 			ID: assetID, TenantID: in.TenantID, ClientID: in.Actor.ClientID, SizeBytes: in.SizeBytes,
 			ContentType: in.ContentType, Method: in.Method, SourceKey: key, S3UploadID: uploadID, ExpiresAt: expires,
-			MaskFaces: in.MaskFaces,
+			MaskFaces: in.MaskFaces, AssetExpiresAt: expiry,
 		})
 		if err != nil {
 			return err
@@ -192,6 +203,63 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 		return Created{}, err
 	}
 	return Created{Asset: asset, Upload: s.instructions(asset, tok, expires)}, nil
+}
+
+// expiryFor works out when the new asset expires: the request's expires_at or ttl_seconds, else
+// the tenant's default time-to-live, else never.
+func (s *Service) expiryFor(ctx context.Context, in CreateInput) (*time.Time, error) {
+	now := s.now().UTC()
+	exp, err := retention.ResolveExpiry(now, in.ExpiresAt, in.TTLSeconds)
+	if err != nil || exp != nil {
+		return exp, err
+	}
+	set, err := s.repos.GetPrivacySettings(ctx, in.TenantID)
+	if err != nil || set.AssetTTLSeconds == nil {
+		return nil, err
+	}
+	t := now.Add(time.Duration(*set.AssetTTLSeconds) * time.Second).Truncate(time.Microsecond)
+	return &t, nil
+}
+
+// RetentionChange is a change of an asset's expiry: clear it, or set it from an absolute time or a
+// time-to-live counted from now (exactly one of the three).
+type RetentionChange struct {
+	Clear      bool
+	ExpiresAt  *time.Time
+	TTLSeconds *int
+}
+
+// SetRetention changes the expiry of the tenant's asset and returns the asset. A deleted asset is
+// not_found; one that is being deleted is a conflict.
+func (s *Service) SetRetention(ctx context.Context, tenantID id.TenantID, actor Actor, assetID id.AssetID, c RetentionChange) (db.Asset, error) {
+	var exp *time.Time
+	if !c.Clear {
+		var err error
+		if exp, err = retention.ResolveExpiry(s.now().UTC(), c.ExpiresAt, c.TTLSeconds); err != nil {
+			return db.Asset{}, err
+		}
+		if exp == nil {
+			return db.Asset{}, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "expires_at", Message: "give expires_at, ttl_seconds or null"}})
+		}
+	}
+	var out db.Asset
+	err := db.Tx(ctx, s.pool, func(r *db.Repos) error {
+		cur, err := r.LockAsset(ctx, tenantID, assetID)
+		if err != nil {
+			return err
+		}
+		if cur.State == db.AssetDeleted {
+			return errs.New(errs.NotFound, "No such asset.")
+		}
+		if out, err = r.SetAssetExpiry(ctx, tenantID, assetID, exp, s.now().UTC()); err != nil {
+			return err
+		}
+		return s.audit(ctx, r, tenantID, actor, AuditAssetRetention, assetID)
+	})
+	if errors.Is(err, db.ErrStateChanged) {
+		return db.Asset{}, errs.New(errs.Conflict, "The asset is being deleted.")
+	}
+	return out, err
 }
 
 func (s *Service) instructions(a db.Asset, tok Token, expires time.Time) Instructions {

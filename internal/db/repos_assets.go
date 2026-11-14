@@ -34,6 +34,8 @@ type NewUploadAsset struct {
 	S3UploadID  string // empty for tus; set when the multipart upload was already created
 	ExpiresAt   time.Time
 	MaskFaces   bool // ADR 0036
+	// AssetExpiresAt is when the retention job deletes the asset (M6-4); nil means never.
+	AssetExpiresAt *time.Time
 }
 
 // CreateUploadAsset inserts an asset in state created. The client must belong to the tenant,
@@ -49,7 +51,7 @@ func (r *Repos) CreateUploadAsset(ctx context.Context, in NewUploadAsset) (Asset
 	row, err := r.q.CreateUploadAsset(ctx, dbgen.CreateUploadAssetParams{
 		ID: aid, SizeBytes: in.SizeBytes, ContentType: strPtr(in.ContentType), UploadMethod: string(in.Method),
 		SourceKey: in.SourceKey, S3UploadID: strPtr(in.S3UploadID), UploadExpiresAt: in.ExpiresAt, MaskFaces: in.MaskFaces,
-		ClientID: cid, TenantID: tid,
+		ExpiresAt: utcPtr(in.AssetExpiresAt), ClientID: cid, TenantID: tid,
 	})
 	if err != nil {
 		return Asset{}, mapError(err)
@@ -255,4 +257,52 @@ func (r *Repos) DeleteUploadParts(ctx context.Context, assetID id.AssetID) error
 		return err
 	}
 	return mapError(r.q.DeleteUploadParts(ctx, aid))
+}
+
+// Bounds of an asset's time-to-live, in seconds (assets.expires_at is derived from it): a minute,
+// so a typo cannot delete a video at once (DELETE does that on purpose), to ten years.
+const (
+	MinAssetTTLSeconds = 60
+	MaxAssetTTLSeconds = 315360000
+)
+
+// SetAssetExpiry sets, or with a nil expiresAt clears, the time the retention job deletes the
+// tenant's asset, and returns the asset. An unknown asset (or another tenant's) is not_found; one
+// that is deleting or deleted no longer takes an expiry (a conflict whose cause is ErrStateChanged).
+func (r *Repos) SetAssetExpiry(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, expiresAt *time.Time, at time.Time) (Asset, error) {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return Asset{}, err
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	row, err := r.q.SetAssetExpiry(ctx, dbgen.SetAssetExpiryParams{ExpiresAt: utcPtr(expiresAt), At: at, TenantID: tid, ID: aid})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if _, gerr := r.GetAsset(ctx, tenantID, assetID); gerr != nil {
+				return Asset{}, gerr // not_found
+			}
+			return Asset{}, stateConflict()
+		}
+		return Asset{}, mapError(err)
+	}
+	return assetFromRow(row), nil
+}
+
+// ListExpiredAssets returns up to limit assets, across tenants, whose time-to-live ran out at now
+// and that are not being deleted yet, the earliest first. It is the retention job's work list.
+func (r *Repos) ListExpiredAssets(ctx context.Context, now time.Time, limit int) ([]Asset, error) {
+	if limit < 1 || limit > maxPage {
+		return nil, errs.New(errs.InvalidRequest, "invalid page size")
+	}
+	rows, err := r.q.ListExpiredAssets(ctx, dbgen.ListExpiredAssetsParams{Now: now.UTC(), MaxRows: int32(limit)}) //nolint:gosec // bounded by maxPage
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]Asset, len(rows))
+	for i, row := range rows {
+		out[i] = assetFromRow(row)
+	}
+	return out, nil
 }

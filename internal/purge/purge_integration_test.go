@@ -29,6 +29,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/retention"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
@@ -580,5 +581,58 @@ func TestRequestDeletionIsIdempotentAndTenantScoped(t *testing.T) {
 	wantCode(t, err, errs.NotFound)
 	if got, _ := r.repos.GetAsset(ctx, b.TenantID, b.ID); got.State != db.AssetReady {
 		t.Errorf("another tenant changed the asset: %s", got.State)
+	}
+}
+
+// An asset whose time-to-live ran out goes through the same verified purge, with reason retention;
+// one without a time-to-live is left alone.
+func TestRetentionExpiryTriggersVerifiedDeletion(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	s := r.seed(true)
+	a := s.asset
+	kept := r.seed(false).asset
+	var wantKeys []string
+	for _, v := range []keys.Variant{keys.Original, keys.Masked} {
+		k, err := r.repos.GetContentKey(ctx, a.TenantID, a.ID, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantKeys = append(wantKeys, k.ID.String()+"/"+v.String())
+	}
+	past := time.Now().Add(-time.Hour)
+	if _, err := r.repos.SetAssetExpiry(ctx, a.TenantID, a.ID, &past, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	req, err := purge.NewRequester(r.pool, r.queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweeper := &retention.Sweeper{Store: r.repos, Requester: req, AccessLogDays: 90, Log: slog.New(slog.DiscardHandler)}
+	res, err := sweeper.Sweep(ctx)
+	if err != nil || res.ExpiredAssets != 1 {
+		t.Fatalf("sweep = %+v, %v", res, err)
+	}
+	got := mustAsset(r, a)
+	if got.State != db.AssetDeleting || got.DeletionReason != db.DeletionRetention {
+		t.Fatalf("expired asset = %+v", got)
+	}
+	if n := r.count(`SELECT count(*) FROM river_job WHERE kind = 'asset.delete' AND args->>'reason' = 'retention' AND args->>'asset_id' = $1`, a.ID.String()); n != 1 {
+		t.Fatalf("%d retention purge jobs, want 1", n)
+	}
+	if got := mustAsset(r, kept); got.State != db.AssetReady {
+		t.Errorf("an asset without a time-to-live is %s", got.State)
+	}
+	// Running the sweep again queues nothing more; the purge job then does its work.
+	if res, err = sweeper.Sweep(ctx); err != nil || res.ExpiredAssets != 0 {
+		t.Fatalf("second sweep = %+v, %v", res, err)
+	}
+	if err := r.run(r.purger, a, db.DeletionRetention); err != nil {
+		t.Fatal(err)
+	}
+	r.assertNothingStored(a)
+	r.checkRecord(a, s, db.DeletionRetention, wantKeys)
+	if got := mustAsset(r, a); got.State != db.AssetDeleted || got.DeletionReason != db.DeletionRetention {
+		t.Errorf("tombstone = %+v", got)
 	}
 }

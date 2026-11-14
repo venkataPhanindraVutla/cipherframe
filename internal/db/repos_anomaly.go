@@ -306,3 +306,13 @@ func (r *Repos) ListPlaybackEvents(ctx context.Context, tenantID id.TenantID, q 
 	last := out[len(out)-1]
 	return out, &EventCursor{At: last.At, ID: last.ID}, nil
 }
+
+// DeletePlaybackEventsBefore deletes up to batch anomaly events older than cutoff and returns how
+// many it deleted. Call it until it returns less than batch (retention, M6-4).
+func (r *Repos) DeletePlaybackEventsBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error) {
+	if batch < 1 {
+		return 0, errs.New(errs.InvalidRequest, "invalid batch size")
+	}
+	n, err := r.q.DeletePlaybackEventsBefore(ctx, dbgen.DeletePlaybackEventsBeforeParams{Cutoff: cutoff.UTC(), Batch: int32(batch)}) //nolint:gosec // bounded by the caller
+	return n, mapError(err)
+}

@@ -57,6 +57,7 @@ type Asset struct {
 	DeletionRequestedAt *time.Time
 	DeletionReason      *string
 	DeletedAt           *time.Time
+	ExpiresAt           *time.Time
 }
 
 type AssetArtifact struct {
@@ -250,10 +251,11 @@ type PlaybackSetting struct {
 }
 
 type PrivacySetting struct {
-	TenantID       pgtype.UUID
-	StoreIp        bool
-	StoreUserAgent bool
-	UpdatedAt      time.Time
+	TenantID        pgtype.UUID
+	StoreIp         bool
+	StoreUserAgent  bool
+	UpdatedAt       time.Time
+	AssetTtlSeconds *int32
 }
 
 type SigningKey struct {

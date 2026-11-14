@@ -72,6 +72,7 @@ type Config struct {
 	KMS         KMS
 	Media       Media
 	TSA         TSA
+	Retention   Retention
 }
 
 // LogValue implements slog.LogValuer. It shows the effective configuration
@@ -116,6 +117,9 @@ func (c *Config) LogValue() slog.Value {
 			slog.String("versions", versionList(c.Playback.Versions())),
 			slog.Int("current", c.Playback.current),
 			slog.String("values", Redacted),
+		),
+		slog.Group("retention",
+			slog.Int("access_log_days", c.Retention.AccessLogDays),
 		),
 		slog.Group("media",
 			slog.String("ffmpeg_path", c.Media.FFmpegPath),

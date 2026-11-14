@@ -133,8 +133,8 @@ write timeout, a 120 second idle timeout and a 32 KiB header limit. Logs are JSO
 
 **Shutdown.** `SIGINT` or `SIGTERM` stops accepting connections, lets in-flight requests finish for
 up to 25 seconds, then closes the rest and exits. A second signal terminates immediately. The
-`worker` role works the `kms.rewrap` job kind; a job that is running when shutdown starts gets 20
-seconds to finish and is otherwise retried later.
+`worker` role works the `kms.rewrap` and `asset.delete` job kinds (and the media kinds); a job that is
+running when shutdown starts gets 20 seconds to finish and is otherwise retried later.
 
 **Keys on edge.** The `edge` role serves the content key to players (`GET /v1/play/{session_id}/key`, see [api.md](api.md#the-key-endpoint-adr-0027-0028)), so it needs the same key provider settings as the other roles (`CIPHERFRAME_KMS_*`, below) and refuses to start without them. It also needs `CIPHERFRAME_PLAYBACK_TOKEN_KEYS`.
 
@@ -497,6 +497,7 @@ variable, never its value.
 | `CIPHERFRAME_WORKER_MASK_TIMEOUT` | `2h` | no | no | How long an `asset.mask` job waits for the masker to finish one video, and again for the original variant to become `ready` before it publishes, a Go duration above zero and at most `168h`. Past it the asset's masked variant is marked `failed` and the original stays playable. See [Face masking](#face-masking). |
 | `CIPHERFRAME_WORKER_MASK_CONCURRENCY` | `1` | no | no | How many `asset.mask` jobs one **worker** process runs at once, 1 to 64. They run on their own `mask` queue, apart from `media`, so masking never takes a slot from `asset.process` and the two overlap. The masker itself uses several cores, so scale by adding masker and worker replicas. Disk need adds up with the media concurrency. See [Face masking](#face-masking). |
 | `CIPHERFRAME_WORKER_LADDER_HEIGHTS` | all rungs | no | no | Restricts the renditions of both variants to a comma-separated subset of the rung heights `1080,720,480,360,240` (ADR 0024), for example `720,360`. Known heights only, no duplicates. A rung taller than the source is skipped; a source shorter than every selected rung gets one rendition at its own height. Fewer rungs mean a proportionally faster transcode. |
+| `CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS` | `90` | no | no | How many days the access trail (`playback_access_log`) and the anomaly events (`playback_events`) are kept, a whole number from 1 to 3650 (ADR 0040). The **worker** role's retention job drops whole monthly partitions past the window and deletes the older rows of the rest, every five minutes. Assets have no deployment-wide time-to-live: they are kept until deleted unless the request or the tenant's `asset_ttl_seconds` sets one ([api.md](api.md#assets-and-uploads-adr-0025-0026)). |
 | `CIPHERFRAME_WORKER_X264_PRESET` | `medium` | no | no | The libx264 preset of every rendition in both variants (ADR 0038): `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower` or `veryslow`. Faster presets cut transcode time and give lower quality per bit; the bitrate caps of ADR 0024 still apply. Keyframe alignment is unaffected. |
 | `CIPHERFRAME_TSA_URL` | unset (anchoring off) | no | no | Endpoint of an RFC 3161 time-stamping authority (ADR 0041). `https` only; `http` is accepted only when `CIPHERFRAME_ENV=development`, for a local authority. Set on the **worker** role, which runs the `manifest.anchor` job. See [Timestamp anchoring](#timestamp-anchoring-optional). |
 | `CIPHERFRAME_TSA_TIMEOUT` | `10s` | no | no | Go duration for one request to the authority, above zero and at most `2m`. |

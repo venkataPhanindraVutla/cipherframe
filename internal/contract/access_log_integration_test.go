@@ -125,7 +125,23 @@ func TestAccessLogAndPrivacyOperationsMatchSpec(t *testing.T) {
 	if _, has := put["updated_at"]; !has || put["store_ip"] != true || put["store_user_agent"] != false {
 		t.Fatalf("replaced privacy settings = %v", put)
 	}
-	call(admin, "GET", "/v1/privacy-settings", nil, 200)
+	if _, has := put["asset_ttl_seconds"]; has || defaults["asset_ttl_seconds"] != nil {
+		t.Fatalf("a default time-to-live appeared by itself: %v %v", defaults, put)
+	}
+	// The tenant's default time-to-live: set with the rest, validated, and gone again when a later
+	// replacement leaves it out.
+	withTTL := call(admin, "PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": false, "asset_ttl_seconds": 86400}, 200)
+	if withTTL["asset_ttl_seconds"] != float64(86400) {
+		t.Fatalf("privacy settings with a time-to-live = %v", withTTL)
+	}
+	if got := call(admin, "GET", "/v1/privacy-settings", nil, 200); got["asset_ttl_seconds"] != float64(86400) {
+		t.Fatalf("GET after setting a time-to-live = %v", got)
+	}
+	bad("PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": false, "asset_ttl_seconds": 59})
+	bad("PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": false, "asset_ttl_seconds": 315360001})
+	if got := call(admin, "PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": false}, 200); got["asset_ttl_seconds"] != nil {
+		t.Fatalf("a replacement without asset_ttl_seconds kept it: %v", got)
+	}
 	bad("PUT", "/v1/privacy-settings", map[string]any{"store_ip": true})
 	call(reader, "GET", "/v1/privacy-settings", nil, 403)
 	call(reader, "PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": true}, 403)

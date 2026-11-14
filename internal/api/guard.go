@@ -34,6 +34,7 @@ var operationScopes = map[string][]db.Scope{
 	"CommitAsset": {db.ScopeAssetsWrite},
 	"AbortAsset":  {db.ScopeAssetsWrite},
 	"DeleteAsset": {db.ScopeAssetsWrite},
+	"UpdateAsset": {db.ScopeAssetsWrite},
 
 	"CreatePlaybackSession":  {db.ScopeSessionsWrite},
 	"GetPlaybackSession":     {db.ScopeSessionsWrite},
@@ -233,6 +234,10 @@ func (g guarded) GetAsset(w http.ResponseWriter, r *http.Request, assetID gen.As
 
 func (g guarded) CommitAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
 	g.a.run("CommitAsset", w, r, func(r *http.Request) { g.ServerInterface.CommitAsset(w, r, assetID) })
+}
+
+func (g guarded) UpdateAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("UpdateAsset", w, r, func(r *http.Request) { g.ServerInterface.UpdateAsset(w, r, assetID) })
 }
 
 func (g guarded) DeleteAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
