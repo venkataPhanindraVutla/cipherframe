@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cipherframe:spec:jobs:payload:media.mask_faces:1",
+  "title": "media.mask_faces payload",
+  "description": "Payload of a media.mask_faces task (ADR 0036). Both paths are relative to the work directory the Go worker and the masker share (CIPHERFRAME_WORK_DIR). The masker also rejects symlinks that leave the work directory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "description": "Source video, relative to the work directory. No leading slash, no '..' segment, no backslash.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^/\\\\][^\\\\]*$",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    },
+    "output": {
+      "description": "Where the masked video is written (MP4, H.264, source audio copied), relative to the work directory. Same rules as input.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^/\\\\][^\\\\]*$",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    }
+  }
+}

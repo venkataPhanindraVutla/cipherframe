@@ -62,6 +62,11 @@ func TestVectors(t *testing.T) {
 	schemas := map[string]*jsonschema.Schema{
 		"envelope-": envelopeSchema(t),
 		"result-":   resultSchema(t),
+		// Per-kind schemas (ADR 0036), used by the Python masker as well.
+		"payload-mask-faces-": compileSchema(t, "kinds/media.mask_faces.payload.schema.json",
+			"urn:cipherframe:spec:jobs:payload:media.mask_faces:1"),
+		"output-mask-faces-": compileSchema(t, "kinds/media.mask_faces.output.schema.json",
+			"urn:cipherframe:spec:jobs:output:media.mask_faces:1"),
 	}
 	for _, dir := range []string{"valid", "invalid"} {
 		files, err := fs.Glob(specFS, "vectors/"+dir+"/*.json")

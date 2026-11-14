@@ -41,6 +41,10 @@
         }
       }
     },
+    "output": {
+      "description": "Kind-specific output of a succeeded task, such as counts. Its shape is defined per kind (for example kinds/media.mask_faces.output.schema.json). It never holds secrets or object keys.",
+      "type": "object"
+    },
     "artifacts": {
       "description": "Derived artifacts the worker wrote to storage. The Go side registers each one.",
       "type": "array",

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cipherframe:spec:jobs:output:media.mask_faces:1",
+  "title": "media.mask_faces output",
+  "description": "The `output` of a succeeded media.mask_faces result (ADR 0036). The masked file stays in the work directory and is not an artifact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["faces_detected", "frames"],
+  "properties": {
+    "faces_detected": {
+      "description": "Number of frames in which at least one face was detected (held boxes do not count).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "frames": {
+      "description": "Total number of frames written.",
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
