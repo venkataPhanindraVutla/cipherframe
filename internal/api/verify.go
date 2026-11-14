@@ -364,3 +364,52 @@ func (s *server) verifyByHash(ctx context.Context, repos *db.Repos, tenantID id.
 	}
 	return out, nil
 }
+
+// deletionContentType is the media type of the deletion-record endpoint (ADR 0033).
+const deletionContentType = "application/vnd.cipherframe.deletion+json; profile=dsse"
+
+// deletionResponse writes the stored envelope as it is.
+type deletionResponse struct {
+	body      []byte
+	requestID string
+}
+
+func (r deletionResponse) VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", deletionContentType)
+	w.Header().Set("X-Request-Id", r.requestID)
+	w.WriteHeader(http.StatusOK)
+	_, err := w.Write(r.body)
+	return err
+}
+
+// GetAssetDeletionRecord returns the signed deletion record of a deleted asset, as stored. It works
+// after the asset's data is gone: the asset row is the tombstone that scopes it to the tenant.
+func (s *server) GetAssetDeletionRecord(ctx context.Context, req gen.GetAssetDeletionRecordRequestObject) (gen.GetAssetDeletionRecordResponseObject, error) {
+	p, _, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.repos == nil {
+		return nil, errs.New(errs.DependencyUnavailable, "Deletion records are not available.")
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	a, err := s.repos.GetAsset(ctx, p.TenantID, aid)
+	if err != nil {
+		return nil, err
+	}
+	if a.State != db.AssetDeleted {
+		return nil, errs.New(errs.NotDeleted, "The asset has not been deleted.")
+	}
+	rec, err := s.repos.GetDeletionRecord(ctx, p.TenantID, aid)
+	if err != nil {
+		if isNotFound(err) { // a deleted asset always has its record; this would be a bug
+			httpx.Logger(ctx).Error("deleted asset has no deletion record", slog.String("asset_id", aid.String()))
+			return nil, errs.New(errs.InternalError, "An internal error occurred.")
+		}
+		return nil, err
+	}
+	return deletionResponse{body: rec.Envelope, requestID: requestID(ctx)}, nil
+}

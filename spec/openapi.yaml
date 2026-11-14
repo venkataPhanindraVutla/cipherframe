@@ -637,6 +637,49 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/deletion-record:
+    get:
+      operationId: getAssetDeletionRecord
+      summary: Get an asset's signed deletion record
+      description: |
+        Returns the signed record that the asset was deleted (ADR 0033, 0040), as a DSSE envelope with
+        payload type `application/vnd.cipherframe.deletion+json`. It works after the asset is gone:
+        the record outlives everything else of the asset. The payload is the canonical record
+        (`schema` `cipherframe.deletion/v1`) with the asset and tenant IDs, the request and
+        completion times, the `reason` (`requested` or `retention`), the number of objects and bytes
+        deleted per bucket, artifact kind and variant, the destroyed content keys (IDs and variants,
+        never key material), the manifest's top-level root when there was one and the Cipherframe
+        version that ran the purge. Verify it with the published keys
+        (`/.well-known/cipherframe-keys.json`) or with `cipherframe verify --deletion-record`. An
+        asset of another tenant or an unknown one is `404 not_found`; an asset that is not deleted
+        yet (including one that is `deleting`) is `404 not_deleted`. Requires the `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: |
+            The envelope, with `Content-Type: application/vnd.cipherframe.deletion+json;
+            profile=dsse`.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/vnd.cipherframe.deletion+json:
+              schema:
+                $ref: "#/components/schemas/DeletionRecordEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/assets/{asset_id}/proof:
     get:
       operationId: getAssetProof
@@ -3522,6 +3565,7 @@ components:
             - invalid_request
             - method_not_allowed
             - not_anchored
+            - not_deleted
             - not_found
             - payload_too_large
             - rate_limited
@@ -3592,6 +3636,35 @@ components:
         payload:
           type: string
           description: Standard base64 of the canonical manifest.
+        signatures:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [keyid, sig]
+            properties:
+              keyid:
+                type: string
+                description: The `keyid` of a published signing key.
+              sig:
+                type: string
+                description: Standard base64 of the 64-byte Ed25519 signature.
+    DeletionRecordEnvelope:
+      description: |
+        A DSSE v1 envelope (ADR 0033) around a deletion record. `payload` is the base64 of the
+        canonical record JSON; the signed bytes are `PAE(payloadType, payload)`. See
+        `docs/integrity.md` for the record format.
+      type: object
+      additionalProperties: false
+      required: [payloadType, payload, signatures]
+      properties:
+        payloadType:
+          type: string
+          enum: [application/vnd.cipherframe.deletion+json]
+        payload:
+          type: string
+          description: Standard base64 of the canonical deletion record.
         signatures:
           type: array
           minItems: 1

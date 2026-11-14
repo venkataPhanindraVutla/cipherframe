@@ -38,6 +38,9 @@ const (
 	ArtifactNotFound Code = "artifact_not_found"
 	// NotAnchored is a 404 for a timestamp request on a manifest that has no RFC 3161 token (ADR 0041).
 	NotAnchored Code = "not_anchored"
+	// NotDeleted is a 404 for a deletion-record request for an asset that exists but has not been
+	// deleted (yet): there is no record to show (ADR 0042).
+	NotDeleted Code = "not_deleted"
 )
 
 // Info describes a registered code.
@@ -65,6 +68,7 @@ var registry = map[Code]Info{
 	VariantNotReady:       {Status: 409, Title: "Variant not ready"},
 	ArtifactNotFound:      {Status: 404, Title: "Artifact not found"},
 	NotAnchored:           {Status: 404, Title: "Not anchored"},
+	NotDeleted:            {Status: 404, Title: "Asset not deleted"},
 }
 
 // Lookup returns the registry entry for c.

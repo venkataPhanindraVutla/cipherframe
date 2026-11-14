@@ -66,7 +66,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/keys/{key_id}/rotate` | yes | no | `admin`, or the key itself |
 | `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
 | `POST /v1/assets` | yes | no | `assets:write` |
-| `GET /v1/assets`, `GET /v1/assets/{asset_id}` | yes | no | `assets:read` |
+| `GET /v1/assets`, `GET /v1/assets/{asset_id}`, `GET /v1/assets/{asset_id}/deletion-record` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
 | `POST /v1/playback-sessions` | yes | no | `sessions:write` |
 | `GET /v1/playback-sessions/{session_id}` | yes | no | `sessions:write` |
@@ -268,7 +268,10 @@ loudly rather than claim success), and leaves a signed deletion record (see
 [integrity.md](integrity.md#verifiable-deletion)). Poll `GET /v1/assets/{asset_id}`: while the purge
 runs `state` is `deleting` and `deletion` shows `reason` and `requested_at`; when it is done `state`
 is `deleted` and `deletion.completed_at` is set. The row stays as a tombstone, and
-`GET /v1/assets/{asset_id}/deletion-record` returns the record. Deleting is idempotent: repeating the
+`GET /v1/assets/{asset_id}/deletion-record` (`assets:read`) returns the signed deletion record as a
+DSSE envelope (`Content-Type: application/vnd.cipherframe.deletion+json; profile=dsse`), also after
+the asset is gone; before that it is `404 not_deleted`, and another tenant's asset is `404 not_found`.
+Verify it with `cipherframe verify --deletion-record` ([integrity.md](integrity.md#the-deletion-record)). Deleting is idempotent: repeating the
 call returns `202` again, and queues a new purge only if the earlier job is no longer in the queue
 (this is how a deletion that ran out of retries is restarted). An in-flight processing or masking job
 stops at its next check and removes its own output; it cannot bring the asset back.
@@ -1229,6 +1232,7 @@ server-side only.
 | `variant_not_ready` | 409 | no | A session or proof asked for the masked variant (or it is the default) and it is not `ready`. |
 | `artifact_not_found` | 404 | no | A proof was requested for a path that is not an artifact of the asset's signed manifest. |
 | `not_anchored` | 404 | no | The manifest has no RFC 3161 timestamp token (anchoring is off, or the token is still pending). |
+| `not_deleted` | 404 | no | A deletion record was requested for an asset that has not been deleted (yet). |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |

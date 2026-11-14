@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,11 +22,14 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/deletion"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/verify/offline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/storagetest"
@@ -46,6 +50,7 @@ type rig struct {
 	buckets *storage.Buckets
 	mgr     *contentkey.Manager
 	queue   *jobs.Queue
+	signer  *signing.Manager
 	purger  *purge.Purger
 	tenant  db.Tenant
 	client  db.Client
@@ -68,6 +73,11 @@ func newRig(t *testing.T) *rig {
 	}
 	r := &rig{t: t, pool: pool, repos: db.New(pool), buckets: buckets}
 	r.mgr = contentkey.NewManager(pool, kreg, slog.New(slog.DiscardHandler))
+	r.signer = signing.NewManager(pool, kreg, slog.New(slog.DiscardHandler))
+	t.Cleanup(r.signer.Close)
+	if err := r.signer.EnsureCurrent(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	reg := jobs.NewRegistry()
 	if err := pipeline.Declare(reg); err != nil {
 		t.Fatal(err)
@@ -91,7 +101,7 @@ func newRig(t *testing.T) *rig {
 
 func (r *rig) newPurger(delivery storage.Store) *purge.Purger {
 	p, err := purge.New(purge.Deps{
-		Pool: r.pool, Source: r.buckets.Source, Delivery: delivery, Keys: r.mgr,
+		Pool: r.pool, Source: r.buckets.Source, Delivery: delivery, Keys: r.mgr, Signer: r.signer,
 		Log: slog.New(slog.DiscardHandler), InFlightWait: time.Hour,
 	})
 	if err != nil {
@@ -258,6 +268,17 @@ func TestPurgeDeletesEverythingOfAReadyAssetWithAMaskedVariant(t *testing.T) {
 	s := r.seed(true)
 	a := s.asset
 	other := r.seed(false) // another asset must be left alone
+	var wantKeys []string
+	for _, v := range []keys.Variant{keys.Original, keys.Masked} {
+		k, err := r.repos.GetContentKey(ctx, a.TenantID, a.ID, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantKeys = append(wantKeys, k.ID.String()+"/"+v.String())
+	}
+	stray := keys.DeliveryPrefix(a.TenantID, a.ID) + "thumbs/stray.jpg"
+	r.put(keys.Delivery, stray, "x")
+	s.objects[stray] = keys.Delivery
 
 	if err := r.run(r.purger, a, db.DeletionRequested); err != nil {
 		t.Fatal(err)
@@ -312,10 +333,89 @@ func TestPurgeDeletesEverythingOfAReadyAssetWithAMaskedVariant(t *testing.T) {
 		t.Errorf("another asset's key: %v", err)
 	}
 
-	// A second run, and a second job, change nothing and succeed.
+	r.checkRecord(a, s, db.DeletionRequested, wantKeys)
+
+	// A second run, and a second job, change nothing and succeed, and keep the one record.
 	if err := r.run(r.purger, a, db.DeletionRequested); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
+	if n := r.count(`SELECT count(*) FROM asset_deletion_records WHERE asset_id = $1`, a.ID.UUID()); n != 1 {
+		t.Errorf("%d deletion records, want 1", n)
+	}
+}
+
+// checkRecord fetches the stored record the way the API serves it, verifies it with public keys
+// only and compares its counts with what the test wrote.
+func (r *rig) checkRecord(a db.Asset, s seeded, reason string, wantKeys []string) {
+	r.t.Helper()
+	ctx := context.Background()
+	row, err := r.repos.GetDeletionRecord(ctx, a.TenantID, a.ID)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	pub, err := r.signer.PublicKeys(ctx)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	keySet := offline.KeySet{}
+	for _, k := range pub {
+		keySet[k.KeyID] = k.PublicKey
+	}
+	signed, err := offline.OpenDeletion(row.Envelope, keySet)
+	if err != nil {
+		r.t.Fatalf("the record does not verify with the published keys: %v", err)
+	}
+	rec := signed.Record
+	if rec.Schema != deletion.Schema || rec.AssetID != a.ID.String() || rec.TenantID != a.TenantID.String() || rec.Reason != reason {
+		r.t.Errorf("record = %+v", rec)
+	}
+	if rec.ManifestRoot != strings.Repeat("08", 32) {
+		r.t.Errorf("manifest root = %q", rec.ManifestRoot)
+	}
+	want := map[string]deletion.ObjectCount{}
+	for key, bucket := range s.objects {
+		c := purge.Classify(a.TenantID, a.ID, bucket, key)
+		k := string(c.Bucket) + "/" + string(c.Kind) + "/" + c.Variant
+		o := want[k]
+		o.Bucket, o.Kind, o.Variant = string(c.Bucket), string(c.Kind), c.Variant
+		o.Count++
+		o.Bytes += int64(len("data-" + key))
+		want[k] = o
+	}
+	if len(rec.Objects) != len(want) {
+		r.t.Errorf("record lists %d kinds, want %d: %+v", len(rec.Objects), len(want), rec.Objects)
+	}
+	var total int64
+	for _, o := range rec.Objects {
+		k := o.Bucket + "/" + o.Kind + "/" + o.Variant
+		if w, ok := want[k]; !ok || w.Count != o.Count || (o.Kind != string(purge.KindOther) && w.Bytes != o.Bytes) {
+			r.t.Errorf("record entry %+v, want %+v", o, w)
+		}
+		total += o.Count
+	}
+	if total != rec.ObjectsDeleted || total != int64(len(s.objects)) {
+		r.t.Errorf("record says %d objects deleted, the test wrote %d", total, len(s.objects))
+	}
+	var gotKeys []string
+	for _, k := range rec.ContentKeys.Keys {
+		gotKeys = append(gotKeys, k.ID+"/"+k.Variant)
+	}
+	slices.Sort(gotKeys)
+	slices.Sort(wantKeys)
+	if !slices.Equal(gotKeys, wantKeys) || rec.ContentKeys.Destroyed != len(wantKeys) {
+		r.t.Errorf("record keys %v, want %v", gotKeys, wantKeys)
+	}
+	if row.Reason != reason || !row.CompletedAt.Equal(*mustAsset(r, a).DeletedAt) {
+		r.t.Errorf("record row = %+v", row)
+	}
+}
+
+func mustAsset(r *rig, a db.Asset) db.Asset {
+	got, err := r.repos.GetAsset(context.Background(), a.TenantID, a.ID)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return got
 }
 
 // A purge enumerates storage, not the registry: an object nothing registered goes too.

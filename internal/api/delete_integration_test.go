@@ -4,10 +4,14 @@ package api_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"testing"
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/deletion"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/verify/offline"
 )
 
 func (h *harness) purgeJobs() int {
@@ -63,7 +67,38 @@ func TestDeleteAssetEndpoint(t *testing.T) {
 		t.Fatalf("%d asset.delete audit events, want 1", deletes)
 	}
 
-	// Once the purge completed, the same call answers with the tombstone and queues nothing.
+	// No record before the deletion is done: not_deleted for a live or deleting asset, not_found
+	// for another tenant's, and the scope is assets:read.
+	h.wantStatus(h.do(reader, "GET", path+"/deletion-record", nil), 404, "not_deleted")
+	h.wantStatus(h.do(otherAdmin, "GET", path+"/deletion-record", nil), 404, "not_found")
+	h.wantStatus(h.do("", "GET", path+"/deletion-record", nil), 401, "unauthenticated")
+
+	// Once the purge completed (its record stored with the tombstone), the same call answers with
+	// the tombstone and queues nothing.
+	built, err := deletion.Build(deletion.Input{
+		AssetID: a.ID.String(), TenantID: a.TenantID.String(), RequestedAt: time.Now().Add(-time.Minute), CompletedAt: time.Now(),
+		Reason: deletion.ReasonRequested, PipelineVersion: "v0.0.0-test",
+		Objects: []deletion.ObjectCount{{Bucket: "delivery", Kind: "segment", Variant: "original", Count: 3, Bytes: 30}},
+		Keys:    []deletion.KeyRef{{ID: "cky_00000000000000000000000001", Variant: "original"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID, sig, err := h.signing.Sign(context.Background(), dsse.PAE(deletion.PayloadType, built.Canonical))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := (&dsse.Envelope{PayloadType: deletion.PayloadType, Payload: built.Canonical, Signatures: []dsse.Signature{{KeyID: keyID, Sig: sig}}}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(built.Canonical)
+	if err := h.repos.InsertDeletionRecord(context.Background(), db.DeletionRecord{
+		AssetID: a.ID, TenantID: a.TenantID, Reason: db.DeletionRequested, RequestedAt: time.Now().Add(-time.Minute), CompletedAt: time.Now(),
+		KeyID: keyID, PayloadSHA256: sum[:], Envelope: envelope,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := h.repos.CompleteAssetDeletion(context.Background(), a.TenantID, a.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -75,4 +110,23 @@ func TestDeleteAssetEndpoint(t *testing.T) {
 	if n := h.purgeJobs(); n != 1 {
 		t.Fatalf("%d purge jobs after deleting a tombstone, want 1", n)
 	}
+
+	// The record is served as stored, with its own media type, and verifies with the public keys.
+	rec := h.do(reader, "GET", path+"/deletion-record", nil)
+	if rec.status != 200 || rec.hdr.Get("Content-Type") != "application/vnd.cipherframe.deletion+json; profile=dsse" {
+		t.Fatalf("record: status %d, type %q: %s", rec.status, rec.hdr.Get("Content-Type"), rec.raw)
+	}
+	pub, err := h.signing.PublicKeys(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keySet := offline.KeySet{}
+	for _, k := range pub {
+		keySet[k.KeyID] = k.PublicKey
+	}
+	signed, err := offline.OpenDeletion(rec.raw, keySet)
+	if err != nil || signed.Record.AssetID != a.ID.String() || signed.Record.ObjectsDeleted != 3 {
+		t.Fatalf("served record: %+v, %v", signed, err)
+	}
+	h.wantStatus(h.do(otherAdmin, "GET", path+"/deletion-record", nil), 404, "not_found")
 }

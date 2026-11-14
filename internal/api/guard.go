@@ -46,6 +46,7 @@ var operationScopes = map[string][]db.Scope{
 	"GetAssetAccessLog":           {db.ScopeAssetsRead},
 	"GetAssetManifest":            {db.ScopeAssetsRead},
 	"GetAssetManifestTimestamp":   {db.ScopeAssetsRead},
+	"GetAssetDeletionRecord":      {db.ScopeAssetsRead},
 	"GetAssetProof":               {db.ScopeAssetsRead},
 	"VerifyArtifact":              {db.ScopeAssetsRead},
 	"GetPlaybackSessionAccessLog": {db.ScopeAssetsRead},
@@ -274,6 +275,10 @@ func (g guarded) RotateSigningKey(w http.ResponseWriter, r *http.Request) {
 
 func (g guarded) RetireSigningKey(w http.ResponseWriter, r *http.Request, keyID gen.SigningKeyIdPath) {
 	g.a.run("RetireSigningKey", w, r, func(r *http.Request) { g.ServerInterface.RetireSigningKey(w, r, keyID) })
+}
+
+func (g guarded) GetAssetDeletionRecord(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("GetAssetDeletionRecord", w, r, func(r *http.Request) { g.ServerInterface.GetAssetDeletionRecord(w, r, assetID) })
 }
 
 func (g guarded) GetAssetManifest(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {

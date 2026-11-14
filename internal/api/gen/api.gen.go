@@ -172,6 +172,21 @@ func (e DeletionReason) Valid() bool {
 	}
 }
 
+// Defines values for DeletionRecordEnvelopePayloadType.
+const (
+	ApplicationvndCipherframeDeletionJson DeletionRecordEnvelopePayloadType = "application/vnd.cipherframe.deletion+json"
+)
+
+// Valid indicates whether the value is a known member of the DeletionRecordEnvelopePayloadType enum.
+func (e DeletionRecordEnvelopePayloadType) Valid() bool {
+	switch e {
+	case ApplicationvndCipherframeDeletionJson:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DsseEnvelopePayloadType.
 const (
 	ApplicationvndCipherframeManifestJson DsseEnvelopePayloadType = "application/vnd.cipherframe.manifest+json"
@@ -387,6 +402,7 @@ const (
 	ProblemCodeInvalidRequest        ProblemCode = "invalid_request"
 	ProblemCodeMethodNotAllowed      ProblemCode = "method_not_allowed"
 	ProblemCodeNotAnchored           ProblemCode = "not_anchored"
+	ProblemCodeNotDeleted            ProblemCode = "not_deleted"
 	ProblemCodeNotFound              ProblemCode = "not_found"
 	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
@@ -417,6 +433,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeMethodNotAllowed:
 		return true
 	case ProblemCodeNotAnchored:
+		return true
+	case ProblemCodeNotDeleted:
 		return true
 	case ProblemCodeNotFound:
 		return true
@@ -987,6 +1005,25 @@ type Deletion struct {
 
 // DeletionReason `requested` by an API call, or `retention` because the asset's time-to-live ran out.
 type DeletionReason string
+
+// DeletionRecordEnvelope A DSSE v1 envelope (ADR 0033) around a deletion record. `payload` is the base64 of the
+// canonical record JSON; the signed bytes are `PAE(payloadType, payload)`. See
+// `docs/integrity.md` for the record format.
+type DeletionRecordEnvelope struct {
+	// Payload Standard base64 of the canonical deletion record.
+	Payload     string                            `json:"payload"`
+	PayloadType DeletionRecordEnvelopePayloadType `json:"payloadType"`
+	Signatures  []struct {
+		// Keyid The `keyid` of a published signing key.
+		Keyid string `json:"keyid"`
+
+		// Sig Standard base64 of the 64-byte Ed25519 signature.
+		Sig string `json:"sig"`
+	} `json:"signatures"`
+}
+
+// DeletionRecordEnvelopePayloadType defines model for DeletionRecordEnvelope.PayloadType.
+type DeletionRecordEnvelopePayloadType string
 
 // DsseEnvelope A DSSE v1 envelope (ADR 0033). `payload` is the base64 of the canonical manifest JSON; the
 // signed bytes are `PAE(payloadType, payload)`. See `docs/integrity.md` for the manifest
@@ -2064,6 +2101,9 @@ type ServerInterface interface {
 	// CommitAsset Finish the upload and start processing
 	// (POST /v1/assets/{asset_id}/commit)
 	CommitAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// GetAssetDeletionRecord Get an asset's signed deletion record
+	// (GET /v1/assets/{asset_id}/deletion-record)
+	GetAssetDeletionRecord(w http.ResponseWriter, r *http.Request, assetId AssetId)
 	// GetAssetManifest Get an asset's signed integrity manifest
 	// (GET /v1/assets/{asset_id}/manifest)
 	GetAssetManifest(w http.ResponseWriter, r *http.Request, assetId AssetId)
@@ -2453,6 +2493,32 @@ func (siw *ServerInterfaceWrapper) CommitAsset(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CommitAsset(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetDeletionRecord operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetDeletionRecord(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetDeletionRecord(w, r, assetId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3396,6 +3462,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/access-log", wrapper.GetAssetAccessLog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/manifest", wrapper.GetAssetManifest)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/manifest/timestamp", wrapper.GetAssetManifestTimestamp)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/deletion-record", wrapper.GetAssetDeletionRecord)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/proof", wrapper.GetAssetProof)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/verify", wrapper.VerifyArtifact)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions", wrapper.CreatePlaybackSession)
@@ -4482,6 +4549,138 @@ type CommitAssetdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CommitAssetdefaultApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetDeletionRecordRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type GetAssetDeletionRecordResponseObject interface {
+	VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error
+}
+
+type GetAssetDeletionRecord200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetDeletionRecord200ApplicationVndCipherframeDeletionPlusJSONResponse struct {
+	Body    DeletionRecordEnvelope
+	Headers GetAssetDeletionRecord200ResponseHeaders
+}
+
+func (response GetAssetDeletionRecord200ApplicationVndCipherframeDeletionPlusJSONResponse) VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/vnd.cipherframe.deletion+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetDeletionRecord401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetDeletionRecord401ApplicationProblemPlusJSONResponse) VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetDeletionRecord403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetDeletionRecord403ApplicationProblemPlusJSONResponse) VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetDeletionRecord404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetDeletionRecord404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetDeletionRecord404ResponseHeaders
+}
+
+func (response GetAssetDeletionRecord404ApplicationProblemPlusJSONResponse) VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetDeletionRecord503ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetDeletionRecord503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetDeletionRecord503ResponseHeaders
+}
+
+func (response GetAssetDeletionRecord503ApplicationProblemPlusJSONResponse) VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetDeletionRecorddefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetDeletionRecorddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetAssetDeletionRecorddefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetAssetDeletionRecorddefaultApplicationProblemPlusJSONResponse) VisitGetAssetDeletionRecordResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -7851,6 +8050,9 @@ type StrictServerInterface interface {
 	// CommitAsset Finish the upload and start processing
 	// (POST /v1/assets/{asset_id}/commit)
 	CommitAsset(ctx context.Context, request CommitAssetRequestObject) (CommitAssetResponseObject, error)
+	// GetAssetDeletionRecord Get an asset's signed deletion record
+	// (GET /v1/assets/{asset_id}/deletion-record)
+	GetAssetDeletionRecord(ctx context.Context, request GetAssetDeletionRecordRequestObject) (GetAssetDeletionRecordResponseObject, error)
 	// GetAssetManifest Get an asset's signed integrity manifest
 	// (GET /v1/assets/{asset_id}/manifest)
 	GetAssetManifest(ctx context.Context, request GetAssetManifestRequestObject) (GetAssetManifestResponseObject, error)
@@ -8232,6 +8434,32 @@ func (sh *strictHandler) CommitAsset(w http.ResponseWriter, r *http.Request, ass
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CommitAssetResponseObject); ok {
 		if err := validResponse.VisitCommitAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetDeletionRecord operation middleware
+func (sh *strictHandler) GetAssetDeletionRecord(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request GetAssetDeletionRecordRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetDeletionRecord(ctx, request.(GetAssetDeletionRecordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetDeletionRecord")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetDeletionRecordResponseObject); ok {
+		if err := validResponse.VisitGetAssetDeletionRecordResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

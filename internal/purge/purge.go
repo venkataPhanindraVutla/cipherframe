@@ -14,6 +14,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
@@ -62,7 +63,9 @@ type Deps struct {
 	Source   storage.Store // the source bucket
 	Delivery storage.Store // the delivery bucket
 	Keys     *contentkey.Manager
-	Log      *slog.Logger
+	// Signer signs the deletion record with the current signing key (M6-3). It is required.
+	Signer signing.Signer
+	Log    *slog.Logger
 	// InFlightWait overrides DefaultInFlightWait when positive.
 	InFlightWait time.Duration
 	// Now defaults to time.Now.
@@ -77,8 +80,8 @@ type Purger struct {
 
 // New validates deps and returns a Purger.
 func New(d Deps) (*Purger, error) {
-	if d.Pool == nil || d.Source == nil || d.Delivery == nil || d.Keys == nil {
-		return nil, errors.New("purge: a pool, both stores and the content key manager are required")
+	if d.Pool == nil || d.Source == nil || d.Delivery == nil || d.Keys == nil || d.Signer == nil {
+		return nil, errors.New("purge: a pool, both stores, the content key manager and a signer are required")
 	}
 	if d.Log == nil {
 		d.Log = slog.Default()
@@ -117,8 +120,8 @@ func Declare(reg *jobs.Registry) error {
 //  3. Revoke the asset's active playback sessions.
 //  4. Enumerate storage under every prefix (never the database alone), delete in batches and list
 //     again until a pass finds nothing. Objects left after maxPasses fail the job (ErrLeftovers).
-//  5. In one transaction: destroy the content keys, drop the registry rows and the manifest, and
-//     move the asset to deleted (the tombstone).
+//  5. In one transaction: destroy the content keys, drop the registry rows and the manifest, store
+//     the signed deletion record and move the asset to deleted (the tombstone).
 func (p *Purger) Handle(ctx context.Context, job jobs.Job[DeleteArgs]) error {
 	tenant, assetID := job.Args.TenantID, job.Args.AssetID
 	if tenant.IsZero() || assetID.IsZero() || !db.ValidDeletionReason(job.Args.Reason) {
@@ -294,8 +297,8 @@ func (p *Purger) sweep(ctx context.Context, asset db.Asset, t *tally) (int, erro
 }
 
 // finish runs the database side of the purge in one transaction: the keys are destroyed (crypto
-// shredding), the registry, the manifest and the upload bookkeeping go, and the asset becomes the
-// tombstone. It runs only after storage was verified empty, so a failed purge leaves the keys
+// shredding), the registry, the manifest and the upload bookkeeping go, the signed deletion record
+// is stored and the asset becomes the tombstone. It runs only after storage was verified empty, so a failed purge leaves the keys
 // where they are (the data stays encrypted) and a retry still knows which keys to name.
 func (p *Purger) finish(ctx context.Context, asset db.Asset, t *tally, log *slog.Logger) error {
 	var destroyed []db.DestroyedKey
@@ -307,6 +310,13 @@ func (p *Purger) finish(ctx context.Context, asset db.Asset, t *tally, log *slog
 		if cur.State == db.AssetDeleted {
 			return nil // another job finished first
 		}
+		var root []byte
+		switch m, merr := tx.GetManifest(ctx, asset.ID); {
+		case merr == nil:
+			root = m.TopRoot
+		case !isNotFound(merr):
+			return merr
+		}
 		if destroyed, err = p.Keys.DestroyAll(ctx, tx, asset.TenantID, asset.ID); err != nil {
 			return err
 		}
@@ -316,13 +326,21 @@ func (p *Purger) finish(ctx context.Context, asset db.Asset, t *tally, log *slog
 		if _, err := tx.DeleteManifest(ctx, asset.ID); err != nil {
 			return err
 		}
+		now := p.Now().UTC()
+		rec, err := p.sealRecord(ctx, cur, t, destroyed, root, now)
+		if err != nil {
+			return err
+		}
+		if err := tx.InsertDeletionRecord(ctx, rec); err != nil {
+			return err
+		}
 		if err := tx.DeleteUploadTokens(ctx, asset.ID); err != nil {
 			return err
 		}
 		if err := tx.DeleteUploadParts(ctx, asset.ID); err != nil {
 			return err
 		}
-		if _, err := tx.CompleteAssetDeletion(ctx, asset.TenantID, asset.ID, p.Now().UTC()); err != nil {
+		if _, err := tx.CompleteAssetDeletion(ctx, asset.TenantID, asset.ID, now); err != nil {
 			return err
 		}
 		_, err = tx.InsertAuditEvent(ctx, db.NewAuditEvent{TenantID: asset.TenantID, Action: AuditAssetPurged, Target: asset.ID.String()})

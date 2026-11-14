@@ -64,6 +64,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		asJSON       = fl.Bool("json", false, "machine-readable output")
 		tsFile       = fl.String("timestamp", "", "RFC 3161 timestamp document (GET .../manifest/timestamp) to check")
 		tsaCA        = fl.String("tsa-ca", "", "PEM CA bundle for --timestamp (default: the system roots)")
+		deletionFile = fl.String("deletion-record", "", "signed deletion record (DSSE envelope JSON) to verify instead of files")
 	)
 	if err := fl.Parse(args); err != nil {
 		return exitUsage
@@ -75,6 +76,19 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	switch {
+	case *deletionFile != "":
+		switch {
+		case *manifestFile != "" || *proofFile != "" || *path != "" || *root != "" || variantSet || *tsFile != "" || *tsaCA != "" || fl.NArg() != 0:
+			return usageErr("--deletion-record takes only --keys or --keys-url and --json")
+		case (*keysFile == "") == (*keysURL == ""):
+			return usageErr("give exactly one of --keys and --keys-url")
+		}
+		if *keysURL != "" {
+			if err := checkKeysURL(*keysURL); err != nil {
+				return usageErr("%v", err)
+			}
+		}
+		return runVerifyDeletion(*deletionFile, *keysFile, *keysURL, *asJSON, stdout)
 	case *manifestFile == "" || fl.NArg() == 0:
 		return usageErr("--manifest and at least one file are required")
 	case (*keysFile == "") == (*keysURL == ""):

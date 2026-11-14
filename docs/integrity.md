@@ -3,7 +3,9 @@
 > Status: the primitives described under "Construction", the signed manifest written by the
 > pipeline (see "Manifest format") and the API that serves manifests and proofs and answers
 > "is this ours?" (see "Serving manifests and proofs") are implemented (ADR 0033, 0039, gate P9).
-> The offline verifier and `cipherframe verify` (M5-4) are implemented. Timestamp authority recommendations remain pending gate P10.
+> The offline verifier and `cipherframe verify` (M5-4) are implemented, and so are the verified purge
+> and the signed deletion record (M6, ADR 0040, ADR 0042). Timestamp authority recommendations remain
+> pending gate P10.
 
 ## Integrity manifests
 
@@ -246,15 +248,110 @@ manifest path (the object key minus the variant's HLS prefix) and never a bucket
 
 ## Verifiable deletion
 
-The purge job:
+`DELETE /v1/assets/{asset_id}` starts the `asset.delete` job (package `internal/purge`). The job:
 
-1. enumerates storage under the asset's prefixes (it does not trust the database alone),
-2. batch-deletes every object, including subtitles, thumbnails and other derived artifacts,
-3. destroys the content key (the row is destroyed, not flagged),
-4. re-lists to confirm nothing is left,
-5. signs a deletion record with object counts per artifact kind.
+1. marks the asset `deleting` (playback, new sessions, uploads and the pipeline refuse it from then
+   on) and revokes its active playback sessions; an in-flight processing or masking job stops at its
+   next check and removes its own output, and the purge waits for it (up to two hours after the
+   request) so it cannot upload behind the purge's back;
+2. enumerates storage under every prefix of `keys.AssetPrefixes` in both buckets (it does not trust
+   the database alone, so an object nobody registered is found too) and aborts an unfinished
+   multipart upload;
+3. batch-deletes every object, including both variants, tusd's `.info` and `.part` objects and any
+   derived artifact (every kind is listed in the registry of package `purge`; a test fails when the
+   key builders and the registry drift apart);
+4. lists again, and deletes again, until a pass finds nothing. Objects still there after four passes
+   fail the job (`purge: objects remain...`), which retries with backoff; after its attempts it is
+   dead-lettered and the asset stays `deleting`, so a failed purge is visible and is never reported as
+   done. Repeating `DELETE` queues a new job for such an asset;
+5. in one transaction destroys the content keys of every variant (the rows are deleted, not flagged),
+   removes the artifact registry rows and the manifest, signs the deletion record and stores it, and
+   moves the asset to `deleted`. The keys are destroyed only after storage was verified empty, so a
+   purge that fails leaves the data encrypted and a retry still knows which keys to name.
 
-The record stays fetchable after the asset is gone.
+The asset row stays as a tombstone (`state: deleted`, no source object key), the audit rows stay, and
+the access trail follows its own retention window ([privacy.md](privacy.md)).
+
+### The deletion record
+
+The record is a canonical JSON document (see "Canonical JSON") signed as a DSSE envelope with payload
+type `application/vnd.cipherframe.deletion+json`, using the same Ed25519 keys as manifests (see
+"Signing keys"). It is stored in `asset_deletion_records` in the transaction that ends in the
+tombstone, so a deleted asset always has one, and it outlives everything else of the asset. The API
+serves it at `GET /v1/assets/{asset_id}/deletion-record` (`assets:read`; `404 not_deleted` until the
+asset is deleted). The rules of the manifest format apply: lower_snake_case members, no floating-point
+numbers, hex hashes, RFC 3339 UTC times with second precision.
+
+| Member | Content |
+| --- | --- |
+| `schema` | `cipherframe.deletion/v1` |
+| `asset_id`, `tenant_id` | The prefixed IDs of the asset and its tenant. |
+| `requested_at`, `completed_at` | When deletion was requested, and when the purge finished and storage was verified empty. |
+| `reason` | `requested` (an API call) or `retention` (the asset's time-to-live ran out). |
+| `pipeline_version` | The Cipherframe version that ran the purge. |
+| `objects` | One entry per bucket, artifact kind and variant, sorted by those: `bucket` (`source` or `delivery`), `kind` (`source`, `tus_info`, `tus_part`, `master`, `playlist`, `init`, `segment`, `poster`, or `other` for an object nothing in Cipherframe writes), `variant` (`original` or `masked` for HLS objects, absent otherwise), `count`, `bytes`. |
+| `objects_deleted`, `bytes_deleted` | The totals of `objects`. |
+| `content_keys` | `destroyed` (the count) and `keys`: the `id` and `variant` of each destroyed content key, sorted by id. Never key material. |
+| `manifest_root` | The top-level Merkle root (hex) of the asset's manifest as it stood at deletion (the original variant's, the `top_root` column); absent if the asset never had a manifest. |
+
+The record never holds a bucket name, an object key, a file name or anything about a viewer. An
+example with fake values (an asset with a masked variant; shown indented, the signed bytes are the
+canonical form):
+
+```json
+{
+  "schema": "cipherframe.deletion/v1",
+  "asset_id": "ast_00000000000000000000000001",
+  "tenant_id": "ten_00000000000000000000000001",
+  "requested_at": "2026-11-14T10:00:00Z",
+  "completed_at": "2026-11-14T10:00:07Z",
+  "reason": "requested",
+  "pipeline_version": "v1.2.3",
+  "objects": [
+    {"bucket": "delivery", "kind": "init", "variant": "masked", "count": 1, "bytes": 812},
+    {"bucket": "delivery", "kind": "init", "variant": "original", "count": 1, "bytes": 812},
+    {"bucket": "delivery", "kind": "master", "variant": "masked", "count": 1, "bytes": 310},
+    {"bucket": "delivery", "kind": "master", "variant": "original", "count": 1, "bytes": 310},
+    {"bucket": "delivery", "kind": "playlist", "variant": "masked", "count": 1, "bytes": 280},
+    {"bucket": "delivery", "kind": "playlist", "variant": "original", "count": 1, "bytes": 280},
+    {"bucket": "delivery", "kind": "segment", "variant": "masked", "count": 2, "bytes": 1572864},
+    {"bucket": "delivery", "kind": "segment", "variant": "original", "count": 2, "bytes": 1572880},
+    {"bucket": "source", "kind": "source", "count": 1, "bytes": 52428800},
+    {"bucket": "source", "kind": "tus_info", "count": 1, "bytes": 190}
+  ],
+  "objects_deleted": 13,
+  "bytes_deleted": 55577918,
+  "content_keys": {
+    "destroyed": 2,
+    "keys": [
+      {"id": "cky_00000000000000000000000001", "variant": "original"},
+      {"id": "cky_00000000000000000000000002", "variant": "masked"}
+    ]
+  },
+  "manifest_root": "1100...11"
+}
+```
+
+### Verifying a deletion record
+
+```sh
+cipherframe verify --deletion-record record.json --keys keys.json
+```
+
+`record.json` is the response of the endpoint, `keys.json` the published key set (or use
+`--keys-url`). The tool checks the envelope's payload type and signature against the key set (active
+and retired keys are both trusted) and prints the summary: the outcome, the asset, the times and
+reason, the objects per bucket, kind and variant, the destroyed keys and the manifest root. The
+library is `offline.OpenDeletion` / `offline.VerifyDeletion`. A deletion record has no file to
+compare, so only two public outcomes exist:
+
+| Public outcome | Reason shown | When | Exit |
+| --- | --- | --- | --- |
+| ours | `verified` | A trusted key's signature covers a well-formed `cipherframe.deletion/v1` payload. | 0 |
+| cannot say | `untrusted-key`, `tampered-envelope`, `malformed`, `cannot-say` | No signature from a trusted key; a trusted key's signature does not verify; the input is not a deletion record (a manifest envelope is refused: its payload type differs); an unreadable file or key set. | 2 |
+
+"Ours" means Cipherframe signed these statements. It does not prove that the objects were deleted
+(only that Cipherframe says so, having listed storage empty) or that no one kept a copy.
 
 ## Anchoring (optional)
 

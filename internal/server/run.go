@@ -424,7 +424,7 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 		}
 		// Verified deletion needs both buckets, which only a process with processing has.
 		if err := purge.Register(reg, purge.Deps{
-			Pool: pool, Source: proc.Buckets.Source, Delivery: proc.Buckets.Delivery, Keys: contentKeys, Log: log,
+			Pool: pool, Source: proc.Buckets.Source, Delivery: proc.Buckets.Delivery, Keys: contentKeys, Signer: proc.Signer, Log: log,
 		}); err != nil {
 			return nil, fmt.Errorf("worker: %w", err)
 		}

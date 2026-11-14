@@ -71,6 +71,18 @@ type AssetArtifact struct {
 	Variant   string
 }
 
+type AssetDeletionRecord struct {
+	AssetID       pgtype.UUID
+	TenantID      pgtype.UUID
+	Reason        string
+	RequestedAt   time.Time
+	CompletedAt   time.Time
+	KeyID         string
+	PayloadSha256 []byte
+	Envelope      []byte
+	CreatedAt     time.Time
+}
+
 type AssetManifest struct {
 	AssetID       pgtype.UUID
 	TenantID      pgtype.UUID
