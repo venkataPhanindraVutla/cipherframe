@@ -3,7 +3,7 @@
 Where the build stands, what is left, and what is waiting on a decision. The last pull request of
 each milestone updates this page.
 
-Last updated: 2026-11-13.
+Last updated: 2026-11-14.
 
 ## Versions
 
@@ -23,6 +23,7 @@ Last updated: 2026-11-13.
 | M3 Ingest and processing | Done |
 | M4 Playback sessions and delivery | Done |
 | M5 Integrity and anchoring | In progress |
+| Face masking (ADR 0036) | In progress |
 | M6 Deletion and retention | Waiting on gate P11 |
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Not started (gate P12) |
 | M8 CLI (Go) and reference player (TypeScript) | Not started (gate P13) |
@@ -42,6 +43,17 @@ Last updated: 2026-11-13.
 Acceptance, still to show: flipping one byte fails and names the exact object; verification works
 without any signing secret; rotated keys still verify old records; a timestamp token round trip
 against a local TSA.
+
+### Face masking
+
+Added 2026-11-14 ([ADR 0036](adr/0036-face-masked-variant.md)). Built before M5-3 to M5-5.
+
+- [ ] FM-1 Variants: `mask_faces` on asset creation, one content key per variant, sessions bound to
+  a variant
+- [ ] FM-2 Python masker in `ml/`: claims `media.mask_faces` tasks and blurs faces with YuNet
+- [ ] FM-3 `asset.mask` job: hand the job directory to the masker, transcode the masked ladder, add it
+  to the manifest
+- [ ] FM-4 Development stack and documentation
 
 ### M6 Deletion and retention
 
@@ -96,8 +108,8 @@ Each gate is asked of the project owner and recorded as an ADR before its milest
 | P17 | Hardware encoder targets | M10 |
 | P18 | HEVC and AV1 policy, including codec licensing | M10 |
 | P19 | SDK package names, scopes and minimum language versions | v2.0.0 |
-| P20 | ML models and their licences | v2.1.0 |
-| P21 | How the Python ML worker consumes jobs | v2.1.0 |
+| P20 | ML models and their licences (face detection decided in ADR 0036) | v2.1.0 |
+| P21 | How the Python ML worker consumes jobs (face masking decided in ADR 0036) | v2.1.0 |
 
 ## Decisions flagged for owner review before v1.0.0
 
@@ -108,6 +120,7 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0027](adr/0027-segment-encryption-in-the-worker.md) Segment encryption in the worker
 - [ADR 0032](adr/0032-delivery-strategies.md) Delivery strategies
 - [ADR 0033](adr/0033-integrity-design.md) Integrity design: the manifest outline
+- [ADR 0036](adr/0036-face-masked-variant.md) Face-masked variant: the masker runs beside the Go worker
 
 ## Follow-ups
 
