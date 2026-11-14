@@ -4,6 +4,7 @@
 - Date: 2026-11-14
 - Gate: P20 (face detection model only), P21 (worker, face masking only)
 - Deciders: project owner
+- Amended by: [0037](0037-faster-face-masking.md) (`asset.mask` is enqueued at commit and runs beside `asset.process`)
 
 ## Context
 

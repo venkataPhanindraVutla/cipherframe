@@ -42,6 +42,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0034](0034-timestamp-authority-recommendations.md) | Timestamp authority recommendations | P10 | Accepted | 2026-11-12 |
 | [0035](0035-floci-cloud-emulators-in-tests.md) | Floci cloud emulators in tests | none | Accepted | 2026-11-13 |
 | [0036](0036-face-masked-variant.md) | Face-masked variant of an asset | P20 (face detection), P21 (worker, face masking) | Accepted (worker placement flagged for owner review) | 2026-11-14 |
+| [0037](0037-faster-face-masking.md) | Faster face masking (amends 0024, 0036) | none | Accepted | 2026-11-14 |
 
 ## Open gates
 

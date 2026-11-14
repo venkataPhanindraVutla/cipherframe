@@ -24,6 +24,7 @@ Last updated: 2026-11-14.
 | M4 Playback sessions and delivery | Done |
 | M5 Integrity and anchoring | In progress |
 | Face masking (ADR 0036) | Done |
+| Faster face masking (ADR 0037) | Done |
 | M6 Deletion and retention | Waiting on gate P11 |
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Not started (gate P12) |
 | M8 CLI (Go) and reference player (TypeScript) | Not started (gate P13) |
@@ -126,6 +127,7 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0032](adr/0032-delivery-strategies.md) Delivery strategies
 - [ADR 0033](adr/0033-integrity-design.md) Integrity design: the manifest outline
 - [ADR 0036](adr/0036-face-masked-variant.md) Face-masked variant: the masker runs beside the Go worker
+- [ADR 0037](adr/0037-faster-face-masking.md) Faster face masking: `asset.mask` runs beside `asset.process`; configurable ladder
 
 ## Follow-ups
 
