@@ -5,6 +5,7 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
@@ -22,6 +23,8 @@ type server struct {
 	// signing manages the integrity signing keys (M5-2); keyset serves the public set.
 	signing *signing.Manager
 	keyset  *signing.KeySet
+	// repos reads manifests and artifacts for the integrity endpoints (M5-3).
+	repos *db.Repos
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

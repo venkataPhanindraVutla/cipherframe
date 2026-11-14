@@ -521,6 +521,157 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/manifest:
+    get:
+      operationId: getAssetManifest
+      summary: Get an asset's signed integrity manifest
+      description: |
+        Returns the asset's signed manifest as the DSSE envelope that is stored (ADR 0033, 0039):
+        `payloadType`, the base64 `payload` (the canonical manifest, which includes the `masked`
+        section once the masked variant is published) and the `signatures`. Verify it with the
+        published keys (`/.well-known/cipherframe-keys.json`). An asset of another tenant, an unknown
+        one, one that is not ready and one without a manifest are all `404 not_found`. Requires the
+        `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: |
+            The envelope, with `Content-Type: application/vnd.cipherframe.manifest+json;
+            profile=dsse`.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/vnd.cipherframe.manifest+json:
+              schema:
+                $ref: "#/components/schemas/DsseEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/proof:
+    get:
+      operationId: getAssetProof
+      summary: Get an inclusion proof for one artifact
+      description: |
+        Returns the two-level inclusion proof of one artifact, identified by its manifest `path`
+        (relative to the variant's HLS prefix, for example `720p/seg-0.m4s`). An init or media
+        segment is proven in its rendition's tree and that tree's root in the top-level tree; a
+        playlist (`master.m3u8`, `<rendition>/playlist.m3u8`) only in the top-level tree, so the
+        rendition members are absent. The proof is computed from the signed manifest, not from
+        storage. See `docs/integrity.md` for how to check it.
+
+        An unknown `path`, an asset of another tenant, a deleted or not ready asset and an asset
+        without a manifest are `404` (`artifact_not_found` for the path, `not_found` otherwise).
+        `variant=masked` on an asset created without `mask_faces` is `409 variant_unavailable`, and
+        on one whose masked variant is not published yet `409 variant_not_ready`. Requires the
+        `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - name: path
+          in: query
+          required: true
+          description: The artifact's manifest path.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: variant
+          in: query
+          required: false
+          description: The variant to prove (default `original`).
+          schema:
+            $ref: "#/components/schemas/ArtifactVariant"
+      responses:
+        "200":
+          description: The proof.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InclusionProof"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/verify:
+    post:
+      operationId: verifyArtifact
+      summary: Is this file ours?
+      description: |
+        Answers whether a file's SHA-256 matches what Cipherframe signed, without the file ever
+        reaching the server: the caller hashes it locally. The answer is always `200` with an
+        `outcome` (ADR 0039):
+
+        - `ours`: the artifact is in the asset's signed manifest and the hash matches. The response
+          carries its `proof`.
+        - `modified`: the `path` is in the signed manifest but the hash differs, so the file claims
+          to be an artifact of ours but is not byte-identical.
+        - `cannot_say`: anything else (no such asset, path or variant for this tenant, an asset
+          that is not ready, a hash that matches nothing, a stored manifest whose signature does
+          not verify). It never means "modified", and it is never a verdict that something is
+          fake.
+
+        With `asset_id` and `path` (and optionally `variant`, default `original`) the hash is
+        compared with that artifact. With only `sha256` the tenant's registered artifacts are
+        searched: `ours` with where the hash belongs (`asset_id`, `variant`, manifest `path`), or
+        `cannot_say`; a hash alone can never prove `modified`. Giving only one of `asset_id` and
+        `path`, or `variant` without them, is `400`. The signature of the stored manifest is
+        checked against the published signing keys on every call. Requires the `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyRequest"
+      responses:
+        "200":
+          description: The verdict.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/playback-sessions:
     post:
       operationId: createPlaybackSession
@@ -3259,6 +3410,7 @@ components:
           type: string
           description: Stable identifier to switch on. The closed registry in `internal/errs`.
           enum:
+            - artifact_not_found
             - asset_not_ready
             - conflict
             - dependency_unavailable
@@ -3296,3 +3448,144 @@ components:
           description: The JSON name of the field, with an index for list items, for example `allowed_origins[2]`.
         message:
           type: string
+    ArtifactVariant:
+      type: string
+      enum: [original, masked]
+    DsseEnvelope:
+      description: |
+        A DSSE v1 envelope (ADR 0033). `payload` is the base64 of the canonical manifest JSON; the
+        signed bytes are `PAE(payloadType, payload)`. See `docs/integrity.md` for the manifest
+        format.
+      type: object
+      additionalProperties: false
+      required: [payloadType, payload, signatures]
+      properties:
+        payloadType:
+          type: string
+          enum: [application/vnd.cipherframe.manifest+json]
+        payload:
+          type: string
+          description: Standard base64 of the canonical manifest.
+        signatures:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [keyid, sig]
+            properties:
+              keyid:
+                type: string
+                description: The `keyid` of a published signing key.
+              sig:
+                type: string
+                description: Standard base64 of the 64-byte Ed25519 signature.
+    Sha256Hex:
+      type: string
+      description: A SHA-256 as 64 lowercase hex digits.
+      pattern: "^[0-9a-f]{64}$"
+    ProofLevel:
+      description: A leaf's place in the top-level tree (RFC 9162 inclusion proof).
+      type: object
+      additionalProperties: false
+      required: [leaf_index, tree_size, audit_path, root]
+      properties:
+        leaf_index:
+          type: integer
+          minimum: 0
+        tree_size:
+          type: integer
+          minimum: 1
+        audit_path:
+          type: array
+          items:
+            $ref: "#/components/schemas/Sha256Hex"
+        root:
+          allOf:
+            - $ref: "#/components/schemas/Sha256Hex"
+          description: The top-level root, equal to `top_level.root` of the variant in the manifest.
+    InclusionProof:
+      description: |
+        Proves that the artifact is covered by the manifest's top-level root. For a segment the
+        rendition members prove its hash in the rendition tree (leaf data: the artifact's SHA-256,
+        leaves: init then segments in playlist order) and `top_level` proves `rendition_root` in
+        the top-level tree. For a playlist the rendition members are absent and `top_level` proves
+        the playlist's hash directly. Trees and hashing are specified in `docs/integrity.md`.
+      type: object
+      additionalProperties: false
+      required: [asset_id, variant, path, sha256, size, top_level]
+      properties:
+        asset_id:
+          type: string
+        variant:
+          $ref: "#/components/schemas/ArtifactVariant"
+        path:
+          type: string
+        sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+        size:
+          type: integer
+          format: int64
+        leaf_index:
+          type: integer
+          minimum: 0
+          description: Index of the artifact in its rendition tree. Absent for a playlist.
+        tree_size:
+          type: integer
+          minimum: 2
+          description: Leaves of the rendition tree. Absent for a playlist.
+        rendition:
+          type: string
+          description: The rendition name. Absent for a playlist.
+        rendition_root:
+          $ref: "#/components/schemas/Sha256Hex"
+        audit_path:
+          type: array
+          description: Audit path in the rendition tree. Absent for a playlist.
+          items:
+            $ref: "#/components/schemas/Sha256Hex"
+        top_level:
+          $ref: "#/components/schemas/ProofLevel"
+    VerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [sha256]
+      properties:
+        sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+        asset_id:
+          type: string
+          description: With `path`, compare against this asset's manifest.
+        path:
+          type: string
+          maxLength: 512
+          description: The artifact's manifest path. Needs `asset_id`.
+        variant:
+          allOf:
+            - $ref: "#/components/schemas/ArtifactVariant"
+          description: Needs `asset_id` and `path`. Default `original`.
+    VerifyResult:
+      type: object
+      additionalProperties: false
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [ours, modified, cannot_say]
+        asset_id:
+          type: string
+          description: Present with `ours` and `modified`.
+        variant:
+          $ref: "#/components/schemas/ArtifactVariant"
+        path:
+          type: string
+          description: The manifest path (never a storage key). Present with `ours` and `modified`.
+        proof:
+          $ref: "#/components/schemas/InclusionProof"
+        reason:
+          type: string
+          enum: [no_match, manifest_unverifiable]
+          description: |
+            Present with `cannot_say`: `no_match` when the asset, path, variant or hash is unknown to
+            this tenant, `manifest_unverifiable` when the stored manifest's signature could not be
+            verified with the published keys or its content could not be read.

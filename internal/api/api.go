@@ -12,6 +12,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
@@ -45,6 +46,9 @@ type Deps struct {
 	// KeySet serves the public key set (/.well-known/cipherframe-keys.json). Without it the
 	// endpoint answers 503.
 	KeySet *signing.KeySet
+	// Repos serves the integrity endpoints (manifest, proof, verify; M5-3), together with KeySet.
+	// Without either they answer 503 dependency_unavailable.
+	Repos *db.Repos
 }
 
 // API is the control-plane HTTP handler.
@@ -61,7 +65,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})

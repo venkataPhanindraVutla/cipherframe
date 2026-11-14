@@ -71,6 +71,7 @@ func (e HealthResponseStatus) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
+	ProblemCodeArtifactNotFound      ProblemCode = "artifact_not_found"
 	ProblemCodeAssetNotReady         ProblemCode = "asset_not_ready"
 	ProblemCodeConflict              ProblemCode = "conflict"
 	ProblemCodeDependencyUnavailable ProblemCode = "dependency_unavailable"
@@ -91,6 +92,8 @@ const (
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
+	case ProblemCodeArtifactNotFound:
+		return true
 	case ProblemCodeAssetNotReady:
 		return true
 	case ProblemCodeConflict:

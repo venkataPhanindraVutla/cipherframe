@@ -43,6 +43,9 @@ var operationScopes = map[string][]db.Scope{
 
 	"ListPlaybackEvents":          {db.ScopeAssetsRead},
 	"GetAssetAccessLog":           {db.ScopeAssetsRead},
+	"GetAssetManifest":            {db.ScopeAssetsRead},
+	"GetAssetProof":               {db.ScopeAssetsRead},
+	"VerifyArtifact":              {db.ScopeAssetsRead},
 	"GetPlaybackSessionAccessLog": {db.ScopeAssetsRead},
 	"GetPrivacySettings":          {db.ScopeAdmin},
 	"UpdatePrivacySettings":       {db.ScopeAdmin},
@@ -265,4 +268,16 @@ func (g guarded) RotateSigningKey(w http.ResponseWriter, r *http.Request) {
 
 func (g guarded) RetireSigningKey(w http.ResponseWriter, r *http.Request, keyID gen.SigningKeyIdPath) {
 	g.a.run("RetireSigningKey", w, r, func(r *http.Request) { g.ServerInterface.RetireSigningKey(w, r, keyID) })
+}
+
+func (g guarded) GetAssetManifest(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("GetAssetManifest", w, r, func(r *http.Request) { g.ServerInterface.GetAssetManifest(w, r, assetID) })
+}
+
+func (g guarded) GetAssetProof(w http.ResponseWriter, r *http.Request, assetID gen.AssetId, params gen.GetAssetProofParams) {
+	g.a.run("GetAssetProof", w, r, func(r *http.Request) { g.ServerInterface.GetAssetProof(w, r, assetID, params) })
+}
+
+func (g guarded) VerifyArtifact(w http.ResponseWriter, r *http.Request) {
+	g.a.run("VerifyArtifact", w, r, func(r *http.Request) { g.ServerInterface.VerifyArtifact(w, r) })
 }
