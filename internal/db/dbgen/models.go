@@ -76,6 +76,9 @@ type AssetManifest struct {
 	TopRoot       []byte
 	Envelope      []byte
 	CreatedAt     time.Time
+	TsToken       []byte
+	TsGenTime     *time.Time
+	TsTsaUrl      *string
 }
 
 type AuditEvent struct {

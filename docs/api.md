@@ -1028,14 +1028,16 @@ base64), `created_at`, `activated_at` and `retired_at`. Only public data is ever
 
 ## Integrity: manifests, proofs, verify (ADR 0033, 0039)
 
-Every ready asset has a signed manifest (see [integrity.md](integrity.md)). These three operations
-serve it, prove one artifact against it and answer "is this file ours?". All need `assets:read` and
+Every ready asset has a signed manifest (see [integrity.md](integrity.md)). These four operations
+serve it, return its optional timestamp token, prove one artifact against it and answer "is this
+file ours?". All need `assets:read` and
 are tenant-scoped: an asset of another tenant behaves as if it did not exist. The signing keys they
 rely on are public (`getSigningKeySet`); the offline verifier (M5-4) needs nothing else.
 
 | Operation | Route | Scope |
 |---|---|---|
 | `getAssetManifest` | `GET /v1/assets/{asset_id}/manifest` | `assets:read` |
+| `getAssetManifestTimestamp` | `GET /v1/assets/{asset_id}/manifest/timestamp` | `assets:read` |
 | `getAssetProof` | `GET /v1/assets/{asset_id}/proof?path=&variant=` | `assets:read` |
 | `verifyArtifact` | `POST /v1/verify` | `assets:read` |
 
@@ -1050,6 +1052,26 @@ curl -s -H "Authorization: Bearer $CF_KEY" \
   https://api.example.com/v1/assets/$ASSET/manifest -o manifest.json
 jq -r .payload manifest.json | base64 -d | jq '.top_level.root'
 ```
+
+**Timestamp.** `GET /v1/assets/{asset_id}/manifest/timestamp` returns the RFC 3161 token that
+anchors the asset's current manifest (ADR 0041), when `CIPHERFRAME_TSA_URL` is configured and the
+authority has answered:
+
+```json
+{
+  "token": "MIIL…",
+  "gen_time": "2026-11-14T10:15:30Z",
+  "tsa_url": "https://tsa.example.com/rfc3161",
+  "imprint_sha256": "9f2c…"
+}
+```
+
+`token` is the base64 DER TimeStampToken and `imprint_sha256` is the hex SHA-256 of the manifest's
+decoded `payload`, which is what the token stamps. Save the response as `ts.json` and give it to
+`cipherframe verify --timestamp`. The manifest endpoint is unchanged. Errors: `404 not_anchored`
+when the manifest has no token yet (anchoring is off, the authority has not answered, or the
+manifest was just re-signed and its new token is pending), `404 not_found` for an unknown asset, one
+that is not ready and one without a manifest.
 
 **Proof.** `GET /v1/assets/{asset_id}/proof?path=720p/seg-0.m4s` proves one artifact. `path` is the
 manifest path, relative to the variant's HLS prefix (the same form as the URIs in the master
@@ -1190,6 +1212,7 @@ server-side only.
 | `variant_unavailable` | 409 | no | A session or proof asked for the masked variant of an asset created without `mask_faces`. |
 | `variant_not_ready` | 409 | no | A session or proof asked for the masked variant (or it is the default) and it is not `ready`. |
 | `artifact_not_found` | 404 | no | A proof was requested for a path that is not an artifact of the asset's signed manifest. |
+| `not_anchored` | 404 | no | The manifest has no RFC 3161 timestamp token (anchoring is off, or the token is still pending). |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |

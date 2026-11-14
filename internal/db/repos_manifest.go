@@ -20,6 +20,15 @@ type AssetManifest struct {
 	TopRoot       []byte // the top-level Merkle root named in the manifest
 	Envelope      []byte
 	CreatedAt     time.Time
+	// Timestamp is the RFC 3161 token of PayloadSHA256 once it is anchored (ADR 0041), else nil.
+	Timestamp *ManifestTimestamp
+}
+
+// ManifestTimestamp is the stored timestamp token of a manifest payload.
+type ManifestTimestamp struct {
+	Token   []byte // DER TimeStampToken
+	GenTime time.Time
+	TSAURL  string
 }
 
 func (m AssetManifest) valid() bool {
@@ -56,10 +65,28 @@ func (r *Repos) GetManifest(ctx context.Context, assetID id.AssetID) (AssetManif
 	if err != nil {
 		return AssetManifest{}, mapError(err)
 	}
-	return AssetManifest{
+	m := AssetManifest{
 		AssetID: assetID, TenantID: fromPG[id.TenantKind](row.TenantID), KeyID: row.KeyID,
 		PayloadSHA256: row.PayloadSha256, TopRoot: row.TopRoot, Envelope: row.Envelope, CreatedAt: row.CreatedAt.UTC(),
-	}, nil
+	}
+	if row.TsToken != nil && row.TsGenTime != nil && row.TsTsaUrl != nil {
+		m.Timestamp = &ManifestTimestamp{Token: row.TsToken, GenTime: row.TsGenTime.UTC(), TSAURL: *row.TsTsaUrl}
+	}
+	return m, nil
+}
+
+// SetManifestTimestamp stores the token of the payload whose SHA-256 is payloadSHA256. It reports
+// false, and stores nothing, when the asset's manifest no longer has that payload (it was
+// re-signed or removed), so a stale token is never attached to a newer manifest.
+func (r *Repos) SetManifestTimestamp(ctx context.Context, assetID id.AssetID, payloadSHA256 []byte, ts ManifestTimestamp) (bool, error) {
+	aid, err := requirePG(assetID)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.q.SetAssetManifestTimestamp(ctx, dbgen.SetAssetManifestTimestampParams{
+		AssetID: aid, PayloadSha256: payloadSHA256, TsToken: ts.Token, TsGenTime: ts.GenTime.UTC(), TsTsaUrl: ts.TSAURL,
+	})
+	return n > 0, mapError(err)
 }
 
 // DeleteManifest removes the asset's manifest and reports whether there was one. A processing

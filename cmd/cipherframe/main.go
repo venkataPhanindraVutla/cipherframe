@@ -15,7 +15,7 @@ const usage = `cipherframe: Cipherframe command line tool
 
 Usage:
   cipherframe verify --manifest m.json (--keys keys.json | --keys-url URL) [--variant original|masked]
-                     [--path P] [--root DIR] [--json] <file-or-dir>...
+                     [--path P] [--root DIR] [--json] [--timestamp ts.json [--tsa-ca ca.pem]] <file-or-dir>...
   cipherframe verify --manifest m.json (--keys keys.json | --keys-url URL) --proof p.json <file>
   cipherframe version
   cipherframe help

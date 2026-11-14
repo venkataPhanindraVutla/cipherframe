@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anchor"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
@@ -48,6 +49,15 @@ type Repo interface {
 type DBRepo struct {
 	*db.Repos
 	pool *pgxpool.Pool
+	// anchor, when set, receives a manifest.anchor job in the transaction that stores a manifest
+	// (ADR 0041).
+	anchor anchor.Enqueuer
+}
+
+// WithAnchor makes the repository enqueue a manifest.anchor job with every manifest it stores.
+func (r *DBRepo) WithAnchor(q anchor.Enqueuer) *DBRepo {
+	r.anchor = q
+	return r
 }
 
 // NewDBRepo returns a Repo over pool.
@@ -69,7 +79,7 @@ func inTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx, *db.Repos) er
 // Complete implements Repo.
 func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, c db.Completion) (db.Asset, error) {
 	var out db.Asset
-	err := inTx(ctx, r.pool, func(_ pgx.Tx, repos *db.Repos) error {
+	err := inTx(ctx, r.pool, func(tx pgx.Tx, repos *db.Repos) error {
 		for _, a := range arts {
 			if err := repos.RecordArtifact(ctx, a); err != nil {
 				return err
@@ -77,14 +87,17 @@ func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.Asse
 		}
 		var err error
 		out, err = repos.CompleteProcessing(ctx, tenant, asset, c)
-		return err
+		if err != nil || c.Manifest == nil {
+			return err
+		}
+		return r.enqueueAnchor(ctx, tx, tenant, asset, c.Manifest.PayloadSHA256)
 	})
 	return out, err
 }
 
 // CompleteMasking implements Repo.
 func (r *DBRepo) CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, faces int, at time.Time) error {
-	return db.Tx(ctx, r.pool, func(tx *db.Repos) error {
+	return inTx(ctx, r.pool, func(rawTx pgx.Tx, tx *db.Repos) error {
 		cur, err := tx.LockAsset(ctx, tenant, asset)
 		if err != nil {
 			return err
@@ -104,9 +117,20 @@ func (r *DBRepo) CompleteMasking(ctx context.Context, tenant id.TenantID, asset 
 		if err := tx.InsertManifest(ctx, m); err != nil {
 			return err
 		}
+		// The new row has no token; the old one went with the old row. Anchor the new payload.
+		if err := r.enqueueAnchor(ctx, rawTx, tenant, asset, m.PayloadSHA256); err != nil {
+			return err
+		}
 		_, err = tx.SetAssetMasking(ctx, tenant, asset, db.MaskingReady, &faces, at)
 		return err
 	})
+}
+
+func (r *DBRepo) enqueueAnchor(ctx context.Context, tx pgx.Tx, tenant id.TenantID, asset id.AssetID, payloadSHA256 []byte) error {
+	if r.anchor == nil {
+		return nil
+	}
+	return anchor.Enqueue(ctx, r.anchor, tx, tenant, asset, payloadSHA256)
 }
 
 // SetMasking implements Repo.

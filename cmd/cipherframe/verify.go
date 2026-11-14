@@ -62,6 +62,8 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		root         = fl.String("root", "", "HLS root that file paths are relative to")
 		proofFile    = fl.String("proof", "", "inclusion proof JSON for the single file argument")
 		asJSON       = fl.Bool("json", false, "machine-readable output")
+		tsFile       = fl.String("timestamp", "", "RFC 3161 timestamp document (GET .../manifest/timestamp) to check")
+		tsaCA        = fl.String("tsa-ca", "", "PEM CA bundle for --timestamp (default: the system roots)")
 	)
 	if err := fl.Parse(args); err != nil {
 		return exitUsage
@@ -83,6 +85,8 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		return usageErr("--proof takes exactly one file and no --path or --root")
 	case *path != "" && fl.NArg() != 1:
 		return usageErr("--path takes exactly one file")
+	case *tsaCA != "" && *tsFile == "":
+		return usageErr("--tsa-ca needs --timestamp")
 	}
 	if *keysURL != "" {
 		if err := checkKeysURL(*keysURL); err != nil {
@@ -96,7 +100,15 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		lines  []line
 		signed *offline.Signed
 		pr     *proof.Proof
+		env    []byte
 	)
+	done := func() int {
+		var ts *tsStatus
+		if *tsFile != "" {
+			ts = checkTimestamp(*tsFile, *tsaCA, env)
+		}
+		return finish(stdout, lines, *asJSON, ts)
+	}
 	fail := func(r offline.Result) { // one line per file for a failure that affects them all
 		for _, f := range fl.Args() {
 			lines = append(lines, line{Path: f, Outcome: "cannot_say", Reason: string(r.Reason), Detail: r.Detail})
@@ -104,7 +116,6 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	}
 	keys, err := loadKeys(*keysFile, *keysURL)
 	if err == nil {
-		var env []byte
 		if env, err = readLimited(*manifestFile, maxManifestBytes); err == nil {
 			signed, err = offline.Open(env, keys)
 		}
@@ -117,7 +128,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		fail(offline.FromError(err))
-		return finish(stdout, lines, *asJSON)
+		return done()
 	}
 
 	var work []jobs
@@ -147,7 +158,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		o := strings.ReplaceAll(r.Outcome.String(), " ", "_")
 		lines = append(lines, line{Path: w.path, Outcome: o, Reason: string(r.Reason), Detail: r.Detail})
 	}
-	return finish(stdout, lines, *asJSON)
+	return done()
 }
 
 // expand turns the file and directory arguments into jobs. A directory contributes every file
@@ -198,7 +209,7 @@ func relPath(file, root string) string {
 	return filepath.ToSlash(filepath.Clean(file))
 }
 
-func finish(stdout io.Writer, lines []line, asJSON bool) int {
+func finish(stdout io.Writer, lines []line, asJSON bool, ts *tsStatus) int {
 	var ours, modified, cannot, missing int
 	for _, l := range lines {
 		switch l.Outcome {
@@ -216,14 +227,15 @@ func finish(stdout io.Writer, lines []line, asJSON bool) int {
 	switch {
 	case modified > 0:
 		code = exitModified
-	case cannot+missing > 0 || len(lines) == 0:
+	case cannot+missing > 0 || len(lines) == 0 || (ts != nil && ts.Status == tsInvalid):
 		code = exitCannot
 	}
 	if asJSON {
 		out := struct {
-			Results []line         `json:"results"`
-			Summary map[string]int `json:"summary"`
-		}{lines, map[string]int{"ours": ours, "modified": modified, "cannot_say": cannot, "missing": missing}}
+			Results   []line         `json:"results"`
+			Summary   map[string]int `json:"summary"`
+			Timestamp *tsStatus      `json:"timestamp,omitempty"`
+		}{lines, map[string]int{"ours": ours, "modified": modified, "cannot_say": cannot, "missing": missing}, ts}
 		if out.Results == nil {
 			out.Results = []line{}
 		}
@@ -237,6 +249,7 @@ func finish(stdout io.Writer, lines []line, asJSON bool) int {
 		_, _ = fmt.Fprintf(stdout, "%-11s %s  (%s)\n", o, l.Path, l.Reason+detail(l))
 	}
 	_, _ = fmt.Fprintf(stdout, "%d ours, %d modified, %d cannot say, %d missing\n", ours, modified, cannot, missing)
+	printTimestamp(stdout, ts)
 	return code
 }
 

@@ -107,6 +107,7 @@ func (l *loader) load() *Config {
 	c.Playback = l.playbackKeys(prod)
 	c.KMS = l.kms(prod)
 	c.Media = l.media()
+	c.TSA = l.tsa(prod)
 	return c
 }
 

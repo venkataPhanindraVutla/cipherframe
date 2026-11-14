@@ -71,6 +71,7 @@ type Config struct {
 	Playback    PlaybackKeys
 	KMS         KMS
 	Media       Media
+	TSA         TSA
 }
 
 // LogValue implements slog.LogValuer. It shows the effective configuration
@@ -124,6 +125,11 @@ func (c *Config) LogValue() slog.Value {
 			slog.Int("max_source_height", c.Media.MaxSourceHeight),
 			slog.Duration("transcode_timeout", c.Media.TranscodeTimeout),
 			slog.String("work_dir", c.Media.WorkDir),
+		),
+		slog.Group("tsa",
+			slog.String("url", c.TSA.URL),
+			slog.Duration("timeout", c.TSA.Timeout),
+			slog.String("policy_oid", c.TSA.PolicyOID),
 		),
 		slog.Group("kms",
 			slog.String("provider", c.KMS.Provider),

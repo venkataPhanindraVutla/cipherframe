@@ -25,7 +25,7 @@ func (q *Queries) DeleteAssetManifest(ctx context.Context, assetID pgtype.UUID) 
 }
 
 const getAssetManifest = `-- name: GetAssetManifest :one
-SELECT asset_id, tenant_id, key_id, payload_sha256, top_root, envelope, created_at FROM asset_manifests WHERE asset_id = $1
+SELECT asset_id, tenant_id, key_id, payload_sha256, top_root, envelope, created_at, ts_token, ts_gen_time, ts_tsa_url FROM asset_manifests WHERE asset_id = $1
 `
 
 func (q *Queries) GetAssetManifest(ctx context.Context, assetID pgtype.UUID) (AssetManifest, error) {
@@ -39,6 +39,9 @@ func (q *Queries) GetAssetManifest(ctx context.Context, assetID pgtype.UUID) (As
 		&i.TopRoot,
 		&i.Envelope,
 		&i.CreatedAt,
+		&i.TsToken,
+		&i.TsGenTime,
+		&i.TsTsaUrl,
 	)
 	return i, err
 }
@@ -74,4 +77,34 @@ func (q *Queries) InsertAssetManifest(ctx context.Context, arg InsertAssetManife
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const setAssetManifestTimestamp = `-- name: SetAssetManifestTimestamp :execrows
+UPDATE asset_manifests
+SET ts_token = $1::bytea, ts_gen_time = $2::timestamptz,
+    ts_tsa_url = $3::text
+WHERE asset_id = $4::uuid AND payload_sha256 = $5::bytea
+`
+
+type SetAssetManifestTimestampParams struct {
+	TsToken       []byte
+	TsGenTime     time.Time
+	TsTsaUrl      string
+	AssetID       pgtype.UUID
+	PayloadSha256 []byte
+}
+
+// Stores the token only while the manifest still has the payload that was stamped.
+func (q *Queries) SetAssetManifestTimestamp(ctx context.Context, arg SetAssetManifestTimestampParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setAssetManifestTimestamp,
+		arg.TsToken,
+		arg.TsGenTime,
+		arg.TsTsaUrl,
+		arg.AssetID,
+		arg.PayloadSha256,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

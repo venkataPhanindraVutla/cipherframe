@@ -16,7 +16,7 @@ var declared = []Code{
 	InvalidRequest, Unauthenticated, Forbidden, NotFound, MethodNotAllowed, Conflict,
 	PayloadTooLarge, RateLimited, InternalError, DependencyUnavailable, Timeout,
 	AssetNotReady, SessionLimit, VariantUnavailable, VariantNotReady,
-	ArtifactNotFound,
+	ArtifactNotFound, NotAnchored,
 }
 
 func marshal(t *testing.T, p Problem) string {
