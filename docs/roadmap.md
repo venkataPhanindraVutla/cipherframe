@@ -9,7 +9,7 @@ Last updated: 2026-11-14.
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M6 next) |
+| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M7 next, after gate P12) |
 | v2.0.0 | npm, Go and Python SDKs and verifiers, shared conformance vectors | Not started |
 | v2.1.0 | Python ML worker: local speech-to-text, perceptual fingerprint matching, invisible per-asset or per-tenant watermark | Not started |
 
@@ -151,6 +151,10 @@ Smaller items found while building, not yet scheduled:
 - Give `audit_events` and `playback_sessions` a retention window (not covered by ADR 0040; see ADR 0042).
 - Have the retention sweep also create the access-log partitions, so a deployment without the edge role
   keeps them (the edge sweeper does it today).
+- Let the retention job page past expired assets it cannot queue: today it always reads the 100
+  oldest, so 100 that keep failing would hold back the rest.
+- Retry an `asset.delete` job on storage errors that look final (for example a missing bucket):
+  today such an error cancels the job, and the asset stays `deleting` until `DELETE` is repeated.
 - Rate-limit the viewer-authorization callback and re-wrap its stored secrets on key rotation.
 - Let the published key set mark a key "revoked as compromised", not only "retired"
   ([integrity.md](integrity.md)).

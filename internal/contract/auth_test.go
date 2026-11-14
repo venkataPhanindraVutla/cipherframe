@@ -188,8 +188,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 37 {
-		t.Fatalf("exercised %d secured operations, want 37", n)
+	if n != 38 {
+		t.Fatalf("exercised %d secured operations, want 38", n)
 	}
 }
 
