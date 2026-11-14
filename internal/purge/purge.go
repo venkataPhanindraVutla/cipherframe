@@ -237,13 +237,30 @@ func (p *Purger) purgeStorage(ctx context.Context, asset db.Asset, log *slog.Log
 			if pass > 1 {
 				log.InfoContext(ctx, "storage verified empty", slog.Int("passes", pass))
 			}
-			return t, nil
+			return t, p.countDeletedEarlier(ctx, asset, t)
 		}
 		if pass > 1 {
 			log.WarnContext(ctx, "objects were found again after deletion", slog.Int("pass", pass), slog.Int("objects", found))
 		}
 	}
 	return nil, ErrLeftovers
+}
+
+// countDeletedEarlier adds to the tally the objects an earlier attempt of the job already deleted,
+// so a retried purge still records them: the registry rows and the source columns survive until
+// finish. Objects this attempt saw keep the size it saw.
+func (p *Purger) countDeletedEarlier(ctx context.Context, asset db.Asset, t *tally) error {
+	arts, err := p.repos.ListArtifacts(ctx, asset.ID)
+	if err != nil {
+		return err
+	}
+	for _, a := range arts {
+		t.add(Classify(asset.TenantID, asset.ID, keys.Bucket(a.Bucket), a.ObjectKey), a.ObjectKey, a.SizeBytes)
+	}
+	if asset.SourceKey != "" && asset.SourceSizeBytes > 0 { // measured by the worker, so it was stored
+		t.add(Classify(asset.TenantID, asset.ID, keys.Source, asset.SourceKey), asset.SourceKey, asset.SourceSizeBytes)
+	}
+	return nil
 }
 
 // sweep lists every prefix, deletes what it finds in batches and returns how many objects it saw.

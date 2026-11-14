@@ -471,6 +471,33 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 	if got, _ = r.repos.GetAsset(ctx, a.TenantID, a.ID); got.State != db.AssetDeleted {
 		t.Errorf("state = %s", got.State)
 	}
+	// The retry found only the stuck poster, but the record still counts what the first attempt
+	// deleted: the six registered segments (three per variant) plus the poster.
+	row, err := r.repos.GetDeletionRecord(ctx, a.TenantID, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := r.signer.PublicKeys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keySet := offline.KeySet{}
+	for _, k := range pub {
+		keySet[k.KeyID] = k.PublicKey
+	}
+	signed, err := offline.OpenDeletion(row.Envelope, keySet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivery int64
+	for _, o := range signed.Record.Objects {
+		if o.Bucket == "delivery" {
+			delivery += o.Count
+		}
+	}
+	if delivery != 7 {
+		t.Errorf("the record counts %d delivery objects after a retry, want 7", delivery)
+	}
 }
 
 // While a processing or masking job of the asset is active the purge waits for it; once it is gone
