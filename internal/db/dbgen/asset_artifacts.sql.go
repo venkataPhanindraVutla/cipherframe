@@ -12,13 +12,21 @@ import (
 )
 
 const deleteAssetHLSArtifacts = `-- name: DeleteAssetHLSArtifacts :execrows
-DELETE FROM asset_artifacts WHERE asset_id = $1 AND kind IN ('master', 'playlist', 'init', 'segment')
+DELETE FROM asset_artifacts
+WHERE asset_id = $1::uuid AND variant = $2::text
+  AND kind IN ('master', 'playlist', 'init', 'segment')
 `
 
-// The playlists, init segments and media segments of an asset (everything the processing job makes
-// again on a retry). A poster is not one of them.
-func (q *Queries) DeleteAssetHLSArtifacts(ctx context.Context, assetID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAssetHLSArtifacts, assetID)
+type DeleteAssetHLSArtifactsParams struct {
+	AssetID pgtype.UUID
+	Variant string
+}
+
+// The playlists, init segments and media segments of one variant of an asset (everything the
+// processing job, or the masking job for the masked variant, makes again on a retry). A poster is
+// not one of them.
+func (q *Queries) DeleteAssetHLSArtifacts(ctx context.Context, arg DeleteAssetHLSArtifactsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAssetHLSArtifacts, arg.AssetID, arg.Variant)
 	if err != nil {
 		return 0, err
 	}
@@ -26,7 +34,7 @@ func (q *Queries) DeleteAssetHLSArtifacts(ctx context.Context, assetID pgtype.UU
 }
 
 const listAssetArtifacts = `-- name: ListAssetArtifacts :many
-SELECT asset_id, kind, rendition, bucket, object_key, size_bytes, sha256, created_at FROM asset_artifacts WHERE asset_id = $1 ORDER BY bucket, object_key
+SELECT asset_id, kind, rendition, bucket, object_key, size_bytes, sha256, created_at, variant FROM asset_artifacts WHERE asset_id = $1 ORDER BY bucket, object_key
 `
 
 func (q *Queries) ListAssetArtifacts(ctx context.Context, assetID pgtype.UUID) ([]AssetArtifact, error) {
@@ -47,6 +55,7 @@ func (q *Queries) ListAssetArtifacts(ctx context.Context, assetID pgtype.UUID) (
 			&i.SizeBytes,
 			&i.Sha256,
 			&i.CreatedAt,
+			&i.Variant,
 		); err != nil {
 			return nil, err
 		}
@@ -59,10 +68,10 @@ func (q *Queries) ListAssetArtifacts(ctx context.Context, assetID pgtype.UUID) (
 }
 
 const upsertAssetArtifact = `-- name: UpsertAssetArtifact :exec
-INSERT INTO asset_artifacts (asset_id, kind, rendition, bucket, object_key, size_bytes, sha256)
+INSERT INTO asset_artifacts (asset_id, kind, rendition, bucket, object_key, size_bytes, sha256, variant)
 VALUES (
     $1::uuid, $2::text, $3::text, $4::text,
-    $5::text, $6::bigint, $7::bytea
+    $5::text, $6::bigint, $7::bytea, $8::text
 )
 ON CONFLICT (bucket, object_key) DO UPDATE
 SET kind = EXCLUDED.kind, rendition = EXCLUDED.rendition,
@@ -78,6 +87,7 @@ type UpsertAssetArtifactParams struct {
 	ObjectKey string
 	SizeBytes int64
 	Sha256    []byte
+	Variant   string
 }
 
 // Registers (or re-registers, on a retry) one derived object. An object key that already belongs
@@ -91,6 +101,7 @@ func (q *Queries) UpsertAssetArtifact(ctx context.Context, arg UpsertAssetArtifa
 		arg.ObjectKey,
 		arg.SizeBytes,
 		arg.Sha256,
+		arg.Variant,
 	)
 	return err
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // FailureSourceMissing: the source object is gone from the source bucket.
@@ -76,7 +77,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	}
 
 	// 3. The content key: created once, here, before any rendition exists, and reused by a retry.
-	ck, err := p.Keys.Ensure(ctx, asset.TenantID, asset.ID)
+	ck, err := p.Keys.Ensure(ctx, asset.TenantID, asset.ID, keys.Original)
 	if err != nil {
 		return err
 	}
@@ -108,7 +109,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	}
 
 	// 6. Encrypt, upload and write the canonical playlists.
-	pub, err := p.publish(ctx, asset, key, outs, info, log)
+	pub, err := p.publish(ctx, asset, keys.Original, key, outs, info, log)
 	if err != nil {
 		return err
 	}

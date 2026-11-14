@@ -24,6 +24,7 @@ func TestSweepStaleJobDirs(t *testing.T) {
 		return p
 	}
 	stale := mk("job-old", 10*time.Hour)
+	staleMask := mk("job-mask-old", 10*time.Hour) // a masking job directory holds plaintext too
 	live := mk("job-new", time.Minute)
 	other := mk("keep-me", 10*time.Hour)
 
@@ -31,11 +32,13 @@ func TestSweepStaleJobDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("removed %d, want 1", n)
+	if n != 2 {
+		t.Fatalf("removed %d, want 2", n)
 	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatal("stale job directory was not removed")
+	for _, p := range []string{stale, staleMask} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("stale directory %s was not removed", filepath.Base(p))
+		}
 	}
 	for _, p := range []string{live, other} {
 		if _, err := os.Stat(p); err != nil {

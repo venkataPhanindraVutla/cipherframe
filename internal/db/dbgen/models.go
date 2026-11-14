@@ -65,6 +65,7 @@ type AssetArtifact struct {
 	SizeBytes int64
 	Sha256    []byte
 	CreatedAt time.Time
+	Variant   string
 }
 
 type AssetManifest struct {

@@ -40,10 +40,19 @@ func checkMediaTools(ctx context.Context, cfg *config.Config, log *slog.Logger) 
 
 // registerProcessing registers the asset.process job (M3). The worker role is the only one that
 // calls it, so api and edge never need FFmpeg or a work directory.
-func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, contentKeys *contentkey.Manager, proc *processing, log *slog.Logger) error {
+func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Queue, contentKeys *contentkey.Manager, proc *processing, log *slog.Logger) error {
 	cfg := proc.Config
+	repo := pipeline.NewDBRepo(pool)
+	repo.Queue = inserter // asset.mask is enqueued in the transaction that completes a masking asset
+	// The masker's hand-off tasks get an await job (ADR 0010): it requeues retryable failures and
+	// expires leases. asset.mask itself reads the outcome, so nothing is left to do on a result.
+	if err := jobs.RegisterExternal(reg, pool, jobs.ExternalConfig{
+		OnResult: func(context.Context, jobs.Task, jobs.Result) error { return nil },
+	}); err != nil {
+		return err
+	}
 	return pipeline.Register(reg, pipeline.Deps{
-		Repo:     pipeline.NewDBRepo(pool),
+		Repo:     repo,
 		Source:   proc.Buckets.Source,
 		Delivery: proc.Buckets.Delivery,
 		Keys:     pipeline.ContentKeys{Pool: pool, Manager: contentKeys},
@@ -54,6 +63,8 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, contentKeys *con
 		},
 		WorkDir:          cfg.Media.WorkDir,
 		TranscodeTimeout: cfg.Media.TranscodeTimeout,
+		Tasks:            pipeline.DBTasks{Pool: pool, Queue: inserter},
+		MaskTimeout:      cfg.Media.MaskTimeout,
 		Log:              log,
 	})
 }

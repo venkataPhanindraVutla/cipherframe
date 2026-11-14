@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"time"
+	"uuid"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
@@ -24,37 +27,137 @@ type Repo interface {
 	RecordSource(ctx context.Context, tenant id.TenantID, asset id.AssetID, sha256 []byte, size int64) error
 	SetProgress(ctx context.Context, tenant id.TenantID, asset id.AssetID, percent int) error
 	ResetProgress(ctx context.Context, tenant id.TenantID, asset id.AssetID) error
-	DeleteHLSArtifacts(ctx context.Context, asset id.AssetID) (int64, error)
+	// DeleteHLSArtifacts removes one variant's artifact rows (db.VariantOriginal or db.VariantMasked).
+	DeleteHLSArtifacts(ctx context.Context, asset id.AssetID, variant string) (int64, error)
 	// DeleteManifest removes the asset's integrity manifest, if it has one.
 	DeleteManifest(ctx context.Context, asset id.AssetID) (bool, error)
+	// GetManifest returns the asset's stored manifest (not_found when it has none).
+	GetManifest(ctx context.Context, asset id.AssetID) (db.AssetManifest, error)
 	// Complete registers every artifact, stores c.Manifest and moves the asset processing -> ready
 	// in ONE transaction, so a ready asset always has its full artifact registry and its manifest.
 	Complete(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, c db.Completion) (db.Asset, error)
+	// CompleteMasking registers the masked variant's artifacts, replaces the manifest with the
+	// re-signed one and sets masking_state ready with the face count, in ONE transaction. It is a
+	// state conflict (db.ErrStateChanged) unless the asset is still ready.
+	CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, faces int, at time.Time) error
+	// SetMasking records the masking state (and the face count, when known) of a masking asset.
+	SetMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, state string, faces *int, at time.Time) error
+}
+
+// Enqueuer inserts a job in the caller's transaction. *jobs.Queue implements it.
+type Enqueuer interface {
+	Enqueue(ctx context.Context, tx pgx.Tx, args jobs.Args, opts *jobs.EnqueueOpts) (int64, error)
 }
 
 // DBRepo is the Postgres implementation of Repo.
 type DBRepo struct {
 	*db.Repos
 	pool *pgxpool.Pool
+	// Queue enqueues asset.mask when a masking asset completes. Complete fails for a masking asset
+	// while it is nil, so the job is never silently skipped.
+	Queue Enqueuer
 }
 
 // NewDBRepo returns a Repo over pool.
 func NewDBRepo(pool *pgxpool.Pool) *DBRepo { return &DBRepo{Repos: db.New(pool), pool: pool} }
 
-// Complete implements Repo.
+// inTx runs fn in a transaction, handing it the raw transaction too (jobs are inserted with it).
+func inTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx, *db.Repos) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return db.MapError(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() // a no-op after Commit
+	if err := fn(tx, db.New(tx)); err != nil {
+		return err
+	}
+	return db.MapError(tx.Commit(ctx))
+}
+
+// Complete implements Repo. For an asset created with mask_faces it also enqueues asset.mask in the
+// same transaction, so the masked variant is built if and only if the asset became ready.
 func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, c db.Completion) (db.Asset, error) {
 	var out db.Asset
-	err := db.Tx(ctx, r.pool, func(tx *db.Repos) error {
+	err := inTx(ctx, r.pool, func(tx pgx.Tx, repos *db.Repos) error {
+		for _, a := range arts {
+			if err := repos.RecordArtifact(ctx, a); err != nil {
+				return err
+			}
+		}
+		var err error
+		out, err = repos.CompleteProcessing(ctx, tenant, asset, c)
+		if err != nil || !out.MaskFaces {
+			return err
+		}
+		if r.Queue == nil {
+			return errs.New(errs.InternalError, "no queue to enqueue the masking job")
+		}
+		_, err = r.Queue.Enqueue(ctx, tx, MaskArgs{TenantID: tenant, AssetID: asset}, nil)
+		return err
+	})
+	return out, err
+}
+
+// CompleteMasking implements Repo.
+func (r *DBRepo) CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, faces int, at time.Time) error {
+	return db.Tx(ctx, r.pool, func(tx *db.Repos) error {
+		cur, err := tx.LockAsset(ctx, tenant, asset)
+		if err != nil {
+			return err
+		}
+		if cur.State != db.AssetReady || !cur.MaskFaces {
+			return errs.Wrap(errs.Conflict, "the asset can no longer receive a masked variant", db.ErrStateChanged)
+		}
 		for _, a := range arts {
 			if err := tx.RecordArtifact(ctx, a); err != nil {
 				return err
 			}
 		}
-		var err error
-		out, err = tx.CompleteProcessing(ctx, tenant, asset, c)
+		// The manifest is replaced by the one that also covers the masked variant.
+		if _, err := tx.DeleteManifest(ctx, asset); err != nil {
+			return err
+		}
+		if err := tx.InsertManifest(ctx, m); err != nil {
+			return err
+		}
+		_, err = tx.SetAssetMasking(ctx, tenant, asset, db.MaskingReady, &faces, at)
 		return err
 	})
-	return out, err
+}
+
+// SetMasking implements Repo.
+func (r *DBRepo) SetMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, state string, faces *int, at time.Time) error {
+	_, err := r.SetAssetMasking(ctx, tenant, asset, state, faces, at)
+	return err
+}
+
+// Tasks is the hand-off table access asset.mask needs (ADR 0010).
+type Tasks interface {
+	// Create writes a hand-off row for env (and the River job that awaits it) in its own transaction.
+	Create(ctx context.Context, env jobs.Envelope, opts *jobs.TaskOpts) (jobs.Task, error)
+	Get(ctx context.Context, taskID uuid.UUID) (jobs.Task, error)
+}
+
+// DBTasks is the Tasks over Postgres.
+type DBTasks struct {
+	Pool  *pgxpool.Pool
+	Queue *jobs.Queue
+}
+
+// Create implements Tasks.
+func (t DBTasks) Create(ctx context.Context, env jobs.Envelope, opts *jobs.TaskOpts) (jobs.Task, error) {
+	var task jobs.Task
+	err := inTx(ctx, t.Pool, func(tx pgx.Tx, _ *db.Repos) error {
+		var err error
+		task, err = t.Queue.CreateTask(ctx, tx, env, opts)
+		return err
+	})
+	return task, err
+}
+
+// Get implements Tasks.
+func (t DBTasks) Get(ctx context.Context, taskID uuid.UUID) (jobs.Task, error) {
+	return jobs.GetTask(ctx, t.Pool, taskID)
 }
 
 // Key is the part of a content key the pipeline uses. contentkey.ContentKey implements it: Bytes
@@ -64,9 +167,9 @@ type Key interface {
 	Zero()
 }
 
-// KeyEnsurer returns the asset's original-variant content key, creating it first when the asset has none.
+// KeyEnsurer returns the asset's content key of one variant, creating it first when there is none.
 type KeyEnsurer interface {
-	Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (Key, error)
+	Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID, variant keys.Variant) (Key, error)
 }
 
 var _ Key = contentkey.ContentKey{}
@@ -77,13 +180,13 @@ type ContentKeys struct {
 	Manager *contentkey.Manager
 }
 
-// Ensure creates the asset's content key exactly once and returns it. The key is created here,
+// Ensure creates the asset's content key of the variant exactly once and returns it. The key is created here,
 // once, before any transcoding starts, and a retried job finds and reuses it: it is never created
 // lazily inside per-rendition work, where two renditions could race to create it. The asset row is
 // locked for the length of the creating transaction, so two concurrent attempts serialise and the
 // second one finds the key the first created.
-func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (Key, error) {
-	k, err := c.Manager.Get(ctx, tenant, asset, keys.Original)
+func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID, variant keys.Variant) (Key, error) {
+	k, err := c.Manager.Get(ctx, tenant, asset, variant)
 	if err == nil {
 		return k, nil
 	}
@@ -94,7 +197,7 @@ func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.As
 		if _, err := tx.LockAsset(ctx, tenant, asset); err != nil {
 			return err
 		}
-		created, err := c.Manager.Create(ctx, tx, tenant, asset, keys.Original)
+		created, err := c.Manager.Create(ctx, tx, tenant, asset, variant)
 		if err == nil {
 			created.Zero()
 			return nil
@@ -107,7 +210,7 @@ func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.As
 	if err != nil {
 		return nil, err
 	}
-	k, err = c.Manager.Get(ctx, tenant, asset, keys.Original)
+	k, err = c.Manager.Get(ctx, tenant, asset, variant)
 	if err != nil {
 		return nil, err
 	}
