@@ -122,7 +122,7 @@ func (s *TusStore) PreCreate(hook handler.HookEvent) (handler.HTTPResponse, hand
 }
 
 // sourceMetadata is all the metadata an upload keeps: the asset's content type, if any. File
-// names and every other client-supplied value are dropped (privacy gate P11).
+// names and every other client-supplied value are dropped (ADR 0040).
 func sourceMetadata(a db.Asset) handler.MetaData {
 	m := handler.MetaData{}
 	if a.ContentType != "" {

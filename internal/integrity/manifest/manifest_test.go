@@ -215,6 +215,32 @@ func TestNoObjectKeysOrSource(t *testing.T) {
 	}
 }
 
+// The manifest has no member that could hold a file name or title: its members are a closed list
+// (ADR 0040: the original file name is never stored, so it cannot reach a manifest either).
+func TestNoMemberCanHoldAFileName(t *testing.T) {
+	var members func(rt reflect.Type, out map[string]bool)
+	members = func(rt reflect.Type, out map[string]bool) {
+		for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice {
+			rt = rt.Elem()
+		}
+		if rt.Kind() != reflect.Struct {
+			return
+		}
+		for i := range rt.NumField() {
+			name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+			out[name] = true
+			members(rt.Field(i).Type, out)
+		}
+	}
+	got := map[string]bool{}
+	members(reflect.TypeOf(Manifest{}), got)
+	for _, banned := range []string{"filename", "file_name", "original_name", "title", "label", "description", "source_key", "object_key", "bucket"} {
+		if got[banned] {
+			t.Errorf("the manifest has a %q member", banned)
+		}
+	}
+}
+
 func TestValidateRejects(t *testing.T) {
 	mutations := map[string]func(in *Input){
 		"no renditions":   func(in *Input) { in.Renditions = nil },
