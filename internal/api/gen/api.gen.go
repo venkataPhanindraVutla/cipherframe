@@ -697,7 +697,7 @@ type Asset struct {
 	// MaskFaces Whether the asset was created with `mask_faces`.
 	MaskFaces bool `json:"mask_faces"`
 
-	// Masking Present only when `mask_faces` is true. Absent until the original is `ready`.
+	// Masking Present exactly when `mask_faces` is true. `pending` until the masked variant is built.
 	Masking             *Masking   `json:"masking,omitempty"`
 	ProcessingStartedAt *time.Time `json:"processing_started_at,omitempty"`
 	ReadyAt             *time.Time `json:"ready_at,omitempty"`
