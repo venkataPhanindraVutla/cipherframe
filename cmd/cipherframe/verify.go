@@ -69,7 +69,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	variantSet := false
 	fl.Visit(func(f *flag.Flag) { variantSet = variantSet || f.Name == "variant" })
 	usageErr := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "cipherframe verify: "+format+"\n", a...)
+		_, _ = fmt.Fprintf(stderr, "cipherframe verify: "+format+"\n", a...)
 		return exitUsage
 	}
 	switch {
@@ -234,9 +234,9 @@ func finish(stdout io.Writer, lines []line, asJSON bool) int {
 	}
 	for _, l := range lines {
 		o := strings.ReplaceAll(l.Outcome, "_", " ")
-		fmt.Fprintf(stdout, "%-11s %s  (%s)\n", o, l.Path, l.Reason+detail(l))
+		_, _ = fmt.Fprintf(stdout, "%-11s %s  (%s)\n", o, l.Path, l.Reason+detail(l))
 	}
-	fmt.Fprintf(stdout, "%d ours, %d modified, %d cannot say, %d missing\n", ours, modified, cannot, missing)
+	_, _ = fmt.Fprintf(stdout, "%d ours, %d modified, %d cannot say, %d missing\n", ours, modified, cannot, missing)
 	return code
 }
 
@@ -248,20 +248,20 @@ func detail(l line) string {
 }
 
 func hashFile(name string) ([sha256.Size]byte, error) {
-	f, err := os.Open(name)
+	f, err := os.Open(name) //nolint:gosec // the user names the file to verify
 	if err != nil {
 		return [sha256.Size]byte{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return offline.HashReader(f)
 }
 
 func readLimited(name string, limit int64) ([]byte, error) {
-	f, err := os.Open(name)
+	f, err := os.Open(name) //nolint:gosec // the user names the file to verify
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return readAll(f, limit)
 }
 
@@ -338,7 +338,7 @@ func fetchKeys(raw string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetching the key set: HTTP %d", resp.StatusCode)
 	}

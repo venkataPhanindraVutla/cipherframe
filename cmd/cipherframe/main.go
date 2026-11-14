@@ -27,7 +27,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
+		_, _ = fmt.Fprint(stderr, usage)
 		return exitUsage
 	}
 	switch args[0] {
@@ -35,12 +35,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runVerify(args[1:], stdout, stderr)
 	case "version", "--version":
 		info := version.Get()
-		fmt.Fprintf(stdout, "cipherframe %s %s\n", info.Version, info.GoVersion)
+		_, _ = fmt.Fprintf(stdout, "cipherframe %s %s\n", info.Version, info.GoVersion)
 		return 0
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
+		_, _ = fmt.Fprint(stdout, usage)
 		return 0
 	}
-	fmt.Fprintf(stderr, "cipherframe: unknown command %q\n\n%s", args[0], usage)
+	_, _ = fmt.Fprintf(stderr, "cipherframe: unknown command %q\n\n%s", args[0], usage)
 	return exitUsage
 }

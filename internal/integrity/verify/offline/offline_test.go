@@ -16,7 +16,7 @@ import (
 
 func sumOf(t *testing.T, dir, p string) [32]byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p)))
+	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))) //nolint:gosec // test fixture path
 	if err != nil {
 		t.Fatal(err)
 	}

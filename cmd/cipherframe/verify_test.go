@@ -36,7 +36,7 @@ func setup(t *testing.T) env {
 func write(t *testing.T, dir, name string, b []byte) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, b, 0o600); err != nil {
+	if err := os.WriteFile(p, b, 0o600); err != nil { //nolint:gosec // test fixture path
 		t.Fatal(err)
 	}
 	return p
@@ -62,7 +62,7 @@ func TestVerifyDirectoryOurs(t *testing.T) {
 func TestFlippedByteNamesTheExactPath(t *testing.T) {
 	e := setup(t)
 	seg := filepath.Join(e.f.Original, "480p", "seg-1.m4s")
-	b, _ := os.ReadFile(seg)
+	b, _ := os.ReadFile(seg) //nolint:gosec // test fixture path
 	b[0] ^= 1
 	write(t, filepath.Dir(seg), "seg-1.m4s", b)
 	code, out, _ := do("verify", "--manifest", e.manifest, "--keys", e.keys, e.f.Original)
@@ -128,8 +128,8 @@ func TestSingleFileByPathAndRoot(t *testing.T) {
 func TestCannotSayNeverModified(t *testing.T) {
 	e := setup(t)
 	f := filepath.Join(e.f.Original, "master.m3u8")
-	b, _ := os.ReadFile(f)
-	b[0] ^= 1 // a changed file, so any wrong "modified" would show
+	b, _ := os.ReadFile(f) //nolint:gosec // test fixture path
+	b[0] ^= 1              // a changed file, so any wrong "modified" would show
 	write(t, filepath.Dir(f), "master.m3u8", b)
 
 	other := offlinetest.KeySetJSON([]offlinetest.Key{offlinetest.NewKey("sk_z", "z")}, map[string]string{"sk_z": "active"})

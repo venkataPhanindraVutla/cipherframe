@@ -74,7 +74,7 @@ func write(t testing.TB, dir, tag string) ([]manifest.RenditionInput, manifest.S
 	var paths []string
 	obj := func(p, content string) manifest.StoredObject {
 		full := filepath.Join(dir, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(full, []byte(tag+content), 0o600); err != nil {
