@@ -34,3 +34,7 @@ WHERE s.tenant_id = sqlc.arg(tenant_id)::uuid AND s.state = 'ready'
   AND a.kind IN ('master', 'playlist', 'init', 'segment')
 ORDER BY a.created_at, a.object_key
 LIMIT 20;
+
+-- name: DeleteAssetArtifacts :execrows
+-- Every registry row of the asset (the purge: the objects are gone, so are their rows).
+DELETE FROM asset_artifacts WHERE asset_id = $1;

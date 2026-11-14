@@ -202,8 +202,14 @@ func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.As
 		return nil, err
 	}
 	err = db.Tx(ctx, c.Pool, func(tx *db.Repos) error {
-		if _, err := tx.LockAsset(ctx, tenant, asset); err != nil {
+		cur, err := tx.LockAsset(ctx, tenant, asset)
+		if err != nil {
 			return err
+		}
+		// Never create a key for an asset that is being deleted: the purge has destroyed, or is
+		// about to destroy, every key it has (M6-2).
+		if cur.State == db.AssetDeleting || cur.State == db.AssetDeleted {
+			return errs.New(errs.Conflict, "The asset is being deleted.")
 		}
 		created, err := c.Manager.Create(ctx, tx, tenant, asset, variant)
 		if err == nil {

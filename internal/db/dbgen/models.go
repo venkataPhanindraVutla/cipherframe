@@ -54,6 +54,9 @@ type Asset struct {
 	MaskFaces           bool
 	MaskingState        *string
 	FacesDetected       *int32
+	DeletionRequestedAt *time.Time
+	DeletionReason      *string
+	DeletedAt           *time.Time
 }
 
 type AssetArtifact struct {

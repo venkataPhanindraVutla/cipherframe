@@ -206,7 +206,8 @@ func (s *Service) instructions(a db.Asset, tok Token, expires time.Time) Instruc
 	return ins
 }
 
-// Get returns one asset of the tenant. A deleted asset is not_found, like another tenant's.
+// Get returns one asset of the tenant for an operation that changes it. A deleted asset is
+// not_found, like another tenant's.
 func (s *Service) Get(ctx context.Context, tenantID id.TenantID, assetID id.AssetID) (db.Asset, error) {
 	a, err := s.repos.GetAsset(ctx, tenantID, assetID)
 	if err != nil {
@@ -216,6 +217,12 @@ func (s *Service) Get(ctx context.Context, tenantID id.TenantID, assetID id.Asse
 		return db.Asset{}, errs.New(errs.NotFound, "No such asset.")
 	}
 	return a, nil
+}
+
+// View returns one asset of the tenant for reading. Unlike Get it also returns the tombstone of a
+// deleted asset (ADR 0042), so a client can see that a deletion finished.
+func (s *Service) View(ctx context.Context, tenantID id.TenantID, assetID id.AssetID) (db.Asset, error) {
+	return s.repos.GetAsset(ctx, tenantID, assetID)
 }
 
 // List returns one page of the tenant's assets, oldest first, and the cursor of the next page

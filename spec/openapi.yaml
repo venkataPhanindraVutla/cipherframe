@@ -376,8 +376,9 @@ paths:
       operationId: getAsset
       summary: Get an asset
       description: |
-        Returns one asset. An asset of another tenant, or a deleted one, is `not_found`. Requires
-        the `assets:read` scope.
+        Returns one asset. An asset of another tenant is `not_found`. A deleted asset is still
+        returned, as a tombstone with `state` `deleted` (ADR 0042); while it is being deleted
+        `state` is `deleting` and `deletion` shows when and why. Requires the `assets:read` scope.
       tags: [api]
       security:
         - bearerAuth: [assets:read]
@@ -398,6 +399,46 @@ paths:
         "403":
           $ref: "#/components/responses/Problem"
         "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteAsset
+      summary: Delete an asset
+      description: |
+        Starts the verified deletion of the asset and everything stored for it (ADR 0040): the asset
+        becomes `deleting` at once, so playback, new sessions, uploads and processing refuse it and
+        its active playback sessions are revoked, and the `asset.delete` job then removes every
+        object under the asset's prefixes in both buckets (the original and the masked variant
+        included), destroys the content keys, checks that nothing is left and leaves a signed
+        deletion record (`GET /v1/assets/{asset_id}/deletion-record`). The response is `202` with
+        the asset in state `deleting`; poll `GET /v1/assets/{asset_id}` until `state` is `deleted`.
+        The call is idempotent: repeating it while the asset is deleting returns `202` again (and
+        queues a new purge only when the earlier one is no longer in the queue), and repeating it
+        after the asset is deleted returns `202` with the tombstone. Requires the `assets:write`
+        scope. An asset of another tenant is `not_found`.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "202":
+          description: The asset is `deleting` (or already `deleted`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
@@ -2520,9 +2561,28 @@ components:
     AssetState:
       type: string
       description: |
-        The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`
-        (`deleted` assets are not returned).
-      enum: [created, uploading, committed, processing, ready, failed]
+        The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`,
+        then `deleting` while the purge runs and `deleted` for the tombstone that stays afterwards.
+        Lists leave deleted assets out.
+      enum: [created, uploading, committed, processing, ready, failed, deleting, deleted]
+    DeletionReason:
+      type: string
+      enum: [requested, retention]
+      description: "`requested` by an API call, or `retention` because the asset's time-to-live ran out."
+    Deletion:
+      type: object
+      additionalProperties: false
+      required: [reason, requested_at]
+      properties:
+        reason:
+          $ref: "#/components/schemas/DeletionReason"
+        requested_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          description: When the purge finished and storage was verified empty. Absent while `deleting`.
     UploadMethod:
       type: string
       enum: [tus, multipart]
@@ -2620,6 +2680,10 @@ components:
         failure_code:
           type: string
           description: Why the asset failed, for example `upload_aborted`. A stable lower_snake_case code.
+        deletion:
+          allOf:
+            - $ref: "#/components/schemas/Deletion"
+          description: Present from `deleting` on.
     AssetIdValue:
       type: string
       pattern: "^ast_[0-9a-hjkmnp-tv-z]{26}$"

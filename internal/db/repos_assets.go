@@ -123,7 +123,8 @@ type Transition struct {
 }
 
 // TransitionAsset moves an asset along an edge of the lifecycle with a compare-and-set: the row
-// changes only while it is still in t.From. An edge the lifecycle does not allow is an
+// changes only while it is still in t.From. An edge the lifecycle does not allow, and any edge into
+// deleting or deleted (see RequestAssetDeletion and CompleteAssetDeletion), is an
 // internal_error (a programming error); losing the race is a conflict whose cause is
 // ErrStateChanged, and nothing is written.
 func (r *Repos) TransitionAsset(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, t Transition) (Asset, error) {
@@ -131,7 +132,8 @@ func (r *Repos) TransitionAsset(ctx context.Context, tenantID id.TenantID, asset
 	if err != nil {
 		return Asset{}, err
 	}
-	if !t.From.Valid() || !t.To.Valid() || !t.From.CanTransitionTo(t.To) {
+	// Deleting and deleted carry the deletion's reason and times: they have their own methods.
+	if !t.From.Valid() || !t.To.Valid() || !t.From.CanTransitionTo(t.To) || t.To == AssetDeleting || t.To == AssetDeleted {
 		return Asset{}, errs.New(errs.InternalError, "An internal error occurred.")
 	}
 	if t.At.IsZero() {

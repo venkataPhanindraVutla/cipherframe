@@ -106,7 +106,6 @@ func TestTransitionAssetIsCompareAndSet(t *testing.T) {
 		{db.AssetUploading, db.AssetCommitted, func(a db.Asset) *time.Time { return a.CommittedAt }},
 		{db.AssetCommitted, db.AssetProcessing, func(a db.Asset) *time.Time { return a.ProcessingStartedAt }},
 		{db.AssetProcessing, db.AssetReady, func(a db.Asset) *time.Time { return a.ReadyAt }},
-		{db.AssetReady, db.AssetDeleted, nil},
 	}
 	for _, step := range walk {
 		got, err := r.TransitionAsset(ctx, f.tenant.ID, a.ID, db.Transition{From: step.from, To: step.to, At: at})
@@ -119,8 +118,11 @@ func TestTransitionAssetIsCompareAndSet(t *testing.T) {
 			}
 		}
 	}
-	// deleted is terminal.
-	_, err = r.TransitionAsset(ctx, f.tenant.ID, a.ID, db.Transition{From: db.AssetDeleted, To: db.AssetFailed, At: at})
+	// The edges into deleting and deleted carry data (reason, times) and have their own methods
+	// (RequestAssetDeletion, CompleteAssetDeletion); the generic transition refuses them.
+	_, err = r.TransitionAsset(ctx, f.tenant.ID, a.ID, db.Transition{From: db.AssetReady, To: db.AssetDeleting, At: at})
+	wantCode(t, err, errs.InternalError)
+	_, err = r.TransitionAsset(ctx, f.tenant.ID, a.ID, db.Transition{From: db.AssetDeleting, To: db.AssetDeleted, At: at})
 	wantCode(t, err, errs.InternalError)
 
 	// Failing records the code and the time; a transition elsewhere does not touch them.
@@ -242,7 +244,10 @@ func TestListAssetsPage(t *testing.T) {
 		want = append(want, newUploadAsset(t, r, f, db.UploadTus).ID)
 	}
 	deleted := newUploadAsset(t, r, f, db.UploadTus)
-	if _, err := r.TransitionAsset(ctx, f.tenant.ID, deleted.ID, db.Transition{From: db.AssetCreated, To: db.AssetDeleted}); err != nil {
+	if _, err := r.RequestAssetDeletion(ctx, f.tenant.ID, deleted.ID, db.DeletionRequested, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CompleteAssetDeletion(ctx, f.tenant.ID, deleted.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	newUploadAsset(t, r, other, db.UploadTus)

@@ -84,7 +84,7 @@ func (p *Processor) HandleMask(ctx context.Context, job jobs.Job[MaskArgs]) erro
 	switch {
 	case !asset.MaskFaces:
 		return jobs.Cancel(errs.New(errs.Conflict, "the asset was not created with mask_faces"))
-	case asset.State == db.AssetFailed || asset.State == db.AssetDeleted:
+	case asset.State == db.AssetFailed || asset.State == db.AssetDeleting || asset.State == db.AssetDeleted:
 		log.InfoContext(ctx, "nothing to do: the asset is gone", slog.String("state", string(asset.State)))
 		return p.failMasking(ctx, asset, log)
 	case asset.MaskingState == db.MaskingReady:
@@ -153,6 +153,9 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	}
 	ck, err := p.Keys.Ensure(ctx, asset.TenantID, asset.ID, keys.Masked)
 	if err != nil {
+		if lerr := p.ensureLive(ctx, asset); lerr != nil {
+			return lerr // the key was refused because deletion started
+		}
 		return err
 	}
 	defer ck.Zero()
@@ -231,7 +234,7 @@ func (p *Processor) waitReady(ctx context.Context, asset db.Asset, log *slog.Log
 			return db.Asset{}, err
 		case cur.State == db.AssetReady:
 			return cur, nil
-		case cur.State == db.AssetFailed || cur.State == db.AssetDeleted:
+		case cur.State == db.AssetFailed || cur.State == db.AssetDeleting || cur.State == db.AssetDeleted:
 			return db.Asset{}, permanent(FailureMaskAssetGone, fmt.Errorf("the asset is %s", cur.State))
 		default:
 			if !logged {
@@ -275,6 +278,10 @@ func (p *Processor) runMasker(ctx context.Context, asset db.Asset, jobDir string
 		out, done, err := p.checkTask(wctx, task.ID, log)
 		if err != nil || done {
 			return out, err
+		}
+		// Stop waiting for the masker once the asset is being deleted (M6-2).
+		if lerr := p.ensureLive(wctx, asset); lerr != nil && wctx.Err() == nil {
+			return maskOutput{}, lerr
 		}
 		select {
 		case <-wctx.Done():
@@ -331,6 +338,9 @@ func (p *Processor) checkTask(ctx context.Context, taskID uuid.UUID, log *slog.L
 func (p *Processor) handleMaskFailure(ctx context.Context, job jobs.Job[MaskArgs], asset db.Asset, err error, log *slog.Logger) error {
 	var perm *permanentError
 	switch {
+	case errors.Is(err, errAssetGone):
+		log.InfoContext(ctx, "the asset is being deleted; stopping")
+		return p.cleanVariant(context.WithoutCancel(ctx), asset, keys.Masked)
 	case errors.As(err, &perm):
 		log.WarnContext(ctx, "masking failed", slog.String("failure_code", perm.code), slog.String("error", err.Error()))
 		if ferr := p.failMasking(ctx, asset, log); ferr != nil {

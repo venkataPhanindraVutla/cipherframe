@@ -146,3 +146,29 @@ WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND id = sqlc.arg(id)::uuid
   AND mask_faces
 RETURNING *;
+
+-- name: RequestAssetDeletion :one
+-- Compare-and-set: any state except deleting and deleted moves to deleting, once. Everything that
+-- serves or changes the asset refuses it from then on.
+UPDATE assets SET
+    state                 = 'deleting',
+    deletion_requested_at = sqlc.arg(at)::timestamptz,
+    deletion_reason       = sqlc.arg(reason)::text,
+    updated_at            = sqlc.arg(at)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state NOT IN ('deleting', 'deleted')
+RETURNING *;
+
+-- name: CompleteAssetDeletion :one
+-- deleting -> deleted, keeping the row as a tombstone without the references to the source object.
+UPDATE assets SET
+    state         = 'deleted',
+    deleted_at    = sqlc.arg(at)::timestamptz,
+    updated_at    = sqlc.arg(at)::timestamptz,
+    source_key    = NULL,
+    s3_upload_id  = NULL
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state = 'deleting'
+RETURNING *;

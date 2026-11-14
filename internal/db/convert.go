@@ -162,6 +162,9 @@ func assetFromRow(r dbgen.Asset) Asset {
 		Progress:            int(r.Progress),
 		MaskFaces:           r.MaskFaces,
 		MaskingState:        strVal(r.MaskingState),
+		DeletionRequestedAt: utcPtr(r.DeletionRequestedAt),
+		DeletionReason:      strVal(r.DeletionReason),
+		DeletedAt:           utcPtr(r.DeletedAt),
 	}
 	if r.FacesDetected != nil {
 		n := int(*r.FacesDetected)

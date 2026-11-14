@@ -50,6 +50,11 @@ func assetOut(a db.Asset) gen.Asset {
 		fc := a.FailureCode
 		out.FailureCode = &fc
 	}
+	if a.DeletionRequestedAt != nil {
+		out.Deletion = &gen.Deletion{
+			Reason: gen.DeletionReason(a.DeletionReason), RequestedAt: *a.DeletionRequestedAt, CompletedAt: a.DeletedAt,
+		}
+	}
 	return out
 }
 
@@ -155,7 +160,7 @@ func (s *server) GetAsset(ctx context.Context, req gen.GetAssetRequestObject) (g
 	if err != nil {
 		return nil, err
 	}
-	a, err := svc.Get(ctx, p.TenantID, aid)
+	a, err := svc.View(ctx, p.TenantID, aid)
 	if err != nil {
 		return nil, err
 	}
@@ -202,4 +207,25 @@ func (s *server) AbortAsset(ctx context.Context, req gen.AbortAssetRequestObject
 		return nil, err
 	}
 	return gen.AbortAsset200JSONResponse{Body: assetOut(a), Headers: gen.AbortAsset200ResponseHeaders{XRequestId: requestID(ctx)}}, nil
+}
+
+// DeleteAsset starts the verified deletion of an asset: it is marked deleting and the purge job is
+// queued in one transaction. Repeating the call is harmless.
+func (s *server) DeleteAsset(ctx context.Context, req gen.DeleteAssetRequestObject) (gen.DeleteAssetResponseObject, error) {
+	p, actor, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.purge == nil {
+		return nil, errs.New(errs.DependencyUnavailable, "Deletion is not available.")
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	a, err := s.purge.Request(ctx, p.TenantID, aid, db.DeletionRequested, &actor)
+	if err != nil {
+		return nil, err
+	}
+	return gen.DeleteAsset202JSONResponse{Body: assetOut(a), Headers: gen.DeleteAsset202ResponseHeaders{XRequestId: requestID(ctx)}}, nil
 }

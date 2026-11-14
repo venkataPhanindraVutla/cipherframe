@@ -7,24 +7,25 @@ package db
 //	created -> uploading -> committed -> processing -> ready
 //	   |           |            |            |
 //	   +-----------+------------+------------+-> failed
-//	every state except deleted -> deleted     (deletion arrives with a later task)
+//	every state except deleting and deleted -> deleting -> deleted     (M6: verified deletion)
 //
 // "processing -> committed" and every other backward edge are not allowed: a retried job
 // re-enters processing from processing, which is not a state change.
 var assetEdges = map[AssetState][]AssetState{
-	AssetCreated:    {AssetUploading, AssetFailed, AssetDeleted},
-	AssetUploading:  {AssetCommitted, AssetFailed, AssetDeleted},
-	AssetCommitted:  {AssetProcessing, AssetFailed, AssetDeleted},
-	AssetProcessing: {AssetReady, AssetFailed, AssetDeleted},
-	AssetReady:      {AssetDeleted},
-	AssetFailed:     {AssetDeleted},
+	AssetCreated:    {AssetUploading, AssetFailed, AssetDeleting},
+	AssetUploading:  {AssetCommitted, AssetFailed, AssetDeleting},
+	AssetCommitted:  {AssetProcessing, AssetFailed, AssetDeleting},
+	AssetProcessing: {AssetReady, AssetFailed, AssetDeleting},
+	AssetReady:      {AssetDeleting},
+	AssetFailed:     {AssetDeleting},
+	AssetDeleting:   {AssetDeleted},
 	AssetDeleted:    nil,
 }
 
 // AssetStates returns every state, in lifecycle order.
 func AssetStates() []AssetState {
 	return []AssetState{
-		AssetCreated, AssetUploading, AssetCommitted, AssetProcessing, AssetReady, AssetFailed, AssetDeleted,
+		AssetCreated, AssetUploading, AssetCommitted, AssetProcessing, AssetReady, AssetFailed, AssetDeleting, AssetDeleted,
 	}
 }
 

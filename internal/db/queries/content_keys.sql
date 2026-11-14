@@ -48,3 +48,13 @@ WHERE id = sqlc.arg(id)::uuid
   AND provider    = sqlc.arg(old_provider)::text
   AND kek_key_id  = sqlc.arg(old_kek_key_id)::text
   AND kek_version = sqlc.arg(old_kek_version)::text;
+
+-- name: DestroyContentKeysByAsset :many
+-- Crypto-shredding: the same deletion as DeleteContentKeyByAsset, returning what was destroyed (ids
+-- and variants only, never key material) so the deletion record can name them.
+DELETE FROM content_keys k
+USING assets a
+WHERE a.id = k.asset_id
+  AND a.tenant_id = sqlc.arg(tenant_id)::uuid
+  AND k.asset_id = sqlc.arg(asset_id)::uuid
+RETURNING k.id, k.variant;

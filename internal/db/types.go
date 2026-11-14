@@ -42,13 +42,17 @@ const (
 	AssetProcessing AssetState = "processing"
 	AssetReady      AssetState = "ready"
 	AssetFailed     AssetState = "failed"
-	AssetDeleted    AssetState = "deleted"
+	// AssetDeleting: deletion was requested and the asset.delete job is working (M6-2). Nothing
+	// serves or changes the asset any more.
+	AssetDeleting AssetState = "deleting"
+	// AssetDeleted is the tombstone: storage is verified empty and the content keys are destroyed.
+	AssetDeleted AssetState = "deleted"
 )
 
 // Valid reports whether s is an allowed state.
 func (s AssetState) Valid() bool {
 	switch s {
-	case AssetCreated, AssetUploading, AssetCommitted, AssetProcessing, AssetReady, AssetFailed, AssetDeleted:
+	case AssetCreated, AssetUploading, AssetCommitted, AssetProcessing, AssetReady, AssetFailed, AssetDeleting, AssetDeleted:
 		return true
 	}
 	return false
@@ -153,6 +157,13 @@ type Asset struct {
 	MaskFaces     bool
 	MaskingState  string
 	FacesDetected *int
+	// ExpiresAt is when the retention job deletes the asset (M6-4); nil means never.
+	ExpiresAt *time.Time
+	// DeletionRequestedAt and DeletionReason are set from the deleting state on; DeletedAt only on
+	// the tombstone (M6-2).
+	DeletionRequestedAt *time.Time
+	DeletionReason      string
+	DeletedAt           *time.Time
 }
 
 // String implements fmt.Stringer without the source key or upload ID.

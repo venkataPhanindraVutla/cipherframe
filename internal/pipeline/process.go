@@ -79,6 +79,9 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	// 3. The content key: created once, here, before any rendition exists, and reused by a retry.
 	ck, err := p.Keys.Ensure(ctx, asset.TenantID, asset.ID, keys.Original)
 	if err != nil {
+		if lerr := p.ensureLive(ctx, asset); lerr != nil {
+			return lerr // the key was refused because deletion started
+		}
 		return err
 	}
 	defer ck.Zero()
@@ -108,7 +111,10 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		return permanent(FailureTranscode, err)
 	}
 
-	// 6. Encrypt, upload and write the canonical playlists.
+	// 6. Encrypt, upload and write the canonical playlists, unless deletion started meanwhile.
+	if err := p.ensureLive(ctx, asset); err != nil {
+		return err
+	}
 	pub, err := p.publish(ctx, asset, keys.Original, key, outs, info, log)
 	if err != nil {
 		return err

@@ -377,7 +377,7 @@ func TestInterruptionLeavesTheAssetProcessing(t *testing.T) {
 }
 
 func TestNothingToDoForFinishedAssets(t *testing.T) {
-	for _, st := range []db.AssetState{db.AssetReady, db.AssetFailed, db.AssetDeleted} {
+	for _, st := range []db.AssetState{db.AssetReady, db.AssetFailed, db.AssetDeleting, db.AssetDeleted} {
 		h := newHarness(t)
 		h.repo.asset.State = st
 		if err := h.run(1, 5); err != nil {
@@ -435,6 +435,31 @@ func TestAssetDeletedWhileProcessingLeavesNoOutput(t *testing.T) {
 	}
 	if len(h.delivery.keys()) != 0 {
 		t.Errorf("output of a deleted asset was kept: %v", h.delivery.keys())
+	}
+}
+
+// An asset that starts deleting while the job transcodes is not published, not completed and not
+// failed: the job stops quietly (M6-2).
+func TestAssetDeletingBeforePublishStopsTheJob(t *testing.T) {
+	h := newHarness(t)
+	h.repo.onGet = func(n int) {
+		if n >= 2 { // the first read is the job's own; the second is the check before publishing
+			h.repo.mu.Lock()
+			h.repo.asset.State = db.AssetDeleting
+			h.repo.mu.Unlock()
+		}
+	}
+	if err := h.run(1, 5); err != nil {
+		t.Fatalf("error = %v, want a quiet stop", err)
+	}
+	if len(h.delivery.keys()) != 0 {
+		t.Errorf("objects of a deleting asset were uploaded: %v", h.delivery.keys())
+	}
+	if a := h.repo.snapshot(); a.State != db.AssetDeleting {
+		t.Errorf("state = %s; the job must not move a deleting asset", a.State)
+	}
+	if got := h.workDirEntries(); len(got) != 0 {
+		t.Errorf("work directory not empty: %v", got)
 	}
 }
 

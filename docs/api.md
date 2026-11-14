@@ -67,7 +67,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
 | `POST /v1/assets` | yes | no | `assets:write` |
 | `GET /v1/assets`, `GET /v1/assets/{asset_id}` | yes | no | `assets:read` |
-| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort` | yes | no | `assets:write` |
+| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
 | `POST /v1/playback-sessions` | yes | no | `sessions:write` |
 | `GET /v1/playback-sessions/{session_id}` | yes | no | `sessions:write` |
 | `POST /v1/playback-sessions/{session_id}/revoke`, `POST /v1/playback-sessions/revoke` | yes | no | `sessions:write` |
@@ -201,7 +201,7 @@ The first admin key is created with the CLI, not the API:
 
 Endpoint names and shapes are flagged for owner review before v1.0.0.
 
-An asset goes `created → uploading → committed → processing → ready | failed` (and `deleted` later).
+An asset goes `created → uploading → committed → processing → ready | failed`, and from any of those to `deleting → deleted` when it is deleted (see "Delete").
 The API never receives media: the embedding application creates the asset, hands the browser the
 upload instructions, and commits when the upload is done. The source is never addressable: no
 response, header or log line contains its object key or the source bucket's name, and no presigned
@@ -255,7 +255,23 @@ with `failure_code` `upload_aborted`, the token ends and the partial objects are
 repeats the cleanup; a committed asset is `409`.
 
 **Read.** `GET /v1/assets/{asset_id}` and `GET /v1/assets` (`limit`, `cursor`, oldest first). An asset
-of another tenant is `404`, never `403`.
+of another tenant is `404`, never `403`. A deleted asset is still returned by `GET` as a tombstone
+(`state: "deleted"`); lists leave deleted assets out.
+
+**Delete (M6, ADR 0040, ADR 0042).** `DELETE /v1/assets/{asset_id}` (`assets:write`) starts the
+verified deletion and answers `202` with the asset in state `deleting`. From that moment playback
+(new sessions and key requests), uploads and processing refuse the asset and its active playback
+sessions are revoked. The `asset.delete` job then deletes every object under the asset's prefixes in
+both buckets (it lists storage, it does not trust the database alone), destroys the content keys of
+every variant, lists storage again to confirm nothing is left (it retries on leftovers and fails
+loudly rather than claim success), and leaves a signed deletion record (see
+[integrity.md](integrity.md#verifiable-deletion)). Poll `GET /v1/assets/{asset_id}`: while the purge
+runs `state` is `deleting` and `deletion` shows `reason` and `requested_at`; when it is done `state`
+is `deleted` and `deletion.completed_at` is set. The row stays as a tombstone, and
+`GET /v1/assets/{asset_id}/deletion-record` returns the record. Deleting is idempotent: repeating the
+call returns `202` again, and queues a new purge only if the earlier job is no longer in the queue
+(this is how a deletion that ran out of retries is restarted). An in-flight processing or masking job
+stops at its next check and removes its own output; it cannot bring the asset back.
 
 **Variants (ADR 0036).** Every asset has an `original` variant. An asset created with `mask_faces:
 true` also gets a `masked` variant, built after the original is `ready`. The asset shows

@@ -404,6 +404,13 @@ func TestMaskNothingToDo(t *testing.T) {
 			t.Fatalf("error = %v, tasks = %d", err, len(m.tasks.created))
 		}
 	})
+	t.Run("asset deleting", func(t *testing.T) {
+		m := newMaskHarness(t)
+		m.repo.asset.State = db.AssetDeleting
+		if err := m.runMask(1, 3); err != nil || len(m.tasks.created) != 0 || len(m.maskedKeys()) != 0 {
+			t.Fatalf("error = %v, tasks = %d", err, len(m.tasks.created))
+		}
+	})
 	t.Run("no ids", func(t *testing.T) {
 		m := newMaskHarness(t)
 		if err := m.proc.HandleMask(context.Background(), jobs.Job[MaskArgs]{}); !isCancel(err) {
@@ -423,7 +430,8 @@ func TestMaskAssetDeletedWhileMaskingLeavesNoOutput(t *testing.T) {
 		}
 		return succeededTask(env.TaskID, `{"faces_detected":1,"frames":9}`)
 	}
-	if err := m.runMask(1, 3); !isCancel(err) {
+	// The job notices the deletion while it waits for the masker and stops without an error.
+	if err := m.runMask(1, 3); err != nil {
 		t.Fatalf("error = %v", err)
 	}
 	if len(m.maskedKeys()) != 0 || m.repo.maskingCompletes != 0 {
