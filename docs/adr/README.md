@@ -45,8 +45,9 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0037](0037-faster-face-masking.md) | Faster face masking (amends 0024, 0036) | none | Accepted | 2026-11-14 |
 | [0038](0038-encoder-preset-and-detection-stride.md) | Encoder preset and detection stride settings (amends 0024, 0036) | none | Accepted | 2026-11-14 |
 | [0039](0039-verify-api-proofs-and-offline-verifier.md) | Verify API, proofs and the offline verifier | none | Accepted (flagged for owner review) | 2026-11-14 |
+| [0040](0040-retention-and-privacy-defaults.md) | Retention and privacy defaults | P11 | Accepted | 2026-11-14 |
 
 ## Open gates
 
-P11 to P14, P16 to P20, P21 (worker). See the build plan's
+P12 to P14, P16 to P20, P21 (worker). See the build plan's
 decision register.
