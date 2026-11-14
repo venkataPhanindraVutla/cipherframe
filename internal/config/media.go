@@ -24,6 +24,7 @@ const (
 	EnvMaskTimeout       = "CIPHERFRAME_WORKER_MASK_TIMEOUT"
 	EnvMaskConcurrency   = "CIPHERFRAME_WORKER_MASK_CONCURRENCY"
 	EnvLadderHeights     = "CIPHERFRAME_WORKER_LADDER_HEIGHTS"
+	EnvX264Preset        = "CIPHERFRAME_WORKER_X264_PRESET"
 )
 
 // Media defaults and ceilings. The ceilings keep a typo from disabling a limit.
@@ -75,6 +76,8 @@ type Media struct {
 	// LadderHeights restricts the ladder to these ADR 0024 rung heights, tallest first. Empty
 	// means every rung. Both variants use it.
 	LadderHeights []int
+	// X264Preset is the libx264 preset of both variants (ADR 0038); "medium" by default.
+	X264Preset string
 }
 
 func (l *loader) media() Media {
@@ -90,6 +93,7 @@ func (l *loader) media() Media {
 		Concurrency:       l.concurrency(EnvMediaConcurrency, defaultMediaConcurrency),
 		MaskConcurrency:   l.concurrency(EnvMaskConcurrency, defaultMaskConcurrency),
 		LadderHeights:     l.ladderHeights(),
+		X264Preset:        l.x264Preset(),
 	}
 }
 
@@ -176,4 +180,17 @@ func (l *loader) ladderHeights() []int {
 	}
 	slices.SortFunc(picked, func(a, b int) int { return b - a })
 	return picked
+}
+
+// x264Preset reads CIPHERFRAME_WORKER_X264_PRESET: one of the libx264 presets, medium if unset.
+func (l *loader) x264Preset() string {
+	v := l.plain(EnvX264Preset, "")
+	if v == "" {
+		return media.X264Preset
+	}
+	if !slices.Contains(media.X264Presets(), v) {
+		l.errf("%s must be one of %s", EnvX264Preset, strings.Join(media.X264Presets(), ", "))
+		return media.X264Preset
+	}
+	return v
 }

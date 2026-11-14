@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -55,7 +56,7 @@ func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src source
 	if err != nil {
 		return nil, err
 	}
-	in, err := manifestInput(asset, src, ladder, info, pub, ffmpeg, at)
+	in, err := manifestInput(asset, src, ladder, info, pub, ffmpeg, cmp.Or(p.X264Preset, media.X264Preset), at)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +120,7 @@ func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.A
 
 // manifestInput gathers what manifest.Build needs from what the pipeline already has: the
 // registry rows in publish order and the rendition summaries.
-func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, ffmpeg string, at time.Time) (manifest.Input, error) {
+func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, ffmpeg, preset string, at time.Time) (manifest.Input, error) {
 	in := manifest.Input{
 		AssetID: asset.ID.String(), TenantID: asset.TenantID.String(), CreatedAt: at,
 		PipelineVersion: version.Get().Version, SourceSHA256: src.sha256, SourceSize: src.size,
@@ -131,7 +132,7 @@ func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, i
 	}
 
 	enc := manifest.Encoder{
-		FFmpeg: ffmpeg, VideoCodec: "libx264", Preset: media.X264Preset,
+		FFmpeg: ffmpeg, VideoCodec: "libx264", Preset: preset,
 		FrameRate: rational(media.OutputFrameRate(info.Video.FrameRate).Expr), SegmentSeconds: media.SegmentSeconds,
 		KeyframeSeconds: media.KeyframeSeconds, Encryption: "AES-128",
 	}

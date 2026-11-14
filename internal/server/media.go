@@ -61,6 +61,7 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Q
 			MaxDuration: cfg.Media.MaxSourceDuration, MaxWidth: cfg.Media.MaxSourceWidth, MaxHeight: cfg.Media.MaxSourceHeight,
 		},
 		LadderHeights:    cfg.Media.LadderHeights,
+		X264Preset:       cfg.Media.X264Preset,
 		WorkDir:          cfg.Media.WorkDir,
 		TranscodeTimeout: cfg.Media.TranscodeTimeout,
 		Tasks:            pipeline.DBTasks{Pool: pool, Queue: inserter},

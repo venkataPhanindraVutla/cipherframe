@@ -90,7 +90,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	if err := os.Mkdir(outDir, 0o700); err != nil {
 		return fmt.Errorf("pipeline: create the output directory: %w", err)
 	}
-	spec := media.TranscodeSpec{Source: srcPath, OutDir: outDir, Info: info, Renditions: renditions}
+	spec := media.TranscodeSpec{Source: srcPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset}
 	if err := p.transcode(ctx, asset, spec, true, log); err != nil {
 		return err
 	}

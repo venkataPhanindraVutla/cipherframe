@@ -86,6 +86,7 @@ def mask_video(
     detect: Detector,
     ffmpeg: str = "ffmpeg",
     should_stop: Callable[[], bool] = lambda: False,
+    detect_every: int = 1,
 ) -> MaskStats:
     cap = cv2.VideoCapture(str(src))
     try:
@@ -98,6 +99,7 @@ def mask_video(
             fps = 30.0  # shortcut: unknown fps falls back to 30, upgrade if sources need ffprobe
         holder = Holder(fps)
         frames = with_face = 0
+        detected: list[Box] = []
         with tempfile.TemporaryFile() as err:
             proc = subprocess.Popen(  # noqa: S603
                 _ffmpeg_cmd(ffmpeg, src, dst, w, h, fps),
@@ -107,7 +109,8 @@ def mask_video(
                 while ok:
                     if should_stop():
                         raise MaskError("lease_lost", "lease lost", True)
-                    detected = detect(frame)
+                    if frames % detect_every == 0:  # in between, the last detection is reused
+                        detected = detect(frame)
                     with_face += bool(detected)
                     mask_frame(frame, holder.update(detected))
                     proc.stdin.write(frame.tobytes())

@@ -103,6 +103,29 @@ def test_pipeline_with_stub_detector(ffmpeg, tmp_path, audio):
         assert detail(after, i) > 0.7 * detail(before, i)
 
 
+def test_detect_every_runs_the_detector_on_a_stride_and_masks_every_frame(ffmpeg, tmp_path):
+    src, dst = tmp_path / "in.mp4", tmp_path / "out.mp4"
+    make_clip(ffmpeg, src, audio=False)
+    box, calls = (100, 80, 60, 60), []
+
+    def detect(frame):
+        calls.append(1)
+        return [box]
+
+    stats = mask_video(src, dst, detect, ffmpeg, detect_every=4)
+    assert len(calls) == 8  # frames 0, 4, ..., 28 of 30
+    assert (stats.frames, stats.frames_with_face) == (30, 30)  # reused detections count
+    before, after = read_frames(src), read_frames(dst)
+    x, y, w, h = pad_box(box, W, H)
+
+    def detail(frames, i):
+        gray = cv2.cvtColor(frames[i][y : y + h, x : x + w], cv2.COLOR_BGR2GRAY)
+        return cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    for i in (0, 1, 2, 3, 5, 29):  # detected and skipped frames alike
+        assert detail(after, i) < 0.3 * detail(before, i)
+
+
 def test_unreadable_input_is_a_permanent_failure(ffmpeg, tmp_path):
     bad = tmp_path / "bad.mp4"
     bad.write_bytes(b"not a video")

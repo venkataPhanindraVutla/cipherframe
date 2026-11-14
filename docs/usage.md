@@ -230,6 +230,11 @@ Requirements, none of which can be skipped:
   for the original, then 41 s masker and 21 s transcode); it is now ready after about the longer of
   the two, with the original still ready at about the same time when cores allow. Set
   `CIPHERFRAME_WORKER_LADDER_HEIGHTS` (for example `720,360`) to transcode fewer rungs in both variants.
+  `CIPHERFRAME_WORKER_X264_PRESET=veryfast` (worker) and `CIPHERFRAME_ML_DETECT_EVERY=2` (masker) cut
+  it further: together they target about 30 to 40 s on that recording on an 8-CPU Docker host (85 s
+  before ADR 0037, 62 s after it). Trade-offs: `veryfast` gives lower quality per bit, bounded by the
+  existing rate caps; with a stride of 2 a fast-moving face can be one frame behind its box, which the
+  25 % padding and the 1 s hold cover. See [ADR 0038](adr/0038-encoder-preset-and-detection-stride.md).
 - **Disk.** A masking job needs the source plus the masked file (re-encoded at a high quality, so
   often larger than the source) plus the transcode output: plan for several times the source size in
   `CIPHERFRAME_WORK_DIR` per concurrent masking job, on top of the media jobs that now run beside it.
@@ -482,6 +487,7 @@ variable, never its value.
 | `CIPHERFRAME_WORKER_MASK_TIMEOUT` | `2h` | no | no | How long an `asset.mask` job waits for the masker to finish one video, and again for the original variant to become `ready` before it publishes, a Go duration above zero and at most `168h`. Past it the asset's masked variant is marked `failed` and the original stays playable. See [Face masking](#face-masking). |
 | `CIPHERFRAME_WORKER_MASK_CONCURRENCY` | `1` | no | no | How many `asset.mask` jobs one **worker** process runs at once, 1 to 64. They run on their own `mask` queue, apart from `media`, so masking never takes a slot from `asset.process` and the two overlap. The masker itself uses several cores, so scale by adding masker and worker replicas. Disk need adds up with the media concurrency. See [Face masking](#face-masking). |
 | `CIPHERFRAME_WORKER_LADDER_HEIGHTS` | all rungs | no | no | Restricts the renditions of both variants to a comma-separated subset of the rung heights `1080,720,480,360,240` (ADR 0024), for example `720,360`. Known heights only, no duplicates. A rung taller than the source is skipped; a source shorter than every selected rung gets one rendition at its own height. Fewer rungs mean a proportionally faster transcode. |
+| `CIPHERFRAME_WORKER_X264_PRESET` | `medium` | no | no | The libx264 preset of every rendition in both variants (ADR 0038): `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower` or `veryslow`. Faster presets cut transcode time and give lower quality per bit; the bitrate caps of ADR 0024 still apply. Keyframe alignment is unaffected. |
 
 Empty values of non-secret variables mean "use the default".
 
