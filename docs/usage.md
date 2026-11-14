@@ -24,6 +24,7 @@ The `cipherframe` CLI (M8-1) covers each step.
 
 ```sh
 cipherframe verify --manifest manifest.json --keys keys.json ./download/   # exit 0 ours, 1 modified, 2 cannot say
+cipherframe verify --manifest manifest.json --keys keys.json --timestamp ts.json --tsa-ca ca.pem ./download/   # also checks the RFC 3161 token
 ```
 
 ## Running the server
@@ -497,8 +498,33 @@ variable, never its value.
 | `CIPHERFRAME_WORKER_MASK_CONCURRENCY` | `1` | no | no | How many `asset.mask` jobs one **worker** process runs at once, 1 to 64. They run on their own `mask` queue, apart from `media`, so masking never takes a slot from `asset.process` and the two overlap. The masker itself uses several cores, so scale by adding masker and worker replicas. Disk need adds up with the media concurrency. See [Face masking](#face-masking). |
 | `CIPHERFRAME_WORKER_LADDER_HEIGHTS` | all rungs | no | no | Restricts the renditions of both variants to a comma-separated subset of the rung heights `1080,720,480,360,240` (ADR 0024), for example `720,360`. Known heights only, no duplicates. A rung taller than the source is skipped; a source shorter than every selected rung gets one rendition at its own height. Fewer rungs mean a proportionally faster transcode. |
 | `CIPHERFRAME_WORKER_X264_PRESET` | `medium` | no | no | The libx264 preset of every rendition in both variants (ADR 0038): `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower` or `veryslow`. Faster presets cut transcode time and give lower quality per bit; the bitrate caps of ADR 0024 still apply. Keyframe alignment is unaffected. |
+| `CIPHERFRAME_TSA_URL` | unset (anchoring off) | no | no | Endpoint of an RFC 3161 time-stamping authority (ADR 0041). `https` only; `http` is accepted only when `CIPHERFRAME_ENV=development`, for a local authority. Set on the **worker** role, which runs the `manifest.anchor` job. See [Timestamp anchoring](#timestamp-anchoring-optional). |
+| `CIPHERFRAME_TSA_TIMEOUT` | `10s` | no | no | Go duration for one request to the authority, above zero and at most `2m`. |
+| `CIPHERFRAME_TSA_POLICY_OID` | unset | no | no | Policy the request asks for, dotted decimal such as `1.2.3.4`. Leave unset to accept the authority's default. |
 
 Empty values of non-secret variables mean "use the default".
+
+### Timestamp anchoring (optional)
+
+Anchoring is off until you set `CIPHERFRAME_TSA_URL`. Cipherframe then asks the authority for an
+RFC 3161 token over SHA-256 of each signed manifest, so the manifest's time no longer rests on your
+clock alone (how it works and how to verify it: [integrity.md](integrity.md#anchoring-optional)).
+The request carries a digest and nothing else: no file, name, tenant or asset identifier. You choose
+the authority and accept its terms; Cipherframe enables none and endorses none.
+
+[ADR 0034](adr/0034-timestamp-authority-recommendations.md) (2026-11-12) names these public
+authorities: the free RFC 3161 services of DigiCert, Sectigo and GlobalSign, which are WebTrust-audited
+certificate authorities, and FreeTSA as a community option. The ADR records no endpoint URLs and
+providers change them, so take the current URL and the CA certificate from the provider's own
+documentation, and check its terms and rate limits before relying on it.
+
+```sh
+CIPHERFRAME_TSA_URL=https://tsa.example.com/rfc3161   # from your chosen provider
+CIPHERFRAME_TSA_TIMEOUT=10s
+```
+
+The authority's CA certificate (PEM) is what an auditor passes to `cipherframe verify --tsa-ca`;
+without it the system roots are used.
 
 ### The `_FILE` rule
 

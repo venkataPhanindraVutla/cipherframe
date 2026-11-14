@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -99,6 +100,37 @@ func (s *server) GetAssetManifest(ctx context.Context, req gen.GetAssetManifestR
 		return nil, err
 	}
 	return manifestResponse{body: m.Envelope, requestID: requestID(ctx)}, nil
+}
+
+// GetAssetManifestTimestamp returns the RFC 3161 token of the asset's current manifest, or
+// not_anchored. The manifest endpoint itself is unchanged.
+func (s *server) GetAssetManifestTimestamp(ctx context.Context, req gen.GetAssetManifestTimestampRequestObject) (gen.GetAssetManifestTimestampResponseObject, error) {
+	p, _, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	repos, err := s.integrityDeps()
+	if err != nil {
+		return nil, err
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	_, m, err := manifestRow(ctx, repos, p.TenantID, aid)
+	if err != nil {
+		return nil, err
+	}
+	if m.Timestamp == nil {
+		return nil, errs.New(errs.NotAnchored, "The manifest has no timestamp token.")
+	}
+	return gen.GetAssetManifestTimestamp200JSONResponse{
+		Body: gen.ManifestTimestamp{
+			Token: base64.StdEncoding.EncodeToString(m.Timestamp.Token), GenTime: m.Timestamp.GenTime,
+			TsaUrl: m.Timestamp.TSAURL, ImprintSha256: hex.EncodeToString(m.PayloadSHA256),
+		},
+		Headers: gen.GetAssetManifestTimestamp200ResponseHeaders{XRequestId: requestID(ctx)},
+	}, nil
 }
 
 // decodeManifest reads the manifest out of a stored envelope without checking its signature.

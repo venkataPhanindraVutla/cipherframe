@@ -87,3 +87,41 @@ func TestCompletionStoresTheManifestAtomically(t *testing.T) {
 	_, err = r.GetManifest(ctx, a.ID)
 	wantCode(t, err, errs.NotFound)
 }
+
+func TestManifestTimestampOnlyForTheStampedPayload(t *testing.T) {
+	ctx := context.Background()
+	r, _ := newMigrated(t)
+	f := newFixture(t, r, "acme")
+	a := processingAsset(t, r, f)
+	m := testManifest(a, f)
+	if err := r.InsertManifest(ctx, *m); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.GetManifest(ctx, a.ID); got.Timestamp != nil {
+		t.Fatal("a new manifest has a timestamp")
+	}
+
+	ts := db.ManifestTimestamp{Token: []byte("test-fixture-token"), GenTime: time.Unix(1700000000, 0).UTC(), TSAURL: "https://tsa.example/tsr"}
+	other := sha256.Sum256([]byte("another payload"))
+	if ok, err := r.SetManifestTimestamp(ctx, a.ID, other[:], ts); err != nil || ok {
+		t.Fatalf("a token for another payload was stored: %v %v", ok, err)
+	}
+	if ok, err := r.SetManifestTimestamp(ctx, a.ID, m.PayloadSHA256, ts); err != nil || !ok {
+		t.Fatalf("the token of the current payload was not stored: %v %v", ok, err)
+	}
+	got, _ := r.GetManifest(ctx, a.ID)
+	if got.Timestamp == nil || !bytes.Equal(got.Timestamp.Token, ts.Token) || !got.Timestamp.GenTime.Equal(ts.GenTime) || got.Timestamp.TSAURL != ts.TSAURL {
+		t.Fatalf("stored timestamp = %+v", got.Timestamp)
+	}
+
+	// Replacing the manifest (a re-sign) drops the token with the old row.
+	if _, err := r.DeleteManifest(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.InsertManifest(ctx, *m); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.GetManifest(ctx, a.ID); got.Timestamp != nil {
+		t.Fatal("the token survived the re-sign")
+	}
+}

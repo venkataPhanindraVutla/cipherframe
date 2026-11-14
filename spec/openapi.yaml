@@ -559,6 +559,43 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/manifest/timestamp:
+    get:
+      operationId: getAssetManifestTimestamp
+      summary: Get the RFC 3161 timestamp token of an asset's manifest
+      description: |
+        Returns the timestamp token that anchors the asset's current signed manifest, when a
+        time-stamping authority is configured and has answered (ADR 0041). The token stamps SHA-256
+        of the manifest's decoded `payload`, which is `imprint_sha256`. Verify it offline with
+        `cipherframe verify --timestamp`. An asset whose manifest has no token yet (anchoring is
+        off, the authority has not answered, or the manifest was re-signed and is not stamped yet)
+        is `404 not_anchored`; an unknown asset, one of another tenant, one that is not ready and
+        one without a manifest are `404 not_found`. Requires the `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: The token.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManifestTimestamp"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/assets/{asset_id}/proof:
     get:
       operationId: getAssetProof
@@ -3420,6 +3457,7 @@ components:
             - internal_error
             - invalid_request
             - method_not_allowed
+            - not_anchored
             - not_found
             - payload_too_large
             - rate_limited
@@ -3453,6 +3491,28 @@ components:
     ArtifactVariant:
       type: string
       enum: [original, masked]
+    ManifestTimestamp:
+      description: |
+        The RFC 3161 token of a manifest payload (ADR 0041). This is also the file format of
+        `cipherframe verify --timestamp`.
+      type: object
+      additionalProperties: false
+      required: [token, gen_time, tsa_url, imprint_sha256]
+      properties:
+        token:
+          type: string
+          description: Standard base64 of the DER TimeStampToken (a CMS SignedData).
+        gen_time:
+          type: string
+          format: date-time
+          description: The time the authority put in the token.
+        tsa_url:
+          type: string
+          description: The authority that issued the token.
+        imprint_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Lowercase hex SHA-256 of the manifest's decoded payload; what the token stamps.
     DsseEnvelope:
       description: |
         A DSSE v1 envelope (ADR 0033). `payload` is the base64 of the canonical manifest JSON; the

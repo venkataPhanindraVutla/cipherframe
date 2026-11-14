@@ -125,6 +125,15 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	call("GET", "/v1/assets/"+aid+"/manifest", nil, 200)
 	call("GET", "/v1/assets/"+aid+"/manifest", nil, 200)
 	call("GET", "/v1/assets/ast_00000000000000000000000001/manifest", nil, 404)
+	// Anchored or not: the API only relays what the anchor job stored.
+	call("GET", "/v1/assets/"+aid+"/manifest/timestamp", nil, 404)
+	if ok, err := repos.SetManifestTimestamp(ctx, a.ID, sum[:], db.ManifestTimestamp{
+		Token: []byte("test-fixture-token"), GenTime: time.Now().UTC(), TSAURL: "https://tsa.example.com/rfc3161",
+	}); err != nil || !ok {
+		t.Fatalf("store the timestamp: %v %v", ok, err)
+	}
+	call("GET", "/v1/assets/"+aid+"/manifest/timestamp", nil, 200)
+	call("GET", "/v1/assets/ast_00000000000000000000000001/manifest/timestamp", nil, 404)
 	call("GET", "/v1/assets/"+aid+"/proof?path=720p/seg-1.m4s", nil, 200)
 	call("GET", "/v1/assets/"+aid+"/proof?path=master.m3u8&variant=original", nil, 200)
 	call("GET", "/v1/assets/"+aid+"/proof?path=nope", nil, 404)
@@ -146,7 +155,7 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	call("POST", "/v1/verify", map[string]any{"sha256": hash}, 200)
 	call("POST", "/v1/verify", map[string]any{"sha256": hash, "asset_id": aid}, 400)
 
-	for _, op := range []string{"getAssetManifest", "getAssetProof", "verifyArtifact"} {
+	for _, op := range []string{"getAssetManifest", "getAssetManifestTimestamp", "getAssetProof", "verifyArtifact"} {
 		if !covered[op] {
 			t.Errorf("operation %s was not exercised", op)
 		}

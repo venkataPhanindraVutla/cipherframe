@@ -453,7 +453,7 @@ func (e *upEnv) assertEveryUploadOperationExercised() {
 			if strings.HasSuffix(path, "/access-log") {
 				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
 			}
-			if strings.HasSuffix(path, "/manifest") || strings.HasSuffix(path, "/proof") {
+			if strings.HasSuffix(path, "/manifest") || strings.HasSuffix(path, "/manifest/timestamp") || strings.HasSuffix(path, "/proof") {
 				continue // exercised by TestIntegrityOperationsMatchSpec
 			}
 			tus := false

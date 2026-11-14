@@ -9,7 +9,7 @@ Last updated: 2026-11-14.
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M5) |
+| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M6 next) |
 | v2.0.0 | npm, Go and Python SDKs and verifiers, shared conformance vectors | Not started |
 | v2.1.0 | Python ML worker: local speech-to-text, perceptual fingerprint matching, invisible per-asset or per-tenant watermark | Not started |
 
@@ -22,7 +22,7 @@ Last updated: 2026-11-14.
 | M2 Key management | Done |
 | M3 Ingest and processing | Done |
 | M4 Playback sessions and delivery | Done |
-| M5 Integrity and anchoring | In progress |
+| M5 Integrity and anchoring | Done |
 | Face masking (ADR 0036) | Done |
 | Faster face masking (ADR 0037) | Done |
 | Encoder preset and detection stride (ADR 0038) | Done |
@@ -40,12 +40,13 @@ Last updated: 2026-11-14.
 - [x] M5-3 Verify API and per-segment proof endpoint ([ADR 0039](adr/0039-verify-api-proofs-and-offline-verifier.md))
 - [x] M5-4 Public-key-only verifier (library and CLI) with the outcomes "ours", "modified version of
   ours" and "cannot say" (`cipherframe verify`, [integrity.md](integrity.md#verifying))
-- [ ] M5-5 Optional RFC 3161 anchoring ([ADR 0034](adr/0034-timestamp-authority-recommendations.md))
+- [x] M5-5 Optional RFC 3161 anchoring ([ADR 0034](adr/0034-timestamp-authority-recommendations.md), [ADR 0041](adr/0041-rfc-3161-anchoring-of-manifests.md))
 
-Acceptance shown by M5-4 tests: flipping one byte reports `modified` with the exact path;
+Acceptance shown by the M5-4 and M5-5 tests: flipping one byte reports `modified` with the exact path;
 verification works with public keys only; a rotated and retired key still verifies old records;
 unknown key, malformed envelope, unknown path and an unreachable `--keys-url` are "cannot say",
-never "modified". Still to show (M5-5): a timestamp token round trip against a local TSA.
+never "modified"; a timestamp token round trip against a local TSA (the asset completes, the anchor job
+stores a token, the API returns it, and the offline verifier with the TSA's CA reports `anchored`).
 
 ### Face masking
 

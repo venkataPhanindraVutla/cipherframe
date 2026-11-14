@@ -36,6 +36,8 @@ const (
 	// ArtifactNotFound is a 404 for a proof request whose path is not an artifact of the asset's
 	// signed manifest (ADR 0039).
 	ArtifactNotFound Code = "artifact_not_found"
+	// NotAnchored is a 404 for a timestamp request on a manifest that has no RFC 3161 token (ADR 0041).
+	NotAnchored Code = "not_anchored"
 )
 
 // Info describes a registered code.
@@ -62,6 +64,7 @@ var registry = map[Code]Info{
 	VariantUnavailable:    {Status: 409, Title: "Variant unavailable"},
 	VariantNotReady:       {Status: 409, Title: "Variant not ready"},
 	ArtifactNotFound:      {Status: 404, Title: "Artifact not found"},
+	NotAnchored:           {Status: 404, Title: "Not anchored"},
 }
 
 // Lookup returns the registry entry for c.

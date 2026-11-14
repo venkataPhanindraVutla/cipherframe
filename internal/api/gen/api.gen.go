@@ -362,6 +362,7 @@ const (
 	ProblemCodeInternalError         ProblemCode = "internal_error"
 	ProblemCodeInvalidRequest        ProblemCode = "invalid_request"
 	ProblemCodeMethodNotAllowed      ProblemCode = "method_not_allowed"
+	ProblemCodeNotAnchored           ProblemCode = "not_anchored"
 	ProblemCodeNotFound              ProblemCode = "not_found"
 	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
@@ -390,6 +391,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeInvalidRequest:
 		return true
 	case ProblemCodeMethodNotAllowed:
+		return true
+	case ProblemCodeNotAnchored:
 		return true
 	case ProblemCodeNotFound:
 		return true
@@ -1008,6 +1011,22 @@ type InclusionProof struct {
 	// TreeSize Leaves of the rendition tree. Absent for a playlist.
 	TreeSize *int            `json:"tree_size,omitempty"`
 	Variant  ArtifactVariant `json:"variant"`
+}
+
+// ManifestTimestamp The RFC 3161 token of a manifest payload (ADR 0041). This is also the file format of
+// `cipherframe verify --timestamp`.
+type ManifestTimestamp struct {
+	// GenTime The time the authority put in the token.
+	GenTime time.Time `json:"gen_time"`
+
+	// ImprintSha256 Lowercase hex SHA-256 of the manifest's decoded payload; what the token stamps.
+	ImprintSha256 string `json:"imprint_sha256"`
+
+	// Token Standard base64 of the DER TimeStampToken (a CMS SignedData).
+	Token string `json:"token"`
+
+	// TsaUrl The authority that issued the token.
+	TsaUrl string `json:"tsa_url"`
 }
 
 // Masking defines model for Masking.
@@ -2003,6 +2022,9 @@ type ServerInterface interface {
 	// GetAssetManifest Get an asset's signed integrity manifest
 	// (GET /v1/assets/{asset_id}/manifest)
 	GetAssetManifest(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// GetAssetManifestTimestamp Get the RFC 3161 timestamp token of an asset's manifest
+	// (GET /v1/assets/{asset_id}/manifest/timestamp)
+	GetAssetManifestTimestamp(w http.ResponseWriter, r *http.Request, assetId AssetId)
 	// GetAssetProof Get an inclusion proof for one artifact
 	// (GET /v1/assets/{asset_id}/proof)
 	GetAssetProof(w http.ResponseWriter, r *http.Request, assetId AssetId, params GetAssetProofParams)
@@ -2386,6 +2408,32 @@ func (siw *ServerInterfaceWrapper) GetAssetManifest(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAssetManifest(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetManifestTimestamp operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetManifestTimestamp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetManifestTimestamp(w, r, assetId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3275,6 +3323,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/access-log", wrapper.GetAssetAccessLog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/manifest", wrapper.GetAssetManifest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/manifest/timestamp", wrapper.GetAssetManifestTimestamp)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/proof", wrapper.GetAssetProof)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/verify", wrapper.VerifyArtifact)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions", wrapper.CreatePlaybackSession)
@@ -4361,6 +4410,138 @@ type GetAssetManifestdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetAssetManifestdefaultApplicationProblemPlusJSONResponse) VisitGetAssetManifestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestTimestampRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type GetAssetManifestTimestampResponseObject interface {
+	VisitGetAssetManifestTimestampResponse(w http.ResponseWriter) error
+}
+
+type GetAssetManifestTimestamp200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifestTimestamp200JSONResponse struct {
+	Body    ManifestTimestamp
+	Headers GetAssetManifestTimestamp200ResponseHeaders
+}
+
+func (response GetAssetManifestTimestamp200JSONResponse) VisitGetAssetManifestTimestampResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestTimestamp401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetManifestTimestamp401ApplicationProblemPlusJSONResponse) VisitGetAssetManifestTimestampResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestTimestamp403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetManifestTimestamp403ApplicationProblemPlusJSONResponse) VisitGetAssetManifestTimestampResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestTimestamp404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifestTimestamp404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetManifestTimestamp404ResponseHeaders
+}
+
+func (response GetAssetManifestTimestamp404ApplicationProblemPlusJSONResponse) VisitGetAssetManifestTimestampResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestTimestamp503ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifestTimestamp503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetManifestTimestamp503ResponseHeaders
+}
+
+func (response GetAssetManifestTimestamp503ApplicationProblemPlusJSONResponse) VisitGetAssetManifestTimestampResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestTimestampdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifestTimestampdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetAssetManifestTimestampdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetAssetManifestTimestampdefaultApplicationProblemPlusJSONResponse) VisitGetAssetManifestTimestampResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -7466,6 +7647,9 @@ type StrictServerInterface interface {
 	// GetAssetManifest Get an asset's signed integrity manifest
 	// (GET /v1/assets/{asset_id}/manifest)
 	GetAssetManifest(ctx context.Context, request GetAssetManifestRequestObject) (GetAssetManifestResponseObject, error)
+	// GetAssetManifestTimestamp Get the RFC 3161 timestamp token of an asset's manifest
+	// (GET /v1/assets/{asset_id}/manifest/timestamp)
+	GetAssetManifestTimestamp(ctx context.Context, request GetAssetManifestTimestampRequestObject) (GetAssetManifestTimestampResponseObject, error)
 	// GetAssetProof Get an inclusion proof for one artifact
 	// (GET /v1/assets/{asset_id}/proof)
 	GetAssetProof(ctx context.Context, request GetAssetProofRequestObject) (GetAssetProofResponseObject, error)
@@ -7841,6 +8025,32 @@ func (sh *strictHandler) GetAssetManifest(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetAssetManifestResponseObject); ok {
 		if err := validResponse.VisitGetAssetManifestResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetManifestTimestamp operation middleware
+func (sh *strictHandler) GetAssetManifestTimestamp(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request GetAssetManifestTimestampRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetManifestTimestamp(ctx, request.(GetAssetManifestTimestampRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetManifestTimestamp")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetManifestTimestampResponseObject); ok {
+		if err := validResponse.VisitGetAssetManifestTimestampResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

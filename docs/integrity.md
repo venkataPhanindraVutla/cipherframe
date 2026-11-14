@@ -258,8 +258,51 @@ The record stays fetchable after the asset is gone.
 
 ## Anchoring (optional)
 
-When an RFC 3161 Time-Stamping Authority is configured, Cipherframe timestamps the digest of each
-signed record. It is off by default; records without a timestamp are reported as "unanchored".
+A signed manifest says what Cipherframe recorded, but its time is only as trustworthy as the
+operator's clock. When an RFC 3161 Time-Stamping Authority is configured
+(`CIPHERFRAME_TSA_URL`, [usage.md](usage.md#timestamp-anchoring-optional)), Cipherframe adds a
+timestamp token from an independent party. It is off by default; a manifest without a token is
+reported as "unanchored". Decisions: [ADR 0041](adr/0041-rfc-3161-anchoring-of-manifests.md).
+
+**What is stamped.** SHA-256 of the DSSE `payload` bytes, the canonical manifest, not the envelope
+or its stored JSON, so re-encoding by the database never changes it. The manifest commits to every
+artifact through the Merkle roots, so one token anchors the whole asset. The request has a random
+nonce and asks for the authority's certificate.
+
+**When.** A `manifest.anchor` job is queued in the transaction that stores a manifest: when the asset
+becomes ready, and again when the masked variant re-signs it (the old token goes with the old
+manifest, and the new payload is stamped). The job calls the authority outside any transaction,
+checks the answer (granted, the imprint and nonce are ours, the token signature verifies), and
+stores the token, its time and the authority's URL only if the manifest is still the one it
+stamped. A failure retries with backoff; after the last attempt the manifest stays unanchored and an
+error is logged. Anchoring never delays or fails an asset.
+
+**Fetching it.** `GET /v1/assets/{id}/manifest/timestamp` returns `token` (base64 DER), `gen_time`,
+`tsa_url` and `imprint_sha256`, or `404 not_anchored` ([api.md](api.md#integrity-manifests-proofs-verify-adr-0033-0039)).
+
+**Verifying it.** The token is checked offline, with the manifest envelope and the authority's CA:
+
+```sh
+curl -s -H "Authorization: Bearer $CF_KEY" https://api.example.com/v1/assets/$ASSET/manifest/timestamp -o ts.json
+cipherframe verify --manifest manifest.json --keys keys.json --timestamp ts.json --tsa-ca tsa-ca.pem ./download/
+```
+
+The check requires that the token's imprint is SHA-256 of the envelope's payload, that the token
+signature verifies, and that the signer's certificate chains to a trusted root with the
+time-stamping usage, valid at the time in the token. It adds one line after the summary:
+`anchored  <gen_time>  (<tsa>)`, `unanchored`, or `timestamp invalid (<reason>)`. An invalid
+timestamp makes the exit code 2 (cannot say) and never turns a result into "modified"; without
+`--timestamp` the output and exit codes are as before. The library is
+`offline.VerifyTimestamp`.
+
+**Trust anchors.** `--tsa-ca ca.pem` is a PEM bundle of the roots you trust for the authority;
+without it the system roots are used. Get the CA certificate from the authority itself, out of
+band: a token carries the signer's certificate, but only a root you obtained separately tells you
+whom to believe. The verifier does not check certificate revocation.
+
+**Privacy.** Only a 32-byte digest and a nonce leave your deployment. The authority never sees a
+file, a name, a tenant or asset identifier, or the manifest itself, and it cannot tell what the
+digest stands for. It does learn that you requested a timestamp at that moment.
 
 ## Verifying
 
@@ -316,14 +359,14 @@ rotation still verifies against the current published set; keys with another sta
 are ignored. `--keys-url` must be https (plain http only for localhost), allows one GET with a
 10-second timeout and 1 MiB, and is the only network access.
 
-Not checked: file sizes (a matching SHA-256 makes them redundant), timestamps (M5-5), and whether
+Not checked: file sizes (a matching SHA-256 makes them redundant), the timestamp unless `--timestamp` is given, and whether
 a key set you fetched is the genuine one: pass a key set you obtained out of band when that matters.
 
 ## What this does not protect against
 
 - A deletion record proves what Cipherframe deleted and that the key was destroyed. It cannot prove
   that nobody kept a plaintext copy.
-- Without a timestamp authority, a record's time is only as trustworthy as the operator's clock.
+- Without a timestamp authority, a record's time is only as trustworthy as the operator's clock. With one, the time is the authority's, but only for the manifest: a deletion record is not stamped.
 - A compromised signing key can sign false records; rotation limits the damage but does not undo it.
 
 ## Signing keys

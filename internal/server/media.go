@@ -8,8 +8,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anchor"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
@@ -43,6 +45,17 @@ func checkMediaTools(ctx context.Context, cfg *config.Config, log *slog.Logger) 
 func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Queue, contentKeys *contentkey.Manager, proc *processing, log *slog.Logger) error {
 	cfg := proc.Config
 	repo := pipeline.NewDBRepo(pool)
+	if tsa := cfg.TSA; tsa.Enabled() {
+		// Optional RFC 3161 anchoring (ADR 0041): the repository enqueues the job with each manifest.
+		repo.WithAnchor(inserter)
+		if err := anchor.Register(reg, anchor.Deps{
+			Repo: db.New(pool), Stamper: anchor.NewClient(tsa.URL, tsa.PolicyOID, tsa.Timeout),
+			TSAURL: tsa.URL, Timeout: tsa.Timeout, Log: log,
+		}); err != nil {
+			return err
+		}
+		log.Info("manifest anchoring is on", slog.String("tsa", tsa.URL))
+	}
 	// The masker's hand-off tasks get an await job (ADR 0010): it requeues retryable failures and
 	// expires leases. asset.mask itself reads the outcome, so nothing is left to do on a result.
 	if err := jobs.RegisterExternal(reg, pool, jobs.ExternalConfig{
