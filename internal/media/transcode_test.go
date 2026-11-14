@@ -318,3 +318,28 @@ func TestCheckAligned(t *testing.T) {
 		t.Error("a single rendition is trivially aligned")
 	}
 }
+
+func TestTranscodeArgsCapsOutputsAtTheVideoDuration(t *testing.T) {
+	spec := testSpec()
+	args, err := TranscodeArgs(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := argValues(args, "-t"); len(got) != 0 {
+		t.Errorf("-t = %v with an unknown video duration, want none", got)
+	}
+	spec.Info.Video.Duration = 42041667 * time.Microsecond
+	args, err = TranscodeArgs(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := argValues(args, "-t")
+	if len(got) != len(spec.Renditions) {
+		t.Fatalf("-t = %v, want one per rendition", got)
+	}
+	for _, v := range got {
+		if v != "42.041667" {
+			t.Errorf("-t = %q", v)
+		}
+	}
+}

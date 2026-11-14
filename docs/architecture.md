@@ -362,6 +362,16 @@ everywhere. After the run Go checks that every rendition has the same number of 
 durations (`CheckAligned`); the integration test additionally decrypts each segment and reads its
 start timestamp with FFprobe.
 
+**Short final segment and audio length.** Each output is capped at the video stream's duration
+(`-t`, when FFprobe knows it), so audio that runs past the last video frame cannot extend the media;
+shorter audio is left alone. Even so, a source can leave a final segment of a frame or two, and
+players such as hls.js stall before it and never reach `ended`. When a rendition has at least two
+segments and the last is shorter than one second, `ReadRenditionOutput` appends its bytes to the
+previous segment file (fMP4 media segments are `moof`+`mdat` sequences, so this is lossless), adds
+the durations and drops it, before alignment is checked and before anything is encrypted. Every
+rendition is cut on the same frames and so makes the same decision; `EXT-X-TARGETDURATION` is then
+computed from the merged durations.
+
 **Failure handling.** A file that cannot be processed fails the asset with a stable code in
 `failure_code` (`invalid_media`, `transcode_failed`, `transcode_timeout`, `source_mismatch`,
 `source_missing`) and the job is cancelled (not retried); partial output is removed. A storage,

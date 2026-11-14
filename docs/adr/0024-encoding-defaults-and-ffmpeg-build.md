@@ -67,4 +67,8 @@ segments.
   want to avoid them can supply their own FFmpeg.
 - Encrypting in-process means the worker, not FFmpeg, touches the content key, and segments are
   buffered per segment (6 s is small); this is the same constraint the plan's integrity hashing needs.
+- Note, 2026-11-14: the 6 s rule is a target, not a guarantee for the last segment. A final segment
+  shorter than 1 s is merged into the previous one (so the last segment can be up to about 7 s), and
+  each output is capped at the video duration (`-t`) so longer audio cannot create such a tail. See
+  [architecture.md](../architecture.md).
 - HEVC/AV1 output, hardware encoders and other codecs remain M10 decisions (P17, P18).

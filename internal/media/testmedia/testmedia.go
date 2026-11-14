@@ -38,6 +38,10 @@ type Spec struct {
 	Duration      time.Duration // default 2 s
 	FPS           int           // default 15
 	Audio         bool          // add a sine tone (AAC)
+	// FrameRate overrides FPS with an exact rate such as "30000/1001"; FPS still sets the GOP.
+	FrameRate string
+	// AudioExtra makes the audio track this much longer than the video.
+	AudioExtra time.Duration
 	// Rotation is the clockwise rotation, 0, 90, 180 or 270, written to the display matrix of an
 	// MP4 so that players (and ffprobe) show the picture turned. The stored frames do not change.
 	Rotation int
@@ -70,13 +74,18 @@ func (g Generator) Generate(ctx context.Context, dir string, s Spec) (string, er
 	out := filepath.Join(abs, s.Name)
 	secs := strconv.FormatFloat(s.Duration.Seconds(), 'f', 3, 64)
 	fps := strconv.Itoa(s.FPS)
+	rate := fps
+	if s.FrameRate != "" {
+		rate = s.FrameRate
+	}
+	audioSecs := strconv.FormatFloat((s.Duration + s.AudioExtra).Seconds(), 'f', 3, 64)
 
 	args := []string{
 		"-hide_banner", "-nostdin", "-v", "error", "-y",
-		"-f", "lavfi", "-i", fmt.Sprintf("testsrc2=size=%dx%d:rate=%s:duration=%s", s.Width, s.Height, fps, secs),
+		"-f", "lavfi", "-i", fmt.Sprintf("testsrc2=size=%dx%d:rate=%s:duration=%s", s.Width, s.Height, rate, secs),
 	}
 	if s.Audio {
-		args = append(args, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration="+secs)
+		args = append(args, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration="+audioSecs)
 	}
 	args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", fps)
 	if s.Audio {

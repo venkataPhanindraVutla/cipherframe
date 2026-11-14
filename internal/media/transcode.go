@@ -166,6 +166,11 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 		if spec.Info.Audio != nil {
 			args = append(args,
 				"-c:a", "aac", "-b:a", strconv.Itoa(r.AudioKbps)+"k", "-ac", "2", "-ar", strconv.Itoa(OutputSampleRate))
+			// Audio longer than the video would extend the media past the last frame, so cap each
+			// output at the video's duration. Shorter audio is untouched: video is never cut.
+			if v.Duration > 0 {
+				args = append(args, "-t", strconv.FormatFloat(v.Duration.Seconds(), 'f', 6, 64))
+			}
 		}
 		args = append(args,
 			"-f", "hls",

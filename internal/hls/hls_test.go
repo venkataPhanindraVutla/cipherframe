@@ -229,6 +229,19 @@ func TestMediaPlaylistTargetDurationRoundsUp(t *testing.T) {
 	}
 }
 
+func TestMediaPlaylistTargetDurationAfterMerge(t *testing.T) {
+	// Two 6.006 s segments merged make 12.045 s, which must give a target duration of 13.
+	got, err := hls.RenderMedia(hls.MediaPlaylist{InitURI: "init.mp4", Segments: []hls.Segment{
+		{URI: "seg-0.m4s", Duration: 12045 * time.Millisecond},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "#EXT-X-TARGETDURATION:13\n") {
+		t.Errorf("target duration must follow the merged durations:\n%s", got)
+	}
+}
+
 func TestMediaPlaylistRejectsBadInput(t *testing.T) {
 	good := hls.Segment{URI: "seg-0.m4s", Duration: time.Second}
 	for name, p := range map[string]hls.MediaPlaylist{
