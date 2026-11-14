@@ -1,0 +1,4 @@
+{
+  "input": "/etc/passwd",
+  "output": "job-01/masked.mp4"
+}

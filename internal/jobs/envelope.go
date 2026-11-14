@@ -160,7 +160,10 @@ type Result struct {
 	TaskID          uuid.UUID  `json:"task_id"`
 	Status          string     `json:"status"`
 	Error           *TaskError `json:"error,omitempty"`
-	Artifacts       []Artifact `json:"artifacts,omitempty"`
+	// Output is the kind-specific output of a succeeded task (for example the face count of
+	// media.mask_faces). Each kind defines and validates its own shape.
+	Output    json.RawMessage `json:"output,omitempty"`
+	Artifacts []Artifact      `json:"artifacts,omitempty"`
 }
 
 // Validate checks the result against the rules of the result schema.
@@ -188,6 +191,9 @@ func (r *Result) Validate() error {
 		}
 	default:
 		return invalidResult("status must be succeeded or failed")
+	}
+	if len(r.Output) > 0 && (r.Status != StatusSucceeded || bytes.TrimSpace(r.Output)[0] != '{') {
+		return invalidResult("output must be an object on a succeeded result")
 	}
 	for _, a := range r.Artifacts {
 		switch {

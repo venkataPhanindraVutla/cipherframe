@@ -1,0 +1,44 @@
+[project]
+name = "cipherframe-ml"
+version = "0.1.0"
+description = "Cipherframe ML worker: masks faces in video (ADR 0036)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "opencv-python-headless==4.13.0.92",
+    "numpy>=2,<3",
+    "psycopg[binary]==3.3.2",
+]
+
+[project.scripts]
+cipherframe-ml = "cipherframe_ml.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+    "ruff==0.14.10",
+    "jsonschema[format-nongpl]==4.25.1",
+    "testcontainers[postgres]==4.13.3",
+]
+
+[build-system]
+requires = ["hatchling==1.28.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cipherframe_ml"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S603", "S607", "S608"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["docker: needs a Docker daemon (Postgres via testcontainers)"]
