@@ -118,7 +118,7 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 	}
 
 	// 5. The key service.
-	key, err := p.keys.Get(ctx, g.tenant, g.asset)
+	key, err := p.keys.Get(ctx, g.tenant, g.asset, g.variant)
 	if err != nil {
 		p.release(ctx, g)
 		return nil, unauthIfNotFound(err)

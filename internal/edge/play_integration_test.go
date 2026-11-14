@@ -180,7 +180,7 @@ func newEnv(t *testing.T) *env {
 	e.mgr = contentkey.NewManager(pool, reg, e.log)
 	var ck contentkey.ContentKey
 	if err := db.Tx(ctx, pool, func(tx *db.Repos) (err error) {
-		ck, err = e.mgr.Create(ctx, tx, res.Tenant.ID, asset.ID)
+		ck, err = e.mgr.Create(ctx, tx, res.Tenant.ID, asset.ID, keys.Original)
 		return err
 	}); err != nil {
 		t.Fatal(err)

@@ -44,8 +44,10 @@ const (
 
 // CallbackRequest is what the callback is asked about.
 type CallbackRequest struct {
-	TenantID  string
-	AssetID   string
+	TenantID string
+	AssetID  string
+	// Variant is the variant the session would be bound to ("original" or "masked", ADR 0036).
+	Variant   string
 	Ticket    string
 	RequestID string
 }
@@ -55,6 +57,7 @@ type callbackBody struct {
 	Type      string `json:"type"`
 	TenantID  string `json:"tenant_id"`
 	AssetID   string `json:"asset_id"`
+	Variant   string `json:"variant"`
 	Ticket    string `json:"ticket"`
 	RequestID string `json:"request_id"`
 	Timestamp string `json:"timestamp"`
@@ -112,7 +115,7 @@ func (a *Authorizer) Authorize(ctx context.Context, url string, secrets [][]byte
 	}
 	now := a.now().UTC()
 	body, err := json.Marshal(callbackBody{
-		Type: CallbackType, TenantID: r.TenantID, AssetID: r.AssetID, Ticket: r.Ticket,
+		Type: CallbackType, TenantID: r.TenantID, AssetID: r.AssetID, Variant: r.Variant, Ticket: r.Ticket,
 		RequestID: r.RequestID, Timestamp: now.Format(time.RFC3339),
 	})
 	if err != nil {
