@@ -5,6 +5,7 @@
 - Gate: P8
 - Deciders: project owner
 - Amended by: [0037](0037-faster-face-masking.md) (the ladder may be restricted)
+- Amended by: [0038](0038-encoder-preset-and-detection-stride.md) (the libx264 preset is configurable)
 
 ## Context
 

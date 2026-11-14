@@ -5,6 +5,7 @@
 - Gate: P20 (face detection model only), P21 (worker, face masking only)
 - Deciders: project owner
 - Amended by: [0037](0037-faster-face-masking.md) (`asset.mask` is enqueued at commit and runs beside `asset.process`)
+- Amended by: [0038](0038-encoder-preset-and-detection-stride.md) (the masker may detect on a stride)
 
 ## Context
 
