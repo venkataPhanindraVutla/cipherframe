@@ -583,8 +583,10 @@ paths:
         - $ref: "#/components/parameters/AssetId"
         - name: path
           in: query
-          required: true
-          description: The artifact's manifest path.
+          required: false
+          description: |
+            The artifact's manifest path. Required: it is declared optional only so that the
+            api key is checked before the parameters (a missing `path` is `400 invalid_request`).
           schema:
             type: string
             minLength: 1

@@ -159,6 +159,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"jwt_enabled":false,"callback_enabled":false}`)
 				case "putPlaybackJwtKey":
 					body = []byte(`{"kty":"OKP","alg":"EdDSA"}`)
+				case "verifyArtifact":
+					body = []byte(`{"sha256":"` + strings.Repeat("0", 64) + `"}`)
 				case "revokePlaybackSessions":
 					body = []byte(`{"viewer_id":"viewer"}`)
 				case "createPlaybackSession":
@@ -184,8 +186,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 31 {
-		t.Fatalf("exercised %d secured operations, want 31", n)
+	if n != 34 {
+		t.Fatalf("exercised %d secured operations, want 34", n)
 	}
 }
 

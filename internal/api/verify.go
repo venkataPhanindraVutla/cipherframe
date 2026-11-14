@@ -132,7 +132,11 @@ func (s *server) GetAssetProof(ctx context.Context, req gen.GetAssetProofRequest
 	if variant != proof.Original && variant != proof.Masked {
 		fields = append(fields, errs.FieldError{Field: "variant", Message: "must be original or masked"})
 	}
-	if req.Params.Path == "" || len(req.Params.Path) > 512 {
+	var path string
+	if req.Params.Path != nil {
+		path = *req.Params.Path
+	}
+	if path == "" || len(path) > 512 {
 		fields = append(fields, errs.FieldError{Field: "path", Message: "is required and at most 512 characters"})
 	}
 	if len(fields) > 0 {
@@ -151,7 +155,7 @@ func (s *server) GetAssetProof(ctx context.Context, req gen.GetAssetProofRequest
 		httpx.Logger(ctx).Error("stored manifest does not decode", slog.String("asset_id", aid.String()), slog.Any("error", err))
 		return nil, errs.New(errs.InternalError, "An internal error occurred.")
 	}
-	pf, err := proof.Build(m, variant, req.Params.Path)
+	pf, err := proof.Build(m, variant, path)
 	switch {
 	case errors.Is(err, proof.ErrNotFound):
 		return nil, errs.New(errs.ArtifactNotFound, "The manifest has no artifact at this path.")
@@ -170,6 +174,7 @@ func proofOut(p proof.Proof) gen.InclusionProof {
 	out := gen.InclusionProof{
 		AssetId: p.AssetID, Variant: gen.ArtifactVariant(p.Variant), Path: p.Path, Sha256: p.SHA256, Size: p.Size,
 		TopLevel: gen.ProofLevel{
+			//nolint:gosec // tree positions are bounded by the number of artifacts in a manifest
 			LeafIndex: int(p.TopLevel.LeafIndex), TreeSize: int(p.TopLevel.TreeSize), AuditPath: p.TopLevel.AuditPath, Root: p.TopLevel.Root,
 		},
 	}
@@ -177,7 +182,7 @@ func proofOut(p proof.Proof) gen.InclusionProof {
 		out.TopLevel.AuditPath = []string{}
 	}
 	if p.RenditionRoot != "" {
-		li, ts := int(*p.LeafIndex), int(*p.TreeSize)
+		li, ts := int(*p.LeafIndex), int(*p.TreeSize) //nolint:gosec // bounded by the number of segments
 		out.LeafIndex, out.TreeSize, out.Rendition, out.RenditionRoot, out.AuditPath = &li, &ts, &p.Rendition, &p.RenditionRoot, &p.AuditPath
 	}
 	return out

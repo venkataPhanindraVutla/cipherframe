@@ -1683,8 +1683,9 @@ type GetAssetAccessLogParams struct {
 
 // GetAssetProofParams defines parameters for GetAssetProof.
 type GetAssetProofParams struct {
-	// Path The artifact's manifest path.
-	Path string `form:"path" json:"path"`
+	// Path The artifact's manifest path. Required: it is declared optional only so that the
+	// api key is checked before the parameters (a missing `path` is `400 invalid_request`).
+	Path *string `form:"path,omitempty" json:"path,omitempty"`
 
 	// Variant The variant to prove (default `original`).
 	Variant *ArtifactVariant `form:"variant,omitempty" json:"variant,omitempty"`
@@ -2412,9 +2413,9 @@ func (siw *ServerInterfaceWrapper) GetAssetProof(w http.ResponseWriter, r *http.
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetAssetProofParams
 
-	// ------------- Required query parameter "path" -------------
+	// ------------- Optional query parameter "path" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
