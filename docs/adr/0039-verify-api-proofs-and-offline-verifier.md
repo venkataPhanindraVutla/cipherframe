@@ -22,7 +22,7 @@ CLI is M8-1.
    offline verifier then needs no Cipherframe access at all.
 3. **A separate public "verification link"** per asset: a later, opt-in feature.
 
-For the verifier: a public `pkg/` library now (contradicts ADR 0006), or the library stays in
+For the verifier: a public `pkg/` library now (contradicts ADR 0006), or the library stays under
 `internal/integrity/verify` and ships as a CLI now, with the public Go API arriving in the v2 SDK.
 
 ## Decision
@@ -52,8 +52,9 @@ Option 2, and the CLI now.
 
 **Offline verifier (M5-4):**
 
-- Library: `internal/integrity/verify` grows `VerifyArtifact(envelope, keys, path, data or sha256,
-  variant)` and `VerifyProof(envelope, keys, proof, data or sha256)`, both needing only the public
+- Library: `internal/integrity/verify/offline` (a subpackage, because `proof` imports `verify`)
+  provides `VerifyArtifact(envelope, keys, path, data or sha256, variant)` and
+  `VerifyProof(envelope, keys, proof, data or sha256)`, both needing only the public
   key set (`/.well-known/cipherframe-keys.json` JSON). They map the five internal outcomes of
   docs/integrity.md onto the three public ones: verified → **ours**; tampered with a valid trusted
   signature but a hash or path mismatch → **modified**; everything else (untrusted key, malformed,
