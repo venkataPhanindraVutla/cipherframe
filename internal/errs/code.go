@@ -33,6 +33,9 @@ const (
 	// VariantNotReady is a 409 for a session that asks for the masked variant before it is ready
 	// (pending or failed). It never falls back to the original (ADR 0036).
 	VariantNotReady Code = "variant_not_ready"
+	// ArtifactNotFound is a 404 for a proof request whose path is not an artifact of the asset's
+	// signed manifest (ADR 0039).
+	ArtifactNotFound Code = "artifact_not_found"
 )
 
 // Info describes a registered code.
@@ -58,6 +61,7 @@ var registry = map[Code]Info{
 	SessionLimit:          {Status: 409, Title: "Session limit reached"},
 	VariantUnavailable:    {Status: 409, Title: "Variant unavailable"},
 	VariantNotReady:       {Status: 409, Title: "Variant not ready"},
+	ArtifactNotFound:      {Status: 404, Title: "Artifact not found"},
 }
 
 // Lookup returns the registry entry for c.

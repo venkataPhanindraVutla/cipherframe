@@ -33,6 +33,51 @@ func (q *Queries) DeleteAssetHLSArtifacts(ctx context.Context, arg DeleteAssetHL
 	return result.RowsAffected(), nil
 }
 
+const findTenantArtifactsBySHA256 = `-- name: FindTenantArtifactsBySHA256 :many
+SELECT a.asset_id, a.variant, a.object_key
+FROM asset_artifacts a
+JOIN assets s ON s.id = a.asset_id
+WHERE s.tenant_id = $1::uuid AND s.state = 'ready'
+  AND a.sha256 = $2::bytea AND a.bucket = 'delivery'
+  AND a.kind IN ('master', 'playlist', 'init', 'segment')
+ORDER BY a.created_at, a.object_key
+LIMIT 20
+`
+
+type FindTenantArtifactsBySHA256Params struct {
+	TenantID pgtype.UUID
+	Sha256   []byte
+}
+
+type FindTenantArtifactsBySHA256Row struct {
+	AssetID   pgtype.UUID
+	Variant   string
+	ObjectKey string
+}
+
+// The HLS objects of the tenant's ready assets whose stored bytes hash to sha256 (the lookup behind
+// a hash-only verify). A hash can repeat across assets (an identical playlist), so several rows
+// are possible; the oldest come first.
+func (q *Queries) FindTenantArtifactsBySHA256(ctx context.Context, arg FindTenantArtifactsBySHA256Params) ([]FindTenantArtifactsBySHA256Row, error) {
+	rows, err := q.db.Query(ctx, findTenantArtifactsBySHA256, arg.TenantID, arg.Sha256)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindTenantArtifactsBySHA256Row
+	for rows.Next() {
+		var i FindTenantArtifactsBySHA256Row
+		if err := rows.Scan(&i.AssetID, &i.Variant, &i.ObjectKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAssetArtifacts = `-- name: ListAssetArtifacts :many
 SELECT asset_id, kind, rendition, bucket, object_key, size_bytes, sha256, created_at, variant FROM asset_artifacts WHERE asset_id = $1 ORDER BY bucket, object_key
 `

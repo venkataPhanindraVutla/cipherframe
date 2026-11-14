@@ -82,6 +82,24 @@ func (e AccessLogEvent) Valid() bool {
 	}
 }
 
+// Defines values for ArtifactVariant.
+const (
+	ArtifactVariantMasked   ArtifactVariant = "masked"
+	ArtifactVariantOriginal ArtifactVariant = "original"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactVariant enum.
+func (e ArtifactVariant) Valid() bool {
+	switch e {
+	case ArtifactVariantMasked:
+		return true
+	case ArtifactVariantOriginal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AssetState.
 const (
 	AssetStateCommitted  AssetState = "committed"
@@ -124,6 +142,21 @@ func (e CreatedPlaybackSessionTokenTransport) Valid() bool {
 	case Header:
 		return true
 	case Url:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DsseEnvelopePayloadType.
+const (
+	ApplicationvndCipherframeManifestJson DsseEnvelopePayloadType = "application/vnd.cipherframe.manifest+json"
+)
+
+// Valid indicates whether the value is a known member of the DsseEnvelopePayloadType enum.
+func (e DsseEnvelopePayloadType) Valid() bool {
+	switch e {
+	case ApplicationvndCipherframeManifestJson:
 		return true
 	default:
 		return false
@@ -321,6 +354,7 @@ func (e PlaybackSettingsInputDelivery) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
+	ProblemCodeArtifactNotFound      ProblemCode = "artifact_not_found"
 	ProblemCodeAssetNotReady         ProblemCode = "asset_not_ready"
 	ProblemCodeConflict              ProblemCode = "conflict"
 	ProblemCodeDependencyUnavailable ProblemCode = "dependency_unavailable"
@@ -341,6 +375,8 @@ const (
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
+	case ProblemCodeArtifactNotFound:
+		return true
 	case ProblemCodeAssetNotReady:
 		return true
 	case ProblemCodeConflict:
@@ -546,16 +582,55 @@ func (e UploadMethod) Valid() bool {
 
 // Defines values for Variant.
 const (
-	Masked   Variant = "masked"
-	Original Variant = "original"
+	VariantMasked   Variant = "masked"
+	VariantOriginal Variant = "original"
 )
 
 // Valid indicates whether the value is a known member of the Variant enum.
 func (e Variant) Valid() bool {
 	switch e {
-	case Masked:
+	case VariantMasked:
 		return true
-	case Original:
+	case VariantOriginal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VerifyResultOutcome.
+const (
+	CannotSay VerifyResultOutcome = "cannot_say"
+	Modified  VerifyResultOutcome = "modified"
+	Ours      VerifyResultOutcome = "ours"
+)
+
+// Valid indicates whether the value is a known member of the VerifyResultOutcome enum.
+func (e VerifyResultOutcome) Valid() bool {
+	switch e {
+	case CannotSay:
+		return true
+	case Modified:
+		return true
+	case Ours:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VerifyResultReason.
+const (
+	ManifestUnverifiable VerifyResultReason = "manifest_unverifiable"
+	NoMatch              VerifyResultReason = "no_match"
+)
+
+// Valid indicates whether the value is a known member of the VerifyResultReason enum.
+func (e VerifyResultReason) Valid() bool {
+	switch e {
+	case ManifestUnverifiable:
+		return true
+	case NoMatch:
 		return true
 	default:
 		return false
@@ -682,6 +757,9 @@ type ApiKeyList struct {
 	Items      []ApiKey `json:"items"`
 	NextCursor *string  `json:"next_cursor,omitempty"`
 }
+
+// ArtifactVariant defines model for ArtifactVariant.
+type ArtifactVariant string
 
 // Asset defines model for Asset.
 type Asset struct {
@@ -865,6 +943,25 @@ type CreatedPlaybackSession struct {
 // to tokens in URLs (ADR 0030), and `manifest_url` carries it.
 type CreatedPlaybackSessionTokenTransport string
 
+// DsseEnvelope A DSSE v1 envelope (ADR 0033). `payload` is the base64 of the canonical manifest JSON; the
+// signed bytes are `PAE(payloadType, payload)`. See `docs/integrity.md` for the manifest
+// format.
+type DsseEnvelope struct {
+	// Payload Standard base64 of the canonical manifest.
+	Payload     string                  `json:"payload"`
+	PayloadType DsseEnvelopePayloadType `json:"payloadType"`
+	Signatures  []struct {
+		// Keyid The `keyid` of a published signing key.
+		Keyid string `json:"keyid"`
+
+		// Sig Standard base64 of the 64-byte Ed25519 signature.
+		Sig string `json:"sig"`
+	} `json:"signatures"`
+}
+
+// DsseEnvelopePayloadType defines model for DsseEnvelope.PayloadType.
+type DsseEnvelopePayloadType string
+
 // FieldError defines model for FieldError.
 type FieldError struct {
 	// Field The JSON name of the field, with an index for list items, for example `allowed_origins[2]`.
@@ -879,6 +976,39 @@ type HealthResponse struct {
 
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
+
+// InclusionProof Proves that the artifact is covered by the manifest's top-level root. For a segment the
+// rendition members prove its hash in the rendition tree (leaf data: the artifact's SHA-256,
+// leaves: init then segments in playlist order) and `top_level` proves `rendition_root` in
+// the top-level tree. For a playlist the rendition members are absent and `top_level` proves
+// the playlist's hash directly. Trees and hashing are specified in `docs/integrity.md`.
+type InclusionProof struct {
+	AssetId string `json:"asset_id"`
+
+	// AuditPath Audit path in the rendition tree. Absent for a playlist.
+	AuditPath *[]Sha256Hex `json:"audit_path,omitempty"`
+
+	// LeafIndex Index of the artifact in its rendition tree. Absent for a playlist.
+	LeafIndex *int   `json:"leaf_index,omitempty"`
+	Path      string `json:"path"`
+
+	// Rendition The rendition name. Absent for a playlist.
+	Rendition *string `json:"rendition,omitempty"`
+
+	// RenditionRoot A SHA-256 as 64 lowercase hex digits.
+	RenditionRoot *Sha256Hex `json:"rendition_root,omitempty"`
+
+	// Sha256 A SHA-256 as 64 lowercase hex digits.
+	Sha256 Sha256Hex `json:"sha256"`
+	Size   int64     `json:"size"`
+
+	// TopLevel A leaf's place in the top-level tree (RFC 9162 inclusion proof).
+	TopLevel ProofLevel `json:"top_level"`
+
+	// TreeSize Leaves of the rendition tree. Absent for a playlist.
+	TreeSize *int            `json:"tree_size,omitempty"`
+	Variant  ArtifactVariant `json:"variant"`
+}
 
 // Masking defines model for Masking.
 type Masking struct {
@@ -1218,6 +1348,16 @@ type Problem struct {
 // ProblemCode Stable identifier to switch on. The closed registry in `internal/errs`.
 type ProblemCode string
 
+// ProofLevel A leaf's place in the top-level tree (RFC 9162 inclusion proof).
+type ProofLevel struct {
+	AuditPath []Sha256Hex `json:"audit_path"`
+	LeafIndex int         `json:"leaf_index"`
+
+	// Root The top-level root, equal to `top_level.root` of the variant in the manifest.
+	Root     Sha256Hex `json:"root"`
+	TreeSize int       `json:"tree_size"`
+}
+
 // PublicJwk A public JWK (RFC 7517) with an `alg`. `kty` is `OKP` (`crv` `Ed25519`, alg `EdDSA`), `EC`
 // (`crv` `P-256`, alg `ES256`) or `RSA` (at least 2048 bits, alg `RS256`). Members other than
 // those listed are accepted by the schema and judged by the server: a private member such as
@@ -1326,6 +1466,9 @@ type Scope string
 // SessionId A session ID (`ses_` followed by 52 characters). It is a capability, so never log or share it.
 type SessionId = string
 
+// Sha256Hex A SHA-256 as 64 lowercase hex digits.
+type Sha256Hex = string
+
 // SigningKey An integrity signing key. Public data only; the private half is never returned.
 type SigningKey struct {
 	ActivatedAt time.Time           `json:"activated_at"`
@@ -1389,6 +1532,52 @@ type UploadMethod string
 // blurred and exists only for an asset created with `mask_faces`. Each variant has its own
 // content key.
 type Variant string
+
+// VerifyRequest defines model for VerifyRequest.
+type VerifyRequest struct {
+	// AssetId With `path`, compare against this asset's manifest.
+	AssetId *string `json:"asset_id,omitempty"`
+
+	// Path The artifact's manifest path. Needs `asset_id`.
+	Path *string `json:"path,omitempty"`
+
+	// Sha256 A SHA-256 as 64 lowercase hex digits.
+	Sha256 Sha256Hex `json:"sha256"`
+
+	// Variant Needs `asset_id` and `path`. Default `original`.
+	Variant *ArtifactVariant `json:"variant,omitempty"`
+}
+
+// VerifyResult defines model for VerifyResult.
+type VerifyResult struct {
+	// AssetId Present with `ours` and `modified`.
+	AssetId *string             `json:"asset_id,omitempty"`
+	Outcome VerifyResultOutcome `json:"outcome"`
+
+	// Path The manifest path (never a storage key). Present with `ours` and `modified`.
+	Path *string `json:"path,omitempty"`
+
+	// Proof Proves that the artifact is covered by the manifest's top-level root. For a segment the
+	// rendition members prove its hash in the rendition tree (leaf data: the artifact's SHA-256,
+	// leaves: init then segments in playlist order) and `top_level` proves `rendition_root` in
+	// the top-level tree. For a playlist the rendition members are absent and `top_level` proves
+	// the playlist's hash directly. Trees and hashing are specified in `docs/integrity.md`.
+	Proof *InclusionProof `json:"proof,omitempty"`
+
+	// Reason Present with `cannot_say`: `no_match` when the asset, path, variant or hash is unknown to
+	// this tenant, `manifest_unverifiable` when the stored manifest's signature could not be
+	// verified with the published keys or its content could not be read.
+	Reason  *VerifyResultReason `json:"reason,omitempty"`
+	Variant *ArtifactVariant    `json:"variant,omitempty"`
+}
+
+// VerifyResultOutcome defines model for VerifyResult.Outcome.
+type VerifyResultOutcome string
+
+// VerifyResultReason Present with `cannot_say`: `no_match` when the asset, path, variant or hash is unknown to
+// this tenant, `manifest_unverifiable` when the stored manifest's signature could not be
+// verified with the published keys or its content could not be read.
+type VerifyResultReason string
 
 // Whoami defines model for Whoami.
 type Whoami struct {
@@ -1492,6 +1681,16 @@ type GetAssetAccessLogParams struct {
 	Cursor *AccessLogCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetAssetProofParams defines parameters for GetAssetProof.
+type GetAssetProofParams struct {
+	// Path The artifact's manifest path. Required: it is declared optional only so that the
+	// api key is checked before the parameters (a missing `path` is `400 invalid_request`).
+	Path *string `form:"path,omitempty" json:"path,omitempty"`
+
+	// Variant The variant to prove (default `original`).
+	Variant *ArtifactVariant `form:"variant,omitempty" json:"variant,omitempty"`
+}
+
 // ListClientsParams defines parameters for ListClients.
 type ListClientsParams struct {
 	// Limit Page size, 1 to 100 (default 50).
@@ -1584,6 +1783,9 @@ type UpdatePlaybackSettingsJSONRequestBody = PlaybackSettingsInput
 
 // UpdatePrivacySettingsJSONRequestBody defines body for UpdatePrivacySettings for application/json ContentType.
 type UpdatePrivacySettingsJSONRequestBody = PrivacySettingsInput
+
+// VerifyArtifactJSONRequestBody defines body for VerifyArtifact for application/json ContentType.
+type VerifyArtifactJSONRequestBody = VerifyRequest
 
 // Getter for additional properties for PublicJwk. Returns the specified
 // element and whether it was found
@@ -1798,6 +2000,12 @@ type ServerInterface interface {
 	// CommitAsset Finish the upload and start processing
 	// (POST /v1/assets/{asset_id}/commit)
 	CommitAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// GetAssetManifest Get an asset's signed integrity manifest
+	// (GET /v1/assets/{asset_id}/manifest)
+	GetAssetManifest(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// GetAssetProof Get an inclusion proof for one artifact
+	// (GET /v1/assets/{asset_id}/proof)
+	GetAssetProof(w http.ResponseWriter, r *http.Request, assetId AssetId, params GetAssetProofParams)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(w http.ResponseWriter, r *http.Request, params ListClientsParams)
@@ -1870,6 +2078,9 @@ type ServerInterface interface {
 	// RetireSigningKey Retire a signing key
 	// (POST /v1/signing-keys/{key_id}/retire)
 	RetireSigningKey(w http.ResponseWriter, r *http.Request, keyId SigningKeyIdPath)
+	// VerifyArtifact Is this file ours?
+	// (POST /v1/verify)
+	VerifyArtifact(w http.ResponseWriter, r *http.Request)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(w http.ResponseWriter, r *http.Request)
@@ -2149,6 +2360,87 @@ func (siw *ServerInterfaceWrapper) CommitAsset(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CommitAsset(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetManifest operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetManifest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetManifest(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetProof operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetProof(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAssetProofParams
+
+	// ------------- Optional query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "variant" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "variant", r.URL.Query(), &params.Variant, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "variant"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "variant", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetProof(w, r, assetId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2819,6 +3111,20 @@ func (siw *ServerInterfaceWrapper) RetireSigningKey(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// VerifyArtifact operation middleware
+func (siw *ServerInterfaceWrapper) VerifyArtifact(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VerifyArtifact(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWhoami operation middleware
 func (siw *ServerInterfaceWrapper) GetWhoami(w http.ResponseWriter, r *http.Request) {
 
@@ -2968,6 +3274,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/access-log", wrapper.GetAssetAccessLog)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/manifest", wrapper.GetAssetManifest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/proof", wrapper.GetAssetProof)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/verify", wrapper.VerifyArtifact)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions", wrapper.CreatePlaybackSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/playback-sessions/revoke", wrapper.RevokePlaybackSessions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-sessions/{session_id}", wrapper.GetPlaybackSession)
@@ -3920,6 +4229,315 @@ type CommitAssetdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CommitAssetdefaultApplicationProblemPlusJSONResponse) VisitCommitAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type GetAssetManifestResponseObject interface {
+	VisitGetAssetManifestResponse(w http.ResponseWriter) error
+}
+
+type GetAssetManifest200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifest200ApplicationVndCipherframeManifestPlusJSONResponse struct {
+	Body    DsseEnvelope
+	Headers GetAssetManifest200ResponseHeaders
+}
+
+func (response GetAssetManifest200ApplicationVndCipherframeManifestPlusJSONResponse) VisitGetAssetManifestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/vnd.cipherframe.manifest+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifest401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetManifest401ApplicationProblemPlusJSONResponse) VisitGetAssetManifestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifest403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetManifest403ApplicationProblemPlusJSONResponse) VisitGetAssetManifestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifest404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifest404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetManifest404ResponseHeaders
+}
+
+func (response GetAssetManifest404ApplicationProblemPlusJSONResponse) VisitGetAssetManifestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifest503ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifest503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetManifest503ResponseHeaders
+}
+
+func (response GetAssetManifest503ApplicationProblemPlusJSONResponse) VisitGetAssetManifestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetManifestdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetManifestdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetAssetManifestdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetAssetManifestdefaultApplicationProblemPlusJSONResponse) VisitGetAssetManifestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProofRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+	Params  GetAssetProofParams
+}
+
+type GetAssetProofResponseObject interface {
+	VisitGetAssetProofResponse(w http.ResponseWriter) error
+}
+
+type GetAssetProof200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetProof200JSONResponse struct {
+	Body    InclusionProof
+	Headers GetAssetProof200ResponseHeaders
+}
+
+func (response GetAssetProof200JSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProof400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetProof400ApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProof401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetProof401ApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProof403ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetProof403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetProof403ResponseHeaders
+}
+
+func (response GetAssetProof403ApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProof404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetProof404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetProof404ResponseHeaders
+}
+
+func (response GetAssetProof404ApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProof409ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetProof409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetProof409ResponseHeaders
+}
+
+func (response GetAssetProof409ApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProof503ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetProof503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetProof503ResponseHeaders
+}
+
+func (response GetAssetProof503ApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetProofdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetProofdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetAssetProofdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetAssetProofdefaultApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -6618,6 +7236,138 @@ func (response RetireSigningKeydefaultApplicationProblemPlusJSONResponse) VisitR
 	return err
 }
 
+type VerifyArtifactRequestObject struct {
+	Body *VerifyArtifactJSONRequestBody
+}
+
+type VerifyArtifactResponseObject interface {
+	VisitVerifyArtifactResponse(w http.ResponseWriter) error
+}
+
+type VerifyArtifact200ResponseHeaders struct {
+	XRequestId string
+}
+
+type VerifyArtifact200JSONResponse struct {
+	Body    VerifyResult
+	Headers VerifyArtifact200ResponseHeaders
+}
+
+func (response VerifyArtifact200JSONResponse) VisitVerifyArtifactResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VerifyArtifact400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response VerifyArtifact400ApplicationProblemPlusJSONResponse) VisitVerifyArtifactResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VerifyArtifact401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response VerifyArtifact401ApplicationProblemPlusJSONResponse) VisitVerifyArtifactResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VerifyArtifact403ResponseHeaders struct {
+	XRequestId string
+}
+
+type VerifyArtifact403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers VerifyArtifact403ResponseHeaders
+}
+
+func (response VerifyArtifact403ApplicationProblemPlusJSONResponse) VisitVerifyArtifactResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VerifyArtifact503ResponseHeaders struct {
+	XRequestId string
+}
+
+type VerifyArtifact503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers VerifyArtifact503ResponseHeaders
+}
+
+func (response VerifyArtifact503ApplicationProblemPlusJSONResponse) VisitVerifyArtifactResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VerifyArtifactdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type VerifyArtifactdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    VerifyArtifactdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response VerifyArtifactdefaultApplicationProblemPlusJSONResponse) VisitVerifyArtifactResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetWhoamiRequestObject struct {
 }
 
@@ -6713,6 +7463,12 @@ type StrictServerInterface interface {
 	// CommitAsset Finish the upload and start processing
 	// (POST /v1/assets/{asset_id}/commit)
 	CommitAsset(ctx context.Context, request CommitAssetRequestObject) (CommitAssetResponseObject, error)
+	// GetAssetManifest Get an asset's signed integrity manifest
+	// (GET /v1/assets/{asset_id}/manifest)
+	GetAssetManifest(ctx context.Context, request GetAssetManifestRequestObject) (GetAssetManifestResponseObject, error)
+	// GetAssetProof Get an inclusion proof for one artifact
+	// (GET /v1/assets/{asset_id}/proof)
+	GetAssetProof(ctx context.Context, request GetAssetProofRequestObject) (GetAssetProofResponseObject, error)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(ctx context.Context, request ListClientsRequestObject) (ListClientsResponseObject, error)
@@ -6785,6 +7541,9 @@ type StrictServerInterface interface {
 	// RetireSigningKey Retire a signing key
 	// (POST /v1/signing-keys/{key_id}/retire)
 	RetireSigningKey(ctx context.Context, request RetireSigningKeyRequestObject) (RetireSigningKeyResponseObject, error)
+	// VerifyArtifact Is this file ours?
+	// (POST /v1/verify)
+	VerifyArtifact(ctx context.Context, request VerifyArtifactRequestObject) (VerifyArtifactResponseObject, error)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(ctx context.Context, request GetWhoamiRequestObject) (GetWhoamiResponseObject, error)
@@ -7056,6 +7815,59 @@ func (sh *strictHandler) CommitAsset(w http.ResponseWriter, r *http.Request, ass
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CommitAssetResponseObject); ok {
 		if err := validResponse.VisitCommitAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetManifest operation middleware
+func (sh *strictHandler) GetAssetManifest(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request GetAssetManifestRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetManifest(ctx, request.(GetAssetManifestRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetManifest")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetManifestResponseObject); ok {
+		if err := validResponse.VisitGetAssetManifestResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetProof operation middleware
+func (sh *strictHandler) GetAssetProof(w http.ResponseWriter, r *http.Request, assetId AssetId, params GetAssetProofParams) {
+	var request GetAssetProofRequestObject
+
+	request.AssetId = assetId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetProof(ctx, request.(GetAssetProofRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetProof")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetProofResponseObject); ok {
+		if err := validResponse.VisitGetAssetProofResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -7731,6 +8543,37 @@ func (sh *strictHandler) RetireSigningKey(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RetireSigningKeyResponseObject); ok {
 		if err := validResponse.VisitRetireSigningKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// VerifyArtifact operation middleware
+func (sh *strictHandler) VerifyArtifact(w http.ResponseWriter, r *http.Request) {
+	var request VerifyArtifactRequestObject
+
+	var body VerifyArtifactJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.VerifyArtifact(ctx, request.(VerifyArtifactRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "VerifyArtifact")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(VerifyArtifactResponseObject); ok {
+		if err := validResponse.VisitVerifyArtifactResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -1,6 +1,6 @@
 # API
 
-> Status: health and readiness (M1-6); authentication, clients and API keys (M1-7). Asset endpoints arrive with later tasks.
+> Status: health and readiness (M1-6); authentication, clients and API keys (M1-7); assets, playback, integrity manifests, proofs and verify (M5-3).
 
 ## Source of truth
 
@@ -1026,6 +1026,114 @@ base64), `created_at`, `activated_at` and `retired_at`. Only public data is ever
   `retired_at`, oldest first. A change shows up within a minute (a 60-second in-process cache). If
   the database cannot be read it answers `503`; it never answers an empty set.
 
+## Integrity: manifests, proofs, verify (ADR 0033, 0039)
+
+Every ready asset has a signed manifest (see [integrity.md](integrity.md)). These three operations
+serve it, prove one artifact against it and answer "is this file ours?". All need `assets:read` and
+are tenant-scoped: an asset of another tenant behaves as if it did not exist. The signing keys they
+rely on are public (`getSigningKeySet`); the offline verifier (M5-4) needs nothing else.
+
+| Operation | Route | Scope |
+|---|---|---|
+| `getAssetManifest` | `GET /v1/assets/{asset_id}/manifest` | `assets:read` |
+| `getAssetProof` | `GET /v1/assets/{asset_id}/proof?path=&variant=` | `assets:read` |
+| `verifyArtifact` | `POST /v1/verify` | `assets:read` |
+
+**Manifest.** `GET /v1/assets/{asset_id}/manifest` returns the stored DSSE envelope with
+`Content-Type: application/vnd.cipherframe.manifest+json; profile=dsse`. The envelope's `payload`
+(base64) is the canonical manifest, including the `masked` section once the masked variant is
+published; the envelope is re-signed when that happens, so fetch it again afterwards. It is
+`404 not_found` for an unknown asset, one that is not ready and one without a manifest.
+
+```sh
+curl -s -H "Authorization: Bearer $CF_KEY" \
+  https://api.example.com/v1/assets/$ASSET/manifest -o manifest.json
+jq -r .payload manifest.json | base64 -d | jq '.top_level.root'
+```
+
+**Proof.** `GET /v1/assets/{asset_id}/proof?path=720p/seg-0.m4s` proves one artifact. `path` is the
+manifest path, relative to the variant's HLS prefix (the same form as the URIs in the master
+playlist, never a storage key); `variant` is `original` (default) or `masked`. A segment or init
+segment is proven in its rendition tree and that tree's root in the top-level tree; a playlist only
+in the top-level tree, so the rendition members are absent. The proof is computed from the signed
+manifest, not from storage. Hashes are lowercase hex.
+
+```sh
+curl -s -H "Authorization: Bearer $CF_KEY" \
+  "https://api.example.com/v1/assets/$ASSET/proof?path=720p/seg-0.m4s"
+```
+
+```json
+{
+  "asset_id": "ast_00000000000000000000000001",
+  "variant": "original",
+  "path": "720p/seg-0.m4s",
+  "sha256": "bb00000000000000000000000000000000000000000000000000000000000000",
+  "size": 1048592,
+  "leaf_index": 1,
+  "tree_size": 3,
+  "rendition": "720p",
+  "rendition_root": "dd00000000000000000000000000000000000000000000000000000000000000",
+  "audit_path": [
+    "aa00000000000000000000000000000000000000000000000000000000000000",
+    "cc00000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "top_level": {
+    "leaf_index": 0,
+    "tree_size": 3,
+    "audit_path": [
+      "ee00000000000000000000000000000000000000000000000000000000000000",
+      "ff00000000000000000000000000000000000000000000000000000000000000"
+    ],
+    "root": "1100000000000000000000000000000000000000000000000000000000000000"
+  }
+}
+```
+
+To check it, hash the file (`sha256sum`), then follow the audit-path rules in
+[integrity.md](integrity.md#hashing-and-merkle-trees-rfc-9162-section-21): the leaf is
+`SHA-256(0x00 || sha256(file))`, the path must lead to `rendition_root`, and then
+`SHA-256(0x00 || rendition_root)` through `top_level.audit_path` must lead to `top_level.root`, which
+must equal the root in the signed manifest (`top_level.root`, or `masked.top_level.root` for the
+masked variant). The sizes come from the proof, so only trust a proof once its root matches the
+verified manifest.
+
+Errors: `404 artifact_not_found` for a path that is not in the manifest, `404 not_found` for the
+asset, `400 invalid_request` for a missing `path` or an unknown `variant`, `409 variant_unavailable`
+for `variant=masked` on an asset created without `mask_faces`, and `409 variant_not_ready` when
+masking was requested but the masked variant is not published yet.
+
+**Verify.** `POST /v1/verify` compares a hash you computed locally with what was signed; the server
+never receives the file. The answer is always `200` with an `outcome`:
+
+- `ours`: the artifact is in the signed manifest and the hash matches. The response adds the
+  `proof`.
+- `modified`: the `path` is in the signed manifest but the hash differs ("a modified version of
+  ours").
+- `cannot_say`: anything else, with a `reason` of `no_match` (no such asset, path, variant or hash
+  for this tenant, or the asset is not ready) or `manifest_unverifiable` (the stored manifest's
+  signature did not verify against the published keys, or it could not be read; the server logs an
+  error). It never means "modified".
+
+```sh
+H=$(sha256sum seg-0.m4s | cut -d' ' -f1)
+curl -s -H "Authorization: Bearer $CF_KEY" -H 'Content-Type: application/json' \
+  -d "{\"asset_id\": \"$ASSET\", \"path\": \"720p/seg-0.m4s\", \"sha256\": \"$H\"}" \
+  https://api.example.com/v1/verify
+```
+
+```json
+{"outcome": "ours", "asset_id": "ast_00000000000000000000000001", "variant": "original",
+ "path": "720p/seg-0.m4s", "proof": {"...": "as above"}}
+```
+
+With only `{"sha256": "..."}` the tenant's registered artifacts are searched. A hit is `ours` with
+`asset_id`, `variant` and the manifest `path` (and the proof), confirmed against the asset's signed
+manifest; no hit is `cannot_say`, because a hash alone can never prove `modified`. `sha256` must be 64
+lowercase hex digits; `asset_id` and `path` go together, and `variant` (default `original`) needs
+both; anything else is `400 invalid_request`. The signature of the stored manifest is verified on every
+call with the published keys, so a rotated or retired key keeps working while it is published.
+
 ## Conventions
 
 ### ID formats (ADR 0011)
@@ -1079,8 +1187,9 @@ server-side only.
 | `payload_too_large` | 413 | no | The request body exceeds the allowed size. |
 | `asset_not_ready` | 409 | no | The operation needs a `ready` asset and this one is not (yet). |
 | `session_limit` | 409 | no | The viewer already has the tenant's maximum number of active playback sessions. |
-| `variant_unavailable` | 409 | no | A session asked for the masked variant of an asset created without `mask_faces`. |
-| `variant_not_ready` | 409 | no | A session asked for the masked variant (or it is the default) and it is not `ready`. |
+| `variant_unavailable` | 409 | no | A session or proof asked for the masked variant of an asset created without `mask_faces`. |
+| `variant_not_ready` | 409 | no | A session or proof asked for the masked variant (or it is the default) and it is not `ready`. |
+| `artifact_not_found` | 404 | no | A proof was requested for a path that is not an artifact of the asset's signed manifest. |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |

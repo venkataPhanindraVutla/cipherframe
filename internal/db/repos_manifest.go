@@ -72,3 +72,29 @@ func (r *Repos) DeleteManifest(ctx context.Context, assetID id.AssetID) (bool, e
 	n, err := r.q.DeleteAssetManifest(ctx, aid)
 	return n > 0, mapError(err)
 }
+
+// ArtifactMatch is a registered HLS object found by its hash. ObjectKey is a storage key: it
+// locates the object inside the delivery bucket and must not leave the server.
+type ArtifactMatch struct {
+	AssetID   id.AssetID
+	Variant   string
+	ObjectKey string
+}
+
+// FindArtifactsBySHA256 returns up to 20 HLS objects of the tenant's ready assets whose stored
+// bytes hash to sum, oldest first.
+func (r *Repos) FindArtifactsBySHA256(ctx context.Context, tenantID id.TenantID, sum []byte) ([]ArtifactMatch, error) {
+	tid, err := requirePG(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.q.FindTenantArtifactsBySHA256(ctx, dbgen.FindTenantArtifactsBySHA256Params{TenantID: tid, Sha256: sum})
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]ArtifactMatch, len(rows))
+	for i, row := range rows {
+		out[i] = ArtifactMatch{AssetID: fromPG[id.AssetKind](row.AssetID), Variant: row.Variant, ObjectKey: row.ObjectKey}
+	}
+	return out, nil
+}

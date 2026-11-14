@@ -201,6 +201,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Playback:    playbackSvc,
 			Signing:     signer,
 			KeySet:      keySet,
+			Repos:       repos,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {

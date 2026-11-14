@@ -130,6 +130,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 			if strings.HasPrefix(path, "/v1/privacy-") {
 				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
 			}
+			if path == "/v1/verify" {
+				continue // exercised by TestIntegrityOperationsMatchSpec
+			}
 			if strings.HasPrefix(path, "/v1/signing-keys") {
 				continue // exercised by TestSigningKeyOperationsMatchSpec
 			}

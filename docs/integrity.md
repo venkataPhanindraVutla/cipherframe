@@ -1,9 +1,9 @@
 # Integrity and verifiable deletion
 
-> Status: the primitives described under "Construction" and the signed manifest written by the
-> pipeline (see "Manifest format") are implemented (ADR 0033, gate P9). The endpoints that serve
-> manifests and proofs follow in M5-3. Timestamp
-> authority recommendations remain pending gate P10.
+> Status: the primitives described under "Construction", the signed manifest written by the
+> pipeline (see "Manifest format") and the API that serves manifests and proofs and answers
+> "is this ours?" (see "Serving manifests and proofs") are implemented (ADR 0033, 0039, gate P9).
+> The offline verifier follows in M5-4. Timestamp authority recommendations remain pending gate P10.
 
 ## Integrity manifests
 
@@ -18,8 +18,9 @@ marks the asset ready (package `internal/integrity/manifest`). The manifest is e
 JSON (see "Canonical JSON"), signed as a DSSE envelope with payload type
 `application/vnd.cipherframe.manifest+json`, and stored in the `asset_manifests` table in the same
 transaction that moves the asset to `ready`. A retry removes the previous manifest before it builds
-a new one. The envelope is kept in the database only; it is not an object in the delivery bucket.
-A later release serves it through the API.
+a new one. The envelope is kept in the database only (as `jsonb`, so the served JSON may order its members
+differently from the one written; the signed bytes are the base64 `payload` and are unchanged); it is
+not an object in the delivery bucket. The API serves it (see "Serving manifests and proofs").
 
 Rules: member names are lower_snake_case; there are no floating-point numbers (bandwidth and sizes
 are integers, the frame rate is a rational string such as `"30000/1001"`); hashes are lowercase
@@ -218,6 +219,30 @@ Everything else is cannot-say, never "tampered" or "missing".
 
 References: RFC 9162 (Certificate Transparency Version 2.0) section 2.1; RFC 8785 (JSON
 Canonicalization Scheme); DSSE v1 specification, https://github.com/secure-systems-lab/dsse.
+
+## Serving manifests and proofs
+
+The API serves the stored envelope, an inclusion proof for any artifact in it, and a "is this ours?"
+check (ADR 0039; routes, scopes and examples in [api.md](api.md#integrity-manifests-proofs-verify-adr-0033-0039)).
+All three need an API key with `assets:read` and are tenant-scoped; only the key set is public. The
+package `internal/integrity/proof` builds and checks the proofs.
+
+A proof has two levels. For an init or media segment, level one is the RFC 9162 audit path of its
+leaf in the rendition tree (`leaf_index`, `tree_size`, `audit_path`, ending at `rendition_root`), and
+level two (`top_level`) is the audit path of `SHA-256(0x00 || rendition_root)` in the top-level tree,
+ending at `top_level.root`. For a playlist, level one is absent and `top_level` proves the playlist's
+hash directly. Both are computed from the signed manifest in the order it records (`top_level.order`,
+ladder order, playlist order), never from storage, and each is checked against the recorded root
+before it is returned. A proof does not name its signer: a verifier takes the tree sizes and the root
+from the signature-checked manifest (`top_level.root`, or `masked.top_level.root` for the masked
+variant, whose paths are relative to the masked prefix and which has its own trees).
+
+`POST /v1/verify` maps the result onto the three public outcomes: `ours` (in the manifest, hash
+equal), `modified` (path in the manifest, hash different) and `cannot_say` (everything else,
+including a stored manifest whose signature does not verify with the published keys, which is also
+logged as an error). A hash-only lookup finds candidates in the artifact registry
+(`asset_artifacts`, by SHA-256) and confirms each against its signed manifest, so it returns the
+manifest path (the object key minus the variant's HLS prefix) and never a bucket or object key.
 
 ## Verifiable deletion
 

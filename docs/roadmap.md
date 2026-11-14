@@ -37,7 +37,7 @@ Last updated: 2026-11-14.
 - [x] M5-1 Per-artifact hashing, Merkle trees, canonical JSON and a signed manifest for every ready
   asset ([integrity.md](integrity.md), [ADR 0033](adr/0033-integrity-design.md))
 - [x] M5-2 Signing keys with key IDs and rotation, published at `/.well-known/cipherframe-keys.json`
-- [ ] M5-3 Verify API and per-segment proof endpoint
+- [x] M5-3 Verify API and per-segment proof endpoint ([ADR 0039](adr/0039-verify-api-proofs-and-offline-verifier.md))
 - [ ] M5-4 Public-key-only verifier (library and CLI) with the outcomes "ours", "modified version of
   ours" and "cannot say"
 - [ ] M5-5 Optional RFC 3161 anchoring ([ADR 0034](adr/0034-timestamp-authority-recommendations.md))

@@ -116,7 +116,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(signer.Close)
 	a := api.New(api.Deps{
 		Log: log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr, Playback: pb,
-		Signing: signer, KeySet: signing.NewKeySet(repos, 0, clk.Now),
+		Signing: signer, KeySet: signing.NewKeySet(repos, 0, clk.Now), Repos: repos,
 	})
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)
