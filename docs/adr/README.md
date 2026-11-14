@@ -44,6 +44,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0036](0036-face-masked-variant.md) | Face-masked variant of an asset | P20 (face detection), P21 (worker, face masking) | Accepted (worker placement flagged for owner review) | 2026-11-14 |
 | [0037](0037-faster-face-masking.md) | Faster face masking (amends 0024, 0036) | none | Accepted | 2026-11-14 |
 | [0038](0038-encoder-preset-and-detection-stride.md) | Encoder preset and detection stride settings (amends 0024, 0036) | none | Accepted | 2026-11-14 |
+| [0039](0039-verify-api-proofs-and-offline-verifier.md) | Verify API, proofs and the offline verifier | none | Accepted (flagged for owner review) | 2026-11-14 |
 
 ## Open gates
 
