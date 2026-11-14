@@ -23,6 +23,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 func TestMain(m *testing.M) { os.Exit(dbtest.Run(m)) }
@@ -112,7 +113,7 @@ func (e *env) create(ctx context.Context, tn id.TenantID, asset id.AssetID) (con
 	var k contentkey.ContentKey
 	err := db.Tx(ctx, e.pool, func(tx *db.Repos) error {
 		var err error
-		k, err = e.mgr.Create(ctx, tx, tn, asset)
+		k, err = e.mgr.Create(ctx, tx, tn, asset, keys.Original)
 		return err
 	})
 	return k, err
@@ -179,7 +180,7 @@ func TestCreateGetRoundTrip(t *testing.T) {
 		t.Fatal("identifiers not set")
 	}
 
-	got, err := e.mgr.Get(ctx, e.tenant.ID, asset)
+	got, err := e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	}
 
 	// The stored row is wrapped: it records the KEK and never contains the plaintext key.
-	row, err := e.repos.GetContentKey(ctx, e.tenant.ID, asset)
+	row, err := e.repos.GetContentKey(ctx, e.tenant.ID, asset, keys.Original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +216,7 @@ func TestCreateTwiceConflicts(t *testing.T) {
 	if n := countRows(t, e.pool); n != 1 {
 		t.Fatalf("%d content keys for one asset, want 1 (I7)", n)
 	}
-	got, err := e.mgr.Get(ctx, e.tenant.ID, asset)
+	got, err := e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original)
 	if err != nil || !bytes.Equal(got.Bytes(), first.Bytes()) {
 		t.Fatal("the first key was replaced by a second Create")
 	}
@@ -259,7 +260,7 @@ func TestDestroyThenGetIsNotFound(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Destroy = %v, %v", ok, err)
 	}
-	_, err = e.mgr.Get(ctx, e.tenant.ID, asset)
+	_, err = e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original)
 	wantCode(t, err, errs.NotFound)
 	if n := countRows(t, e.pool); n != 0 {
 		t.Fatalf("the row survived Destroy (%d rows): crypto-shredding must delete it", n)
@@ -290,7 +291,7 @@ func TestDestroyRollsBackWithTransaction(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatal(err)
 	}
-	if _, err := e.mgr.Get(ctx, e.tenant.ID, asset); err != nil {
+	if _, err := e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original); err != nil {
 		t.Fatalf("a rolled-back Destroy must keep the key: %v", err)
 	}
 }
@@ -317,12 +318,12 @@ func TestTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = e.mgr.Get(ctx, other.ID, asset)
+	_, err = e.mgr.Get(ctx, other.ID, asset, keys.Original)
 	wantCode(t, err, errs.NotFound)
 	if ok, err := e.destroy(ctx, other.ID, asset); err != nil || ok {
 		t.Fatalf("cross-tenant Destroy = %v, %v; want false", ok, err)
 	}
-	got, err := e.mgr.Get(ctx, e.tenant.ID, asset)
+	got, err := e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original)
 	if err != nil || !bytes.Equal(got.Bytes(), owned.Bytes()) {
 		t.Fatal("the owner's key was affected by another tenant")
 	}
@@ -344,7 +345,7 @@ func TestMixedVersionsUnwrapAfterRotation(t *testing.T) {
 	}
 	m2 := contentkey.NewManager(e.pool, reg2, newLogger(e.logs))
 
-	got, err := m2.Get(ctx, e.tenant.ID, asset1)
+	got, err := m2.Get(ctx, e.tenant.ID, asset1, keys.Original)
 	if err != nil || !bytes.Equal(got.Bytes(), k1.Bytes()) {
 		t.Fatalf("a key wrapped under KEK v1 must still unwrap after rotation: %v", err)
 	}
@@ -353,17 +354,17 @@ func TestMixedVersionsUnwrapAfterRotation(t *testing.T) {
 	var k2 contentkey.ContentKey
 	if err := db.Tx(ctx, e.pool, func(tx *db.Repos) error {
 		var err error
-		k2, err = m2.Create(ctx, tx, e.tenant.ID, asset2)
+		k2, err = m2.Create(ctx, tx, e.tenant.ID, asset2, keys.Original)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	r1, _ := e.repos.GetContentKey(ctx, e.tenant.ID, asset1)
-	r2, _ := e.repos.GetContentKey(ctx, e.tenant.ID, asset2)
+	r1, _ := e.repos.GetContentKey(ctx, e.tenant.ID, asset1, keys.Original)
+	r2, _ := e.repos.GetContentKey(ctx, e.tenant.ID, asset2, keys.Original)
 	if r1.KEK.Version != "1" || r2.KEK.Version != "2" {
 		t.Fatalf("versions = %s and %s, want 1 and 2", r1.KEK.Version, r2.KEK.Version)
 	}
-	got2, err := m2.Get(ctx, e.tenant.ID, asset2)
+	got2, err := m2.Get(ctx, e.tenant.ID, asset2, keys.Original)
 	if err != nil || !bytes.Equal(got2.Bytes(), k2.Bytes()) {
 		t.Fatal("a key wrapped under KEK v2 must unwrap")
 	}
@@ -414,7 +415,7 @@ func TestProviderFailuresFailClosed(t *testing.T) {
 			var k contentkey.ContentKey
 			err = db.Tx(ctx, e.pool, func(tx *db.Repos) error {
 				var err error
-				k, err = bm.Create(ctx, tx, e.tenant.ID, asset2)
+				k, err = bm.Create(ctx, tx, e.tenant.ID, asset2, keys.Original)
 				return err
 			})
 			wantCode(t, err, tc.want)
@@ -426,7 +427,7 @@ func TestProviderFailuresFailClosed(t *testing.T) {
 			}
 
 			// Get: no key.
-			k, err = bm.Get(ctx, e.tenant.ID, asset)
+			k, err = bm.Get(ctx, e.tenant.ID, asset, keys.Original)
 			wantCode(t, err, tc.want)
 			if !k.IsZero() {
 				t.Fatal("a failed Get returned a key")
@@ -449,7 +450,7 @@ func TestTamperedRowFailsClosedAndLogsIntegrityFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := e.mgr.Get(ctx, e.tenant.ID, asset)
+	got, err := e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original)
 	wantCode(t, err, errs.InternalError)
 	if !got.IsZero() {
 		t.Fatal("a tampered row yielded a key")
@@ -478,12 +479,12 @@ func TestWrappedKeyCannotMoveToAnotherAsset(t *testing.T) {
 		a1.UUID(), a2.UUID()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := e.mgr.Get(ctx, e.tenant.ID, a2)
+	got, err := e.mgr.Get(ctx, e.tenant.ID, a2, keys.Original)
 	wantCode(t, err, errs.InternalError)
 	if !got.IsZero() {
 		t.Fatal("a wrapped key moved to another asset unwrapped")
 	}
-	if _, err := e.mgr.Get(ctx, e.tenant.ID, a1); err != nil {
+	if _, err := e.mgr.Get(ctx, e.tenant.ID, a1, keys.Original); err != nil {
 		t.Fatalf("the original asset's key should be unaffected: %v", err)
 	}
 	if !strings.Contains(e.logs.String(), "integrity failure") {
@@ -503,7 +504,7 @@ func TestRowRecordsAreAuthenticated(t *testing.T) {
 	if _, err := e.pool.Exec(ctx, "UPDATE content_keys SET kek_version = '2'"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := e.mgr.Get(ctx, e.tenant.ID, asset)
+	got, err := e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original)
 	wantCode(t, err, errs.InternalError)
 	if !got.IsZero() {
 		t.Fatal("an edited KEK version unwrapped")
@@ -520,7 +521,7 @@ func TestUnconfiguredProviderIsAnError(t *testing.T) {
 	if _, err := e.pool.Exec(ctx, "UPDATE content_keys SET provider = 'vault'"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := e.mgr.Get(ctx, e.tenant.ID, asset)
+	got, err := e.mgr.Get(ctx, e.tenant.ID, asset, keys.Original)
 	wantCode(t, err, errs.InternalError)
 	if !got.IsZero() {
 		t.Fatal("a key of an unconfigured provider was returned")
@@ -549,7 +550,7 @@ func TestWrapUnderUnexpectedVersionIsRefused(t *testing.T) {
 	m := contentkey.NewManager(e.pool, reg, newLogger(e.logs))
 	asset := e.newAsset(t, e.tenant, e.client)
 	err = db.Tx(ctx, e.pool, func(tx *db.Repos) error {
-		_, err := m.Create(ctx, tx, e.tenant.ID, asset)
+		_, err := m.Create(ctx, tx, e.tenant.ID, asset, keys.Original)
 		return err
 	})
 	wantCode(t, err, errs.InternalError)

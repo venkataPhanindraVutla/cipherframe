@@ -33,6 +33,7 @@ type NewUploadAsset struct {
 	SourceKey   string
 	S3UploadID  string // empty for tus; set when the multipart upload was already created
 	ExpiresAt   time.Time
+	MaskFaces   bool // ADR 0036
 }
 
 // CreateUploadAsset inserts an asset in state created. The client must belong to the tenant,
@@ -47,7 +48,7 @@ func (r *Repos) CreateUploadAsset(ctx context.Context, in NewUploadAsset) (Asset
 	}
 	row, err := r.q.CreateUploadAsset(ctx, dbgen.CreateUploadAssetParams{
 		ID: aid, SizeBytes: in.SizeBytes, ContentType: strPtr(in.ContentType), UploadMethod: string(in.Method),
-		SourceKey: in.SourceKey, S3UploadID: strPtr(in.S3UploadID), UploadExpiresAt: in.ExpiresAt,
+		SourceKey: in.SourceKey, S3UploadID: strPtr(in.S3UploadID), UploadExpiresAt: in.ExpiresAt, MaskFaces: in.MaskFaces,
 		ClientID: cid, TenantID: tid,
 	})
 	if err != nil {

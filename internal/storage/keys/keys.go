@@ -97,34 +97,78 @@ func renditionName(r Rendition) string {
 	return r.name
 }
 
-// HLSPrefix is the prefix of every HLS object of the asset in the delivery bucket: the master
-// playlist and each rendition's playlist, init segment and media segments. A retried processing job
-// enumerates it to remove the previous attempt's output.
-func HLSPrefix(t id.TenantID, a id.AssetID) string {
-	return DeliveryPrefix(t, a) + "hls/"
+// Variant names a rendering of an asset: the uploaded video as it is, or a version with faces masked
+// (ADR 0036). Each variant has its own HLS tree and its own content key.
+type Variant string
+
+// The variants. Original is where HLS has always lived, so existing data does not move.
+const (
+	Original Variant = "original"
+	Masked   Variant = "masked"
+)
+
+// Valid reports whether v is a known variant.
+func (v Variant) Valid() bool { return v == Original || v == Masked }
+
+func (v Variant) String() string { return string(v) }
+
+// VariantHLSPrefix is the prefix of every HLS object of one variant of the asset in the delivery
+// bucket: the master playlist and each rendition's playlist, init segment and media segments. The
+// original variant is under "hls/", the masked one under "masked/hls/", so neither prefix contains
+// the other. It panics on an unknown variant.
+func VariantHLSPrefix(t id.TenantID, a id.AssetID, v Variant) string {
+	switch v {
+	case Original:
+		return DeliveryPrefix(t, a) + "hls/"
+	case Masked:
+		return DeliveryPrefix(t, a) + "masked/hls/"
+	}
+	panic("keys: unknown variant")
 }
 
-// Master is the key of the master playlist in the delivery bucket.
-func Master(t id.TenantID, a id.AssetID) string {
-	return HLSPrefix(t, a) + "master.m3u8"
+// HLSPrefix is VariantHLSPrefix of the original variant. A retried processing job enumerates it to
+// remove the previous attempt's output.
+func HLSPrefix(t id.TenantID, a id.AssetID) string { return VariantHLSPrefix(t, a, Original) }
+
+// VariantMaster is the key of a variant's master playlist in the delivery bucket.
+func VariantMaster(t id.TenantID, a id.AssetID, v Variant) string {
+	return VariantHLSPrefix(t, a, v) + "master.m3u8"
 }
 
-// Playlist is the key of a rendition's media playlist in the delivery bucket.
-func Playlist(t id.TenantID, a id.AssetID, r Rendition) string {
-	return HLSPrefix(t, a) + renditionName(r) + "/playlist.m3u8"
+// VariantPlaylist is the key of a variant's rendition media playlist in the delivery bucket.
+func VariantPlaylist(t id.TenantID, a id.AssetID, v Variant, r Rendition) string {
+	return VariantHLSPrefix(t, a, v) + renditionName(r) + "/playlist.m3u8"
 }
 
-// InitSegment is the key of a rendition's initialization segment in the delivery bucket.
-func InitSegment(t id.TenantID, a id.AssetID, r Rendition) string {
-	return HLSPrefix(t, a) + renditionName(r) + "/init.mp4"
+// VariantInitSegment is the key of a variant's rendition initialization segment.
+func VariantInitSegment(t id.TenantID, a id.AssetID, v Variant, r Rendition) string {
+	return VariantHLSPrefix(t, a, v) + renditionName(r) + "/init.mp4"
 }
 
-// Segment is the key of media segment n (n >= 0) of a rendition in the delivery bucket.
-func Segment(t id.TenantID, a id.AssetID, r Rendition, n int) string {
+// VariantSegment is the key of media segment n (n >= 0) of a variant's rendition.
+func VariantSegment(t id.TenantID, a id.AssetID, v Variant, r Rendition, n int) string {
 	if n < 0 {
 		panic("keys: negative segment number")
 	}
-	return HLSPrefix(t, a) + renditionName(r) + "/seg-" + strconv.Itoa(n) + ".m4s"
+	return VariantHLSPrefix(t, a, v) + renditionName(r) + "/seg-" + strconv.Itoa(n) + ".m4s"
+}
+
+// Master is the key of the original variant's master playlist.
+func Master(t id.TenantID, a id.AssetID) string { return VariantMaster(t, a, Original) }
+
+// Playlist is the key of the original variant's rendition media playlist.
+func Playlist(t id.TenantID, a id.AssetID, r Rendition) string {
+	return VariantPlaylist(t, a, Original, r)
+}
+
+// InitSegment is the key of the original variant's rendition initialization segment.
+func InitSegment(t id.TenantID, a id.AssetID, r Rendition) string {
+	return VariantInitSegment(t, a, Original, r)
+}
+
+// Segment is the key of media segment n (n >= 0) of the original variant's rendition.
+func Segment(t id.TenantID, a id.AssetID, r Rendition, n int) string {
+	return VariantSegment(t, a, Original, r, n)
 }
 
 // Poster is the key of the poster image in the delivery bucket.

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -189,4 +190,42 @@ func (r *Repos) DeleteHLSArtifacts(ctx context.Context, assetID id.AssetID) (int
 	}
 	n, err := r.q.DeleteAssetHLSArtifacts(ctx, aid)
 	return n, mapError(err)
+}
+
+// Masking states of an asset created with mask_faces (ADR 0036).
+const (
+	MaskingPending = "pending"
+	MaskingReady   = "ready"
+	MaskingFailed  = "failed"
+)
+
+// SetAssetMasking records the state of the asset's masked variant and, when known, the number of
+// faces found (nil leaves it unknown). It is not_found for another tenant's asset and for one
+// created without mask_faces.
+func (r *Repos) SetAssetMasking(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, state string, facesDetected *int, at time.Time) (Asset, error) {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return Asset{}, err
+	}
+	if state != MaskingPending && state != MaskingReady && state != MaskingFailed {
+		return Asset{}, errs.New(errs.InvalidRequest, "invalid masking state")
+	}
+	var faces *int32
+	if facesDetected != nil {
+		if *facesDetected < 0 || *facesDetected > math.MaxInt32 {
+			return Asset{}, errs.New(errs.InvalidRequest, "invalid faces count")
+		}
+		n := int32(*facesDetected) //nolint:gosec // range checked above
+		faces = &n
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	row, err := r.q.SetAssetMasking(ctx, dbgen.SetAssetMaskingParams{
+		MaskingState: state, FacesDetected: faces, At: at, TenantID: tid, ID: aid,
+	})
+	if err != nil {
+		return Asset{}, mapError(err)
+	}
+	return assetFromRow(row), nil
 }

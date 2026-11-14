@@ -12,6 +12,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // Repo is the database access the pipeline needs. DBRepo implements it over Postgres; the unit
@@ -63,7 +64,7 @@ type Key interface {
 	Zero()
 }
 
-// KeyEnsurer returns the asset's content key, creating it first when the asset has none.
+// KeyEnsurer returns the asset's original-variant content key, creating it first when the asset has none.
 type KeyEnsurer interface {
 	Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (Key, error)
 }
@@ -82,7 +83,7 @@ type ContentKeys struct {
 // locked for the length of the creating transaction, so two concurrent attempts serialise and the
 // second one finds the key the first created.
 func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.AssetID) (Key, error) {
-	k, err := c.Manager.Get(ctx, tenant, asset)
+	k, err := c.Manager.Get(ctx, tenant, asset, keys.Original)
 	if err == nil {
 		return k, nil
 	}
@@ -93,7 +94,7 @@ func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.As
 		if _, err := tx.LockAsset(ctx, tenant, asset); err != nil {
 			return err
 		}
-		created, err := c.Manager.Create(ctx, tx, tenant, asset)
+		created, err := c.Manager.Create(ctx, tx, tenant, asset, keys.Original)
 		if err == nil {
 			created.Zero()
 			return nil
@@ -106,7 +107,7 @@ func (c ContentKeys) Ensure(ctx context.Context, tenant id.TenantID, asset id.As
 	if err != nil {
 		return nil, err
 	}
-	k, err = c.Manager.Get(ctx, tenant, asset)
+	k, err = c.Manager.Get(ctx, tenant, asset, keys.Original)
 	if err != nil {
 		return nil, err
 	}

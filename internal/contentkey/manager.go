@@ -11,6 +11,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // wrapAttempts bounds how often Create retries when the provider wraps under a different KEK
@@ -38,20 +39,21 @@ func NewManager(pool dbgen.DBTX, reg *kms.Registry, log *slog.Logger) *Manager {
 }
 
 // Create generates a content key, wraps it with the current provider and inserts it in the
-// caller's transaction tx, for an asset of tenant. A second Create for the same asset returns
-// conflict and never a second key (invariant I7); an asset of another tenant returns not_found.
+// caller's transaction tx, for one variant of an asset of tenant. A second Create for the same asset
+// and variant returns conflict and never a second key (invariant I7); each variant has its own key
+// (ADR 0036); an asset of another tenant returns not_found.
 //
 // The returned ContentKey holds the plaintext key; the caller should Zero it when finished.
 // Provider failures are mapped like kms.ToAppError, and no failure yields a key.
-func (m *Manager) Create(ctx context.Context, tx *db.Repos, tenant id.TenantID, asset id.AssetID) (ContentKey, error) {
-	if tx == nil || tenant.IsZero() || asset.IsZero() {
-		return ContentKey{}, errs.New(errs.InvalidRequest, "a transaction, tenant and asset are required")
+func (m *Manager) Create(ctx context.Context, tx *db.Repos, tenant id.TenantID, asset id.AssetID, variant keys.Variant) (ContentKey, error) {
+	if tx == nil || tenant.IsZero() || asset.IsZero() || !variant.Valid() {
+		return ContentKey{}, errs.New(errs.InvalidRequest, "a transaction, tenant, asset and variant are required")
 	}
 	// Report an existing key before spending a provider call. The unique constraint remains the
 	// authority when two requests race.
-	switch _, err := tx.GetContentKey(ctx, tenant, asset); {
+	switch _, err := tx.GetContentKey(ctx, tenant, asset, variant); {
 	case err == nil:
-		return ContentKey{}, errs.New(errs.Conflict, "the asset already has a content key")
+		return ContentKey{}, errs.New(errs.Conflict, "the asset already has a content key for this variant")
 	case !isNotFound(err):
 		return ContentKey{}, err
 	}
@@ -70,6 +72,7 @@ func (m *Manager) Create(ctx context.Context, tx *db.Repos, tenant id.TenantID, 
 	if _, err := tx.CreateContentKey(ctx, tenant, db.NewContentKeyRow{
 		ID:              keyID,
 		AssetID:         asset,
+		Variant:         variant,
 		KEK:             db.KEKRef{Provider: wrapped.Provider, KeyID: wrapped.KeyID, Version: wrapped.Version},
 		EnvelopeVersion: EnvelopeVersion,
 		Wrapped:         wrapped.Ciphertext,
@@ -108,12 +111,12 @@ func (m *Manager) wrap(ctx context.Context, key []byte, asset id.AssetID, keyID 
 	return kms.Wrapped{}, kms.ToAppError(kms.New(kms.Other, p.Name(), "wrap", "provider wrapped under an unexpected KEK version"))
 }
 
-// Get reads the asset's content key and unwraps it with the provider that wrapped it. It returns
+// Get reads the content key of one variant of the asset and unwraps it with the provider that wrapped it. It returns
 // not_found when the asset has no key (including after Destroy), and a mapped provider error
 // otherwise. A key that fails authentication is logged as an integrity failure, with identifiers
 // only, and is reported as internal_error. No failure yields a key.
-func (m *Manager) Get(ctx context.Context, tenant id.TenantID, asset id.AssetID) (ContentKey, error) {
-	row, err := m.repos.GetContentKey(ctx, tenant, asset)
+func (m *Manager) Get(ctx context.Context, tenant id.TenantID, asset id.AssetID, variant keys.Variant) (ContentKey, error) {
+	row, err := m.repos.GetContentKey(ctx, tenant, asset, variant)
 	if err != nil {
 		return ContentKey{}, err
 	}
@@ -142,7 +145,7 @@ func (m *Manager) Get(ctx context.Context, tenant id.TenantID, asset id.AssetID)
 	return newContentKey(row.ID, row.AssetID, plain), nil
 }
 
-// Destroy deletes the asset's content key row in the caller's transaction and reports whether a
+// Destroy deletes every variant's content key rows of the asset in the caller's transaction and reports whether a
 // row was deleted. Crypto-shredding (M6) calls it: the row is destroyed, not flagged, so every
 // copy of the ciphertext is unreadable afterwards. Another tenant's asset deletes nothing.
 func (m *Manager) Destroy(ctx context.Context, tx *db.Repos, tenant id.TenantID, asset id.AssetID) (bool, error) {

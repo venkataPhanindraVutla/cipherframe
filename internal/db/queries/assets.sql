@@ -14,11 +14,12 @@ WHERE tenant_id = $1 AND id = $2;
 -- The client must belong to the tenant; otherwise no row is inserted.
 INSERT INTO assets (
     id, tenant_id, created_by_client_id, state, size_bytes, content_type, upload_method,
-    source_key, s3_upload_id, upload_expires_at
+    source_key, s3_upload_id, upload_expires_at, mask_faces
 )
 SELECT sqlc.arg(id)::uuid, c.tenant_id, c.id, 'created', sqlc.arg(size_bytes)::bigint,
        sqlc.narg(content_type)::text, sqlc.arg(upload_method)::text, sqlc.arg(source_key)::text,
-       sqlc.narg(s3_upload_id)::text, sqlc.arg(upload_expires_at)::timestamptz
+       sqlc.narg(s3_upload_id)::text, sqlc.arg(upload_expires_at)::timestamptz,
+       sqlc.arg(mask_faces)::boolean
 FROM clients c
 WHERE c.id = sqlc.arg(client_id)::uuid AND c.tenant_id = sqlc.arg(tenant_id)::uuid
 RETURNING *;
@@ -125,8 +126,22 @@ UPDATE assets SET
     updated_at  = sqlc.arg(at)::timestamptz,
     duration_ms = sqlc.arg(duration_ms)::bigint,
     renditions  = sqlc.arg(renditions)::jsonb,
-    progress    = 100
+    progress    = 100,
+    -- A masking asset's masked variant is built after the original is ready (ADR 0036).
+    masking_state = CASE WHEN mask_faces THEN 'pending' ELSE masking_state END
 WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND id = sqlc.arg(id)::uuid
   AND state = 'processing'
+RETURNING *;
+
+-- name: SetAssetMasking :one
+-- Records the state of the masked variant and the number of faces the masker found (NULL while
+-- unknown). Only for an asset created with mask_faces.
+UPDATE assets SET
+    masking_state  = sqlc.arg(masking_state)::text,
+    faces_detected = sqlc.narg(faces_detected)::integer,
+    updated_at     = sqlc.arg(at)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND mask_faces
 RETURNING *;
