@@ -21,3 +21,16 @@ SELECT * FROM asset_artifacts WHERE asset_id = $1 ORDER BY bucket, object_key;
 DELETE FROM asset_artifacts
 WHERE asset_id = sqlc.arg(asset_id)::uuid AND variant = sqlc.arg(variant)::text
   AND kind IN ('master', 'playlist', 'init', 'segment');
+
+-- name: FindTenantArtifactsBySHA256 :many
+-- The HLS objects of the tenant's ready assets whose stored bytes hash to sha256 (the lookup behind
+-- a hash-only verify). A hash can repeat across assets (an identical playlist), so several rows
+-- are possible; the oldest come first.
+SELECT a.asset_id, a.variant, a.object_key
+FROM asset_artifacts a
+JOIN assets s ON s.id = a.asset_id
+WHERE s.tenant_id = sqlc.arg(tenant_id)::uuid AND s.state = 'ready'
+  AND a.sha256 = sqlc.arg(sha256)::bytea AND a.bucket = 'delivery'
+  AND a.kind IN ('master', 'playlist', 'init', 'segment')
+ORDER BY a.created_at, a.object_key
+LIMIT 20;
