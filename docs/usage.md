@@ -144,6 +144,17 @@ tus parks incoming data on local disk until a part is complete: provide temporar
 with request and response timeouts of at least several minutes for these paths, and do not buffer
 request bodies there.
 
+### Variants: face-masked playback (ADR 0036)
+
+Create the asset with `"mask_faces": true` to get a second, face-masked variant next to the original
+(the masked variant itself is built by a later change; today the asset records `masking.state:
+pending`). Playback sessions are bound to one variant. For a masking asset the default is `masked`,
+and your server must ask for `"variant": "original"` to play the original. For browser-started
+sessions the viewer cannot choose: put an optional `variant` claim in the JWT you sign, or approve the
+`variant` that the signed callback body names; a request body `variant` that differs is `403`. See
+[api.md](api.md#assets-and-uploads-adr-0025-0026) and
+[api.md](api.md#browser-started-sessions-jwt-and-signed-callback-adr-0029-0031).
+
 ### What running the server does not protect against
 
 - `/healthz` and `/readyz` are public by design. They reveal that the service is up and the names

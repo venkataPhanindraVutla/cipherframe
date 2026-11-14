@@ -6,7 +6,9 @@
 
 ## Layers
 
-1. **Segments**: HLS AES-128 with explicit per-segment IVs, under one content key per asset (I7).
+1. **Segments**: HLS AES-128 with explicit per-segment IVs, under one content key per variant of an
+   asset (I7, ADR 0036): an asset has an `original` key and, when created with `mask_faces`, a `masked`
+   key, so a key of one variant never decrypts the other.
 2. **Content key at rest**: envelope-encrypted with an AEAD, bound to the asset id and key id as
    associated data, wrapped by a key-encryption key (KEK).
 3. **KEK**: held by a key management provider. Every wrapped key records provider, key id and
@@ -161,14 +163,19 @@ database, makes unwrapping fail. The local provider also authenticates its own f
 
 ## Content key lifecycle
 
-- **Create**: one random 16-byte AES-128 key per asset from `crypto/rand`, wrapped by the current
-  provider and inserted in the caller's transaction. The `content_keys` table has a unique
-  constraint on the asset, so a second create for the same asset returns `conflict` and never a second
-  key (I7).
-- **Read**: unwrap through the provider recorded in the row. The plaintext key lives only inside a
+- **Create**: one random 16-byte AES-128 key per asset and variant (`original` or `masked`) from
+  `crypto/rand`, wrapped by the current provider and inserted in the caller's transaction. The
+  `content_keys` table has a unique constraint on `(asset_id, variant)`, so a second create for the
+  same asset and variant returns `conflict` and never a second key (I7). The associated data binds the
+  key to the asset and the key id; the variant is a column, not part of it, because the key id is
+  already unique per row.
+- **Read**: the key of one variant, unwrapped through the provider recorded in the row. Edge reads the
+  variant the session is bound to and no other. The plaintext key lives only inside a
   `ContentKey` value whose printed, JSON, text and log forms are all `[redacted]`.
-- **Destroy**: deletes the row, in the caller's transaction. This is what crypto-shredding (M6) calls:
-  the row is destroyed, not flagged, so remaining ciphertext copies cannot be unwrapped.
+- **Destroy**: deletes every variant's row of the asset, in the caller's transaction. This is what
+  crypto-shredding (M6) calls: the rows are destroyed, not flagged, so remaining ciphertext copies of
+  any variant cannot be unwrapped.
+- **Re-wrap** moves every row, whatever its variant, to the current KEK.
 - Tenant scope: every read, create and destroy goes through the asset's tenant. Another tenant's asset
   is `not_found`.
 
