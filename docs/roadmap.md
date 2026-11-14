@@ -129,6 +129,7 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0033](adr/0033-integrity-design.md) Integrity design: the manifest outline
 - [ADR 0036](adr/0036-face-masked-variant.md) Face-masked variant: the masker runs beside the Go worker
 - [ADR 0039](adr/0039-verify-api-proofs-and-offline-verifier.md) Verify API, proofs and the offline verifier
+- [ADR 0041](adr/0041-rfc-3161-anchoring-of-manifests.md) RFC 3161 anchoring of manifests (`CIPHERFRAME_TSA_URL`, job `manifest.anchor`, `GET .../manifest/timestamp`)
 - [ADR 0037](adr/0037-faster-face-masking.md) Faster face masking: `asset.mask` runs beside `asset.process`; configurable ladder
 - [ADR 0038](adr/0038-encoder-preset-and-detection-stride.md) Encoder preset (`CIPHERFRAME_WORKER_X264_PRESET`) and detection stride (`CIPHERFRAME_ML_DETECT_EVERY`)
 

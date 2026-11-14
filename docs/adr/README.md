@@ -46,6 +46,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0038](0038-encoder-preset-and-detection-stride.md) | Encoder preset and detection stride settings (amends 0024, 0036) | none | Accepted | 2026-11-14 |
 | [0039](0039-verify-api-proofs-and-offline-verifier.md) | Verify API, proofs and the offline verifier | none | Accepted (flagged for owner review) | 2026-11-14 |
 | [0040](0040-retention-and-privacy-defaults.md) | Retention and privacy defaults | P11 | Accepted | 2026-11-14 |
+| [0041](0041-rfc-3161-anchoring-of-manifests.md) | RFC 3161 anchoring of manifests | D7 | Accepted (flagged for owner review) | 2026-11-14 |
 
 ## Open gates
 
