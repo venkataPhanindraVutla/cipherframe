@@ -7,6 +7,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // playbackService returns the playback service, or dependency_unavailable when the process runs
@@ -37,15 +38,18 @@ func (s *server) CreatePlaybackSession(ctx context.Context, req gen.CreatePlayba
 	if err != nil {
 		return nil, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "asset_id", Message: "must be an asset ID"}})
 	}
-	c, err := svc.CreateSession(ctx, playback.CreateInput{
-		TenantID: p.TenantID, ClientID: p.ClientID, AssetID: aid, ViewerID: req.Body.ViewerId,
-	})
+	in := playback.CreateInput{TenantID: p.TenantID, ClientID: p.ClientID, AssetID: aid, ViewerID: req.Body.ViewerId}
+	if req.Body.Variant != nil {
+		in.Variant = keys.Variant(*req.Body.Variant)
+	}
+	c, err := svc.CreateSession(ctx, in)
 	if err != nil {
 		return nil, err
 	}
 	return gen.CreatePlaybackSession201JSONResponse{
 		Body: gen.CreatedPlaybackSession{
 			SessionId:                c.SessionID.String(),
+			Variant:                  gen.Variant(c.Variant),
 			Token:                    c.Token.Reveal(),
 			TokenExpiresAt:           c.TokenExpiresAt,
 			HeartbeatIntervalSeconds: c.HeartbeatIntervalSeconds,

@@ -27,6 +27,12 @@ const (
 	// SessionLimit is a 409 for a viewer that already has the tenant's maximum number of active
 	// playback sessions (ADR 0028). Existing sessions are left alone.
 	SessionLimit Code = "session_limit"
+	// VariantUnavailable is a 409 for a playback session that asks for a variant the asset does
+	// not have: "masked" on an asset created without mask_faces (ADR 0036).
+	VariantUnavailable Code = "variant_unavailable"
+	// VariantNotReady is a 409 for a session that asks for the masked variant before it is ready
+	// (pending or failed). It never falls back to the original (ADR 0036).
+	VariantNotReady Code = "variant_not_ready"
 )
 
 // Info describes a registered code.
@@ -50,6 +56,8 @@ var registry = map[Code]Info{
 	Timeout:               {Status: 504, Title: "Timeout", Retryable: true},
 	AssetNotReady:         {Status: 409, Title: "Asset not ready"},
 	SessionLimit:          {Status: 409, Title: "Session limit reached"},
+	VariantUnavailable:    {Status: 409, Title: "Variant unavailable"},
+	VariantNotReady:       {Status: 409, Title: "Variant not ready"},
 }
 
 // Lookup returns the registry entry for c.

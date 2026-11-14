@@ -535,7 +535,9 @@ paths:
         that is not `ready` is `409 asset_not_ready`. A viewer that already has the tenant's
         maximum number of active sessions (default 3, `max_sessions_per_viewer` in the playback
         settings; 0 means unlimited) gets `409 session_limit`, and existing sessions are left
-        alone. A session counts as active until it is revoked or ended, until it has had no
+        alone. The session is bound to one `variant` (see the request); asking for one the asset
+        does not have is `409 variant_unavailable`, and for a masked variant that is not ready yet
+        `409 variant_not_ready`. A session counts as active until it is revoked or ended, until it has had no
         heartbeat for the idle timeout, or until it reaches its maximum age.
 
         `viewer_id` is yours to choose. Use a pseudonymous identifier that only your application
@@ -1240,12 +1242,17 @@ paths:
         60 seconds of clock skew, and no more than 24 hours ahead); `nbf` and `iat` honoured; `jti`
         required (at most 128 characters) and **single use**; `asset_id` equal to the asset in the
         body, so one token cannot open every asset; and the configured viewer claim (default `sub`)
-        as the viewer ID.
+        as the viewer ID. An optional `variant` claim (`original` or `masked`) says which variant
+        this viewer may play; without it the asset's default applies.
 
         **`method: "callback"`** sends `ticket`, an opaque string from your page (1 to 2048 bytes),
         to your callback URL in a signed POST. Only an HTTP 200 answer `{"allow": true,
         "viewer_id": "..."}` creates a session. A timeout (2 seconds), any other status, a malformed
-        answer or `allow: false` is a `401`. Answers are not cached.
+        answer or `allow: false` is a `401`. Answers are not cached. The request body names the
+        `variant` the session would get, so your application approves that specific variant.
+
+        The viewer never chooses the variant. A `variant` in the request body that differs from the
+        one your JWT claim or the asset's default decides is `403`.
 
         A method that is off, a tenant with nothing configured, and every JWT or callback failure
         answer the same generic `401`, so the response reveals nothing about why. When Cipherframe
@@ -1280,6 +1287,8 @@ paths:
           $ref: "#/components/responses/Problem"
         "401":
           $ref: "#/components/responses/ViewerUnauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
         "409":
@@ -2343,15 +2352,52 @@ components:
           description: Optional lower-case media type such as `video/mp4`. Stored as object metadata only.
         upload_method:
           $ref: "#/components/schemas/UploadMethod"
+        mask_faces:
+          type: boolean
+          default: false
+          description: |
+            Also make a variant of this asset with every detected face blurred (ADR 0036). It is
+            built after the asset is `ready`; see `masking` on the asset. Chosen at creation and
+            not changeable afterwards.
+    Variant:
+      type: string
+      enum: [original, masked]
+      description: |
+        A rendering of an asset (ADR 0036). `original` is the uploaded video. `masked` has faces
+        blurred and exists only for an asset created with `mask_faces`. Each variant has its own
+        content key.
+    MaskingState:
+      type: string
+      enum: [pending, ready, failed]
+    Masking:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state:
+          $ref: "#/components/schemas/MaskingState"
+        faces_detected:
+          type: integer
+          minimum: 0
+          description: |
+            How many faces the masker found. Absent until it has run. `0` means the masked variant
+            was published but no face was found; the embedding application may want to warn.
     Asset:
       type: object
       additionalProperties: false
-      required: [id, state, size_bytes, upload_method, created_at, updated_at]
+      required: [id, state, size_bytes, upload_method, mask_faces, created_at, updated_at]
       properties:
         id:
           $ref: "#/components/schemas/AssetIdValue"
         state:
           $ref: "#/components/schemas/AssetState"
+        mask_faces:
+          type: boolean
+          description: Whether the asset was created with `mask_faces`.
+        masking:
+          allOf:
+            - $ref: "#/components/schemas/Masking"
+          description: Present exactly when `mask_faces` is true. `pending` until the masked variant is built.
         size_bytes:
           type: integer
           format: int64
@@ -2634,6 +2680,14 @@ components:
             Your pseudonymous ID for the viewer: 1 to 128 printable characters, no control
             characters. Use an ID only your application can link to a person, never an email
             address.
+        variant:
+          allOf:
+            - $ref: "#/components/schemas/Variant"
+          description: |
+            Which variant the session may play. Default: `masked` for an asset created with
+            `mask_faces`, `original` otherwise. `masked` on an asset without masking is
+            `409 variant_unavailable`; `masked` before it is ready is `409 variant_not_ready`. It
+            never falls back to the original.
     CreatedPlaybackSession:
       type: object
       additionalProperties: false
@@ -2645,9 +2699,12 @@ components:
         - session_expires_at
         - manifest_url
         - token_transport
+        - variant
       properties:
         session_id:
           $ref: "#/components/schemas/SessionId"
+        variant:
+          $ref: "#/components/schemas/Variant"
         token:
           type: string
           maxLength: 1024
@@ -3119,6 +3176,13 @@ components:
             For `callback` (required): an opaque string from your page that your callback
             understands, for example a short-lived order or login reference. Cipherframe forwards
             it and never logs it. Ignored for `jwt`.
+        variant:
+          allOf:
+            - $ref: "#/components/schemas/Variant"
+          description: |
+            Optional, and never a choice: the variant is decided by your application (the `variant`
+            claim of the JWT, or your callback approving the variant it is told about), else it is
+            the asset's default. A value that differs from the decided one is `403`.
     UploadPart:
       type: object
       additionalProperties: false
@@ -3208,6 +3272,8 @@ components:
             - session_limit
             - timeout
             - unauthenticated
+            - variant_not_ready
+            - variant_unavailable
         retryable:
           type: boolean
         request_id:

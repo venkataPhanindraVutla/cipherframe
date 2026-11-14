@@ -33,6 +33,14 @@ func assetOut(a db.Asset) gen.Asset {
 		ProcessingStartedAt: a.ProcessingStartedAt,
 		ReadyAt:             a.ReadyAt,
 		FailedAt:            a.FailedAt,
+		MaskFaces:           a.MaskFaces,
+	}
+	if a.MaskFaces {
+		m := gen.Masking{State: gen.MaskingStatePending, FacesDetected: a.FacesDetected}
+		if a.MaskingState != "" { // empty until the original is ready: the masked variant is pending too
+			m.State = gen.MaskingState(a.MaskingState)
+		}
+		out.Masking = &m
 	}
 	if a.ContentType != "" {
 		ct := a.ContentType
@@ -74,6 +82,9 @@ func (s *server) CreateAsset(ctx context.Context, req gen.CreateAssetRequestObje
 	}
 	if req.Body.ContentType != nil {
 		in.ContentType = *req.Body.ContentType
+	}
+	if req.Body.MaskFaces != nil {
+		in.MaskFaces = *req.Body.MaskFaces
 	}
 	created, err := svc.Create(ctx, in)
 	if err != nil {
