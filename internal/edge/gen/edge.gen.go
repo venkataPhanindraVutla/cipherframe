@@ -84,6 +84,8 @@ const (
 	ProblemCodeSessionLimit          ProblemCode = "session_limit"
 	ProblemCodeTimeout               ProblemCode = "timeout"
 	ProblemCodeUnauthenticated       ProblemCode = "unauthenticated"
+	ProblemCodeVariantNotReady       ProblemCode = "variant_not_ready"
+	ProblemCodeVariantUnavailable    ProblemCode = "variant_unavailable"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -114,6 +116,10 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeTimeout:
 		return true
 	case ProblemCodeUnauthenticated:
+		return true
+	case ProblemCodeVariantNotReady:
+		return true
+	case ProblemCodeVariantUnavailable:
 		return true
 	default:
 		return false
@@ -189,6 +195,24 @@ func (e ReadyResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for Variant.
+const (
+	Masked   Variant = "masked"
+	Original Variant = "original"
+)
+
+// Valid indicates whether the value is a known member of the Variant enum.
+func (e Variant) Valid() bool {
+	switch e {
+	case Masked:
+		return true
+	case Original:
+		return true
+	default:
+		return false
+	}
+}
+
 // AssetIdValue defines model for AssetIdValue.
 type AssetIdValue = string
 
@@ -203,6 +227,11 @@ type CreateBrowserPlaybackSessionRequest struct {
 	// understands, for example a short-lived order or login reference. Cipherframe forwards
 	// it and never logs it. Ignored for `jwt`.
 	Ticket *string `json:"ticket,omitempty"`
+
+	// Variant Optional, and never a choice: the variant is decided by your application (the `variant`
+	// claim of the JWT, or your callback approving the variant it is told about), else it is
+	// the asset's default. A value that differs from the decided one is `403`.
+	Variant *Variant `json:"variant,omitempty"`
 }
 
 // CreateBrowserPlaybackSessionRequestMethod How your application authorises the viewer.
@@ -234,6 +263,11 @@ type CreatedPlaybackSession struct {
 	// TokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
 	// to tokens in URLs (ADR 0030), and `manifest_url` carries it.
 	TokenTransport CreatedPlaybackSessionTokenTransport `json:"token_transport"`
+
+	// Variant A rendering of an asset (ADR 0036). `original` is the uploaded video. `masked` has faces
+	// blurred and exists only for an asset created with `mask_faces`. Each variant has its own
+	// content key.
+	Variant Variant `json:"variant"`
 }
 
 // CreatedPlaybackSessionTokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
@@ -353,6 +387,11 @@ type UploadPartList struct {
 	Items         []UploadPart `json:"items"`
 	PartSizeBytes int64        `json:"part_size_bytes"`
 }
+
+// Variant A rendering of an asset (ADR 0036). `original` is the uploaded video. `masked` has faces
+// blurred and exists only for an asset created with `mask_faces`. Each variant has its own
+// content key.
+type Variant string
 
 // AssetId defines model for AssetId.
 type AssetId = string
@@ -1313,6 +1352,28 @@ func (response CreateBrowserPlaybackSession401ApplicationProblemPlusJSONResponse
 	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
 	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBrowserPlaybackSession403ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateBrowserPlaybackSession403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateBrowserPlaybackSession403ResponseHeaders
+}
+
+func (response CreateBrowserPlaybackSession403ApplicationProblemPlusJSONResponse) VisitCreateBrowserPlaybackSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
 	_, err := buf.WriteTo(w)
 	return err
 }

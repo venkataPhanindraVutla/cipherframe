@@ -233,6 +233,15 @@ func (p *Playback) guard(w http.ResponseWriter, r *http.Request, rawSession stri
 		return
 	}
 
+	variant := keys.Variant(claims.Variant)
+	if variant == "" { // signed before variants existed
+		variant = keys.Original
+	}
+	if !variant.Valid() {
+		deny(errPlaybackUnauthenticated())
+		return
+	}
+
 	set, err := p.tenantSettings(r.Context(), tenant)
 	if err != nil {
 		fail(err)
@@ -254,7 +263,7 @@ func (p *Playback) guard(w http.ResponseWriter, r *http.Request, rawSession stri
 			fail(err)
 			return
 		}
-		if row.AssetID != asset || !sessionUsable(row, set, p.now()) {
+		if row.AssetID != asset || row.Variant != variant || !sessionUsable(row, set, p.now()) {
 			if need == token.ScopeKey { // a verified token for a session that exists, refused
 				g := grant{tenant: tenant, asset: asset, session: sid}
 				p.access.RecordKeyDenied(p.accessEvent(r.Context(), g, db.AccessKeyDenied))
@@ -265,7 +274,7 @@ func (p *Playback) guard(w http.ResponseWriter, r *http.Request, rawSession stri
 	}
 
 	g := grant{
-		tenant: tenant, asset: asset, session: sid, settings: set,
+		tenant: tenant, asset: asset, variant: variant, session: sid, settings: set,
 		tokenHash: db.TokenHash(tok), tokenExpiry: claims.Expiry,
 	}
 	if set.TokenInURL {

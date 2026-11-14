@@ -233,7 +233,7 @@ func (e *env) wantCreated(r reply) session {
 		e.t.Fatalf("Cache-Control = %q", r.hdr.Get("Cache-Control"))
 	}
 	m := decode(e.t, r)
-	for _, k := range []string{"session_id", "token", "token_expires_at", "heartbeat_interval_seconds", "session_expires_at", "manifest_url", "token_transport"} {
+	for _, k := range []string{"session_id", "token", "token_expires_at", "heartbeat_interval_seconds", "session_expires_at", "manifest_url", "token_transport", "variant"} {
 		if _, ok := m[k]; !ok {
 			e.t.Fatalf("response lacks %s: %s", k, r.body)
 		}
@@ -658,7 +658,7 @@ func TestViewerCallbackAllow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got["type"] != "playback.authorize" || got["tenant_id"] != e.res.Tenant.ID.String() || got["asset_id"] != e.asset.ID.String() ||
-		got["ticket"] != vTicket || got["request_id"] != r.hdr.Get("X-Request-Id") || len(got) != 6 {
+		got["ticket"] != vTicket || got["request_id"] != r.hdr.Get("X-Request-Id") || got["variant"] != "original" || len(got) != 7 {
 		t.Fatalf("callback body = %v (response request id %q)", got, r.hdr.Get("X-Request-Id"))
 	}
 	// A signature made with another secret does not verify.
