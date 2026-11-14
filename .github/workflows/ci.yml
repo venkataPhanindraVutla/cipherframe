@@ -283,3 +283,22 @@ jobs:
         run: |
           export CIPHERFRAME_TEST_FFMPEG="$(command -v ffmpeg)" CIPHERFRAME_TEST_FFPROBE="$(command -v ffprobe)"
           go test -race -count=1 -tags=integration,media -v ./internal/...
+
+  ml:
+    name: ml (ruff and pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      # The end-to-end masking tests need a system FFmpeg; they skip without one.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: fetch the pinned model (SHA-256 verified)
+        run: uv run python scripts/fetch_model.py models
+      # Postgres comes from testcontainers on the runner's Docker (ryuk is off, see env above).
+      - run: uv run pytest -v
