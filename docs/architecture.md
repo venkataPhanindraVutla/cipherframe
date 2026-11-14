@@ -609,15 +609,20 @@ provider (AWS KMS, Vault Transit, GCP KMS; a development-only local provider is 
 
 ## Lifecycle
 
-`created → uploading → committed → processing → ready | failed → deleted`
+`created → uploading → committed → processing → ready | failed`, and from any of these `→ deleting → deleted`
 
 Every change is a compare-and-set in the database (`UPDATE … WHERE state = $expected`) along the
 edges of one Go table, so two writers can never both win a transition (ADR 0026). Commit enqueues
 `asset.process` in the same transaction that sets `committed`; the worker role handles it (see
 [the processing pipeline](#processing-pipeline)).
 
-Deletion enumerates storage, destroys the content key, re-lists to confirm nothing is left, and signs
-a record. See [integrity.md](integrity.md).
+Deletion (`DELETE /v1/assets/{asset_id}`, or the retention job when a time-to-live ran out) marks the
+asset `deleting`, which every serving and processing path refuses, then the `asset.delete` job
+enumerates storage under every asset prefix, deletes, re-lists until nothing is left, destroys the
+content keys of every variant and signs a record, in the order and with the failure handling of
+[ADR 0042](adr/0042-deletion-and-retention-details.md). An in-flight `asset.process` or `asset.mask`
+job checks the state before it publishes and cannot bring a deleting asset back. See
+[integrity.md](integrity.md).
 
 ## What this architecture does not protect against
 

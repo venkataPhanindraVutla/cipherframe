@@ -26,7 +26,7 @@ Last updated: 2026-11-14.
 | Face masking (ADR 0036) | Done |
 | Faster face masking (ADR 0037) | Done |
 | Encoder preset and detection stride (ADR 0038) | Done |
-| M6 Deletion and retention | Not started (P11 decided, [ADR 0040](adr/0040-retention-and-privacy-defaults.md)) |
+| M6 Deletion and retention | Done ([ADR 0040](adr/0040-retention-and-privacy-defaults.md), [ADR 0042](adr/0042-deletion-and-retention-details.md)) |
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Not started (gate P12) |
 | M8 CLI (Go) and reference player (TypeScript) | Not started (gate P13) |
 | M9 Operations and release | Not started (gate P14) |
@@ -66,11 +66,19 @@ and any retention of the source object must wait until `masking.state` is no lon
 
 ### M6 Deletion and retention
 
-- [ ] M6-1 Derived-artifact registry: every artifact kind registers with the purge job
-- [ ] M6-2 Verified purge job: delete everything under the asset's prefixes and destroy its content key
-- [ ] M6-3 Signed deletion record, fetchable after the asset is gone
-- [ ] M6-4 Retention job: per-asset time-to-live and a configurable default
-- [ ] M6-5 Privacy settings: storing IP address, user agent and original file name
+- [x] M6-1 Derived-artifact registry: every artifact kind registers with the purge job
+- [x] M6-2 Verified purge job: delete everything under the asset's prefixes and destroy its content key
+- [x] M6-3 Signed deletion record, fetchable after the asset is gone
+- [x] M6-4 Retention job: per-asset time-to-live and a configurable default
+- [x] M6-5 Privacy settings: storing IP address, user agent and original file name
+
+Done: `DELETE /v1/assets/{asset_id}` runs the verified purge (`asset.delete`: storage enumerated, not
+trusted from the database; both variants; content keys destroyed; storage listed again) and leaves a
+signed deletion record that `cipherframe verify --deletion-record` checks offline. An asset can have a
+time-to-live (per asset or as a tenant default; none by default), the access trail and anomaly events
+are kept for `CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS` (90 by default), IP address and user agent stay off
+and no original file name is ever stored ([privacy.md](privacy.md)). Details in
+[ADR 0042](adr/0042-deletion-and-retention-details.md).
 
 ### M7 Subtitles, thumbnails, branding, webhooks, quotas
 
@@ -133,13 +141,16 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0041](adr/0041-rfc-3161-anchoring-of-manifests.md) RFC 3161 anchoring of manifests (`CIPHERFRAME_TSA_URL`, job `manifest.anchor`, `GET .../manifest/timestamp`)
 - [ADR 0037](adr/0037-faster-face-masking.md) Faster face masking: `asset.mask` runs beside `asset.process`; configurable ladder
 - [ADR 0038](adr/0038-encoder-preset-and-detection-stride.md) Encoder preset (`CIPHERFRAME_WORKER_X264_PRESET`) and detection stride (`CIPHERFRAME_ML_DETECT_EVERY`)
+- [ADR 0042](adr/0042-deletion-and-retention-details.md) Deletion and retention details: the `deleting` state, tombstone reads, purge order, `not_deleted`, time-to-live rules
 
 ## Follow-ups
 
 Smaller items found while building, not yet scheduled:
 
 - Allowlist the public test IVs in the golden playlists for the secret scanner.
-- Make access-log partition creation work from any role (with M6).
+- Give `audit_events` and `playback_sessions` a retention window (not covered by ADR 0040; see ADR 0042).
+- Have the retention sweep also create the access-log partitions, so a deployment without the edge role
+  keeps them (the edge sweeper does it today).
 - Rate-limit the viewer-authorization callback and re-wrap its stored secrets on key rotation.
 - Let the published key set mark a key "revoked as compromised", not only "retired"
   ([integrity.md](integrity.md)).
