@@ -33,6 +33,47 @@ func (q *Queries) DeleteContentKeyByAsset(ctx context.Context, arg DeleteContent
 	return result.RowsAffected(), nil
 }
 
+const destroyContentKeysByAsset = `-- name: DestroyContentKeysByAsset :many
+DELETE FROM content_keys k
+USING assets a
+WHERE a.id = k.asset_id
+  AND a.tenant_id = $1::uuid
+  AND k.asset_id = $2::uuid
+RETURNING k.id, k.variant
+`
+
+type DestroyContentKeysByAssetParams struct {
+	TenantID pgtype.UUID
+	AssetID  pgtype.UUID
+}
+
+type DestroyContentKeysByAssetRow struct {
+	ID      pgtype.UUID
+	Variant string
+}
+
+// Crypto-shredding: the same deletion as DeleteContentKeyByAsset, returning what was destroyed (ids
+// and variants only, never key material) so the deletion record can name them.
+func (q *Queries) DestroyContentKeysByAsset(ctx context.Context, arg DestroyContentKeysByAssetParams) ([]DestroyContentKeysByAssetRow, error) {
+	rows, err := q.db.Query(ctx, destroyContentKeysByAsset, arg.TenantID, arg.AssetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DestroyContentKeysByAssetRow
+	for rows.Next() {
+		var i DestroyContentKeysByAssetRow
+		if err := rows.Scan(&i.ID, &i.Variant); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getContentKeyByAsset = `-- name: GetContentKeyByAsset :one
 SELECT k.id, k.asset_id, k.provider, k.kek_key_id, k.kek_version, k.envelope_version, k.wrapped, k.created_at, k.rewrapped_at, k.variant FROM content_keys k
 JOIN assets a ON a.id = k.asset_id

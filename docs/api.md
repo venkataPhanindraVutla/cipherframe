@@ -66,8 +66,8 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/keys/{key_id}/rotate` | yes | no | `admin`, or the key itself |
 | `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
 | `POST /v1/assets` | yes | no | `assets:write` |
-| `GET /v1/assets`, `GET /v1/assets/{asset_id}` | yes | no | `assets:read` |
-| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort` | yes | no | `assets:write` |
+| `GET /v1/assets`, `GET /v1/assets/{asset_id}`, `GET /v1/assets/{asset_id}/deletion-record` | yes | no | `assets:read` |
+| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
 | `POST /v1/playback-sessions` | yes | no | `sessions:write` |
 | `GET /v1/playback-sessions/{session_id}` | yes | no | `sessions:write` |
 | `POST /v1/playback-sessions/{session_id}/revoke`, `POST /v1/playback-sessions/revoke` | yes | no | `sessions:write` |
@@ -201,7 +201,7 @@ The first admin key is created with the CLI, not the API:
 
 Endpoint names and shapes are flagged for owner review before v1.0.0.
 
-An asset goes `created → uploading → committed → processing → ready | failed` (and `deleted` later).
+An asset goes `created → uploading → committed → processing → ready | failed`, and from any of those to `deleting → deleted` when it is deleted (see "Delete").
 The API never receives media: the embedding application creates the asset, hands the browser the
 upload instructions, and commits when the upload is done. The source is never addressable: no
 response, header or log line contains its object key or the source bucket's name, and no presigned
@@ -211,7 +211,8 @@ URL is ever returned.
 "upload_method": "tus"}` (`tus` or `multipart`; `content_type` is optional). `size_bytes` must be
 exact and at most `CIPHERFRAME_MAX_SOURCE_BYTES` (default 10 GiB; `413 payload_too_large`). No file
 name is accepted or stored. `mask_faces` (boolean, default `false`) asks for a second, face-masked
-variant of the asset (see "Variants" below); it is fixed at creation. The `201` answer,
+variant of the asset (see "Variants" below); it is fixed at creation. `expires_at` or `ttl_seconds`
+(not both) give the asset a time-to-live (see "Retention" below). The `201` answer,
 `Cache-Control: no-store`:
 
 ```json
@@ -255,7 +256,40 @@ with `failure_code` `upload_aborted`, the token ends and the partial objects are
 repeats the cleanup; a committed asset is `409`.
 
 **Read.** `GET /v1/assets/{asset_id}` and `GET /v1/assets` (`limit`, `cursor`, oldest first). An asset
-of another tenant is `404`, never `403`.
+of another tenant is `404`, never `403`. A deleted asset is still returned by `GET` as a tombstone
+(`state: "deleted"`); lists leave deleted assets out.
+
+**Retention (M6-4, ADR 0040, ADR 0042).** Assets are kept until deleted: with no time-to-live there is
+no automatic deletion. A time-to-live makes the retention job (a worker role task that runs every five
+minutes) start the verified deletion below with reason `retention` once `expires_at` has passed.
+Set it at creation with `expires_at` (an absolute time) or `ttl_seconds` (seconds from now), each
+between a minute and ten years from now (`400` otherwise, and `400` for both). With neither, the
+tenant's default applies: `asset_ttl_seconds` in the privacy settings (an asset's expiry is fixed when
+it is created, so changing the default does not touch existing assets). Change it later with
+`PATCH /v1/assets/{asset_id}` (`assets:write`) and a body of exactly one member: `{"expires_at":
+"2027-01-01T00:00:00Z"}`, `{"ttl_seconds": 86400}` (counted from now), or either set to `null` to clear
+the expiry so the asset is kept until deleted. The asset shows `expires_at` while one is set. A
+deleting asset takes no new expiry (`409`), a deleted one and another tenant's asset are `404`. The
+sweep can be a few minutes late and an expired asset is deleted by the same purge as a requested one,
+so it stays playable until the purge starts. Use `DELETE` to delete now.
+
+**Delete (M6, ADR 0040, ADR 0042).** `DELETE /v1/assets/{asset_id}` (`assets:write`) starts the
+verified deletion and answers `202` with the asset in state `deleting`. From that moment playback
+(new sessions and key requests), uploads and processing refuse the asset and its active playback
+sessions are revoked. The `asset.delete` job then deletes every object under the asset's prefixes in
+both buckets (it lists storage, it does not trust the database alone), destroys the content keys of
+every variant, lists storage again to confirm nothing is left (it retries on leftovers and fails
+loudly rather than claim success), and leaves a signed deletion record (see
+[integrity.md](integrity.md#verifiable-deletion)). Poll `GET /v1/assets/{asset_id}`: while the purge
+runs `state` is `deleting` and `deletion` shows `reason` and `requested_at`; when it is done `state`
+is `deleted` and `deletion.completed_at` is set. The row stays as a tombstone, and
+`GET /v1/assets/{asset_id}/deletion-record` (`assets:read`) returns the signed deletion record as a
+DSSE envelope (`Content-Type: application/vnd.cipherframe.deletion+json; profile=dsse`), also after
+the asset is gone; before that it is `404 not_deleted`, and another tenant's asset is `404 not_found`.
+Verify it with `cipherframe verify --deletion-record` ([integrity.md](integrity.md#the-deletion-record)). Deleting is idempotent: repeating the
+call returns `202` again, and queues a new purge only if the earlier job is no longer in the queue
+(this is how a deletion that ran out of retries is restarted). An in-flight processing or masking job
+stops at its next check and removes its own output; it cannot bring the asset back.
 
 **Variants (ADR 0036).** Every asset has an `original` variant. An asset created with `mask_faces:
 true` also gets a `masked` variant, built after the original is `ready`. The asset shows
@@ -573,8 +607,9 @@ no response holds a session ID, a token or the hash of a session ID. `detail` ho
 anywhere today, so read the events endpoint (poll it with `from`). The `playback_events` table is built
 as the outbox for it: every row has a nullable `delivered_at` and an index of the undelivered rows; M7's
 delivery worker will read them oldest first, post them and stamp `delivered_at`. The event `id` is
-stable, so a delivery can carry it. Retention of the table is decided with M7 and the privacy gate (P11);
-until then events are kept.
+stable, so a delivery can carry it. Events are removed after the access-trail retention window
+(`CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS`, default 90 days), delivered or not; M7's delivery worker
+has to run well inside it.
 
 ### Heartbeat and end: the player contract (ADR 0028)
 
@@ -730,14 +765,21 @@ no trusted-proxy setting and **never reads `X-Forwarded-For`**, which a client c
 reverse proxy or load balancer `ip` is the proxy's address, and the proxy's own logs are where the
 client address lives.
 
-- `GET /v1/privacy-settings` returns `{store_ip, store_user_agent, updated_at}`: the stored settings, or
-  the defaults (both `false`, `updated_at` absent). `PUT /v1/privacy-settings` replaces both (send both: a
-  missing one is `400` with an `errors` entry). Both need the `admin` scope, and a change is written to
-  the audit log (`privacy_settings.update`). It applies to rows written afterwards (each process caches
-  the settings for up to 30 seconds, and a row is written about a second after its request); rows
-  already written are not rewritten. When the settings cannot be read, nothing is stored.
-  Gate P11 sets the final defaults and adds fields (access-log retention, original file names, asset
-  time-to-live); until then retention is **not** implemented: no row is ever deleted.
+- `GET /v1/privacy-settings` returns `{store_ip, store_user_agent, asset_ttl_seconds, updated_at}`: the
+  stored settings, or the defaults (both flags `false`, `asset_ttl_seconds` and `updated_at` absent).
+  `PUT /v1/privacy-settings` replaces them (send both flags: a missing one is `400` with an `errors`
+  entry; `asset_ttl_seconds` is optional and leaving it out clears it). `asset_ttl_seconds` (60 to
+  315360000) is the tenant's default asset time-to-live (see "Retention" above). Both calls need the
+  `admin` scope, and a change is written to the audit log (`privacy_settings.update`). The flags apply
+  to rows written afterwards (each process caches the settings for up to 30 seconds, and a row is
+  written about a second after its request); rows already written are not rewritten, and they are
+  removed by the retention window below. When the settings cannot be read, nothing is stored.
+- **Retention (M6-4, ADR 0040).** Rows of the trail and the anomaly events are kept for
+  `CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS` (default 90, 1 to 3650). A scheduled job in the worker role
+  (every five minutes) drops each monthly partition that lies entirely before the window, deletes the
+  older rows of the partition the window ends in, and deletes older rows of `playback_events`, in
+  batches. It never touches newer rows, and it works from any database role (the partition functions
+  run with their owner's rights).
 
 **Storage.** The table `playback_access_log` is partitioned by month (UTC). Every sweep of the edge
 role creates the partitions of the current month and the next two; there is no default partition, so a
@@ -1213,6 +1255,7 @@ server-side only.
 | `variant_not_ready` | 409 | no | A session or proof asked for the masked variant (or it is the default) and it is not `ready`. |
 | `artifact_not_found` | 404 | no | A proof was requested for a path that is not an artifact of the asset's signed manifest. |
 | `not_anchored` | 404 | no | The manifest has no RFC 3161 timestamp token (anchoring is off, or the token is still pending). |
+| `not_deleted` | 404 | no | A deletion record was requested for an asset that has not been deleted (yet). |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |

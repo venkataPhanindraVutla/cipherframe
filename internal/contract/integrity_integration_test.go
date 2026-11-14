@@ -20,10 +20,13 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/deletion"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 )
 
@@ -53,9 +56,21 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	jreg := jobs.NewRegistry()
+	if err := purge.Declare(jreg); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewQueue(pool, jreg, jobs.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester, err := purge.NewRequester(pool, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(api.New(api.Deps{
 		Log: log, Verifier: auth.NewVerifier(repos, onePepper{}, log, nil), Manager: am, Signing: signer,
-		KeySet: signing.NewKeySet(repos, 1, nil), Repos: repos,
+		KeySet: signing.NewKeySet(repos, 1, nil), Repos: repos, Purge: requester,
 	}).Handler())
 	t.Cleanup(srv.Close)
 
@@ -155,7 +170,43 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	call("POST", "/v1/verify", map[string]any{"sha256": hash}, 200)
 	call("POST", "/v1/verify", map[string]any{"sha256": hash, "asset_id": aid}, 400)
 
-	for _, op := range []string{"getAssetManifest", "getAssetManifestTimestamp", "getAssetProof", "verifyArtifact"} {
+	// Deletion: the request, the record that is not there yet, and the record once the purge wrote it.
+	call("DELETE", "/v1/assets/"+aid, nil, 202)
+	call("DELETE", "/v1/assets/"+aid, nil, 202)
+	call("GET", "/v1/assets/"+aid+"/deletion-record", nil, 404)
+	call("GET", "/v1/assets/ast_00000000000000000000000001/deletion-record", nil, 404)
+	call("DELETE", "/v1/assets/ast_00000000000000000000000001", nil, 404)
+	rec, err := deletion.Build(deletion.Input{
+		AssetID: aid, TenantID: res.Tenant.ID.String(), RequestedAt: time.Now().Add(-time.Minute), CompletedAt: time.Now(),
+		Reason: deletion.ReasonRequested, PipelineVersion: "v0",
+		Objects: []deletion.ObjectCount{{Bucket: "delivery", Kind: "segment", Variant: "original", Count: 2, Bytes: 20}},
+		Keys:    []deletion.KeyRef{{ID: "cky_00000000000000000000000001", Variant: "original"}}, ManifestRoot: built.TopRoot[:],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rkey, rsig, err := signer.Sign(ctx, dsse.PAE(deletion.PayloadType, rec.Canonical))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renv, err := (&dsse.Envelope{PayloadType: deletion.PayloadType, Payload: rec.Canonical, Signatures: []dsse.Signature{{KeyID: rkey, Sig: rsig}}}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rsum := sha256.Sum256(rec.Canonical)
+	if err := repos.InsertDeletionRecord(ctx, db.DeletionRecord{
+		AssetID: a.ID, TenantID: res.Tenant.ID, Reason: db.DeletionRequested, RequestedAt: time.Now().Add(-time.Minute),
+		CompletedAt: time.Now(), KeyID: rkey, PayloadSHA256: rsum[:], Envelope: renv,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repos.CompleteAssetDeletion(ctx, res.Tenant.ID, a.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	call("GET", "/v1/assets/"+aid+"/deletion-record", nil, 200)
+	call("DELETE", "/v1/assets/"+aid, nil, 202)
+
+	for _, op := range []string{"getAssetManifest", "getAssetManifestTimestamp", "getAssetProof", "verifyArtifact", "deleteAsset", "getAssetDeletionRecord"} {
 		if !covered[op] {
 			t.Errorf("operation %s was not exercised", op)
 		}

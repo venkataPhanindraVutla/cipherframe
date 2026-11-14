@@ -229,6 +229,26 @@ func Declare(reg *jobs.Registry) error {
 	return jobs.Declare[uploads.MaskArgs](reg, jobs.KindConfig{Queue: jobs.QueueMask})
 }
 
+// errAssetGone means the asset is being deleted (or is deleted) and the job must stop without
+// publishing anything. It is not a failure of the asset.
+var errAssetGone = errors.New("pipeline: the asset is being deleted")
+
+// ensureLive returns errAssetGone when the asset is deleting or deleted (or no longer exists). The
+// job calls it before it publishes anything, and while it waits, so an in-flight job never
+// republishes an asset the purge is removing (M6-2).
+func (p *Processor) ensureLive(ctx context.Context, asset db.Asset) error {
+	cur, err := p.Repo.GetAsset(ctx, asset.TenantID, asset.ID)
+	switch {
+	case isCode(err, errs.NotFound):
+		return errAssetGone
+	case err != nil:
+		return err
+	case cur.State == db.AssetDeleting || cur.State == db.AssetDeleted:
+		return errAssetGone
+	}
+	return nil
+}
+
 // permanentError marks a failure that no retry can fix. The asset is failed with code.
 type permanentError struct {
 	code string
@@ -290,7 +310,7 @@ func (p *Processor) claim(ctx context.Context, asset db.Asset, log *slog.Logger)
 	switch asset.State {
 	case db.AssetProcessing:
 		return asset, true, nil
-	case db.AssetReady, db.AssetFailed, db.AssetDeleted:
+	case db.AssetReady, db.AssetFailed, db.AssetDeleting, db.AssetDeleted:
 		log.InfoContext(ctx, "nothing to do: the asset is already finished", slog.String("state", string(asset.State)))
 		return asset, false, nil
 	case db.AssetCommitted:
@@ -322,6 +342,14 @@ func (p *Processor) claim(ctx context.Context, asset db.Asset, log *slog.Logger)
 func (p *Processor) handleFailure(ctx context.Context, job jobs.Job[uploads.ProcessArgs], asset db.Asset, err error, log *slog.Logger) error {
 	var perm *permanentError
 	switch {
+	case errors.Is(err, errAssetGone):
+		// Deletion started while we worked (M6-2): nothing is published and what this attempt
+		// uploaded goes; the purge removes the rest. The job is done, not failed.
+		log.InfoContext(ctx, "the asset is being deleted; stopping")
+		if cerr := p.cleanDelivery(context.WithoutCancel(ctx), asset); cerr != nil {
+			return cerr
+		}
+		return nil
 	case errors.As(err, &perm):
 		log.WarnContext(ctx, "asset failed", slog.String("failure_code", perm.code), slog.String("error", err.Error()))
 		if ferr := p.failAsset(ctx, asset, perm.code, log); ferr != nil {

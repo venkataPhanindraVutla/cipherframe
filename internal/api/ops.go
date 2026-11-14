@@ -8,6 +8,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
@@ -25,6 +26,8 @@ type server struct {
 	keyset  *signing.KeySet
 	// repos reads manifests and artifacts for the integrity endpoints (M5-3).
 	repos *db.Repos
+	// purge starts asset deletions (M6-2).
+	purge *purge.Requester
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

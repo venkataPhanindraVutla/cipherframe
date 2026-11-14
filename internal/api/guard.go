@@ -33,6 +33,8 @@ var operationScopes = map[string][]db.Scope{
 	"GetAsset":    {db.ScopeAssetsRead},
 	"CommitAsset": {db.ScopeAssetsWrite},
 	"AbortAsset":  {db.ScopeAssetsWrite},
+	"DeleteAsset": {db.ScopeAssetsWrite},
+	"UpdateAsset": {db.ScopeAssetsWrite},
 
 	"CreatePlaybackSession":  {db.ScopeSessionsWrite},
 	"GetPlaybackSession":     {db.ScopeSessionsWrite},
@@ -45,6 +47,7 @@ var operationScopes = map[string][]db.Scope{
 	"GetAssetAccessLog":           {db.ScopeAssetsRead},
 	"GetAssetManifest":            {db.ScopeAssetsRead},
 	"GetAssetManifestTimestamp":   {db.ScopeAssetsRead},
+	"GetAssetDeletionRecord":      {db.ScopeAssetsRead},
 	"GetAssetProof":               {db.ScopeAssetsRead},
 	"VerifyArtifact":              {db.ScopeAssetsRead},
 	"GetPlaybackSessionAccessLog": {db.ScopeAssetsRead},
@@ -233,6 +236,14 @@ func (g guarded) CommitAsset(w http.ResponseWriter, r *http.Request, assetID gen
 	g.a.run("CommitAsset", w, r, func(r *http.Request) { g.ServerInterface.CommitAsset(w, r, assetID) })
 }
 
+func (g guarded) UpdateAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("UpdateAsset", w, r, func(r *http.Request) { g.ServerInterface.UpdateAsset(w, r, assetID) })
+}
+
+func (g guarded) DeleteAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("DeleteAsset", w, r, func(r *http.Request) { g.ServerInterface.DeleteAsset(w, r, assetID) })
+}
+
 func (g guarded) AbortAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
 	g.a.run("AbortAsset", w, r, func(r *http.Request) { g.ServerInterface.AbortAsset(w, r, assetID) })
 }
@@ -269,6 +280,10 @@ func (g guarded) RotateSigningKey(w http.ResponseWriter, r *http.Request) {
 
 func (g guarded) RetireSigningKey(w http.ResponseWriter, r *http.Request, keyID gen.SigningKeyIdPath) {
 	g.a.run("RetireSigningKey", w, r, func(r *http.Request) { g.ServerInterface.RetireSigningKey(w, r, keyID) })
+}
+
+func (g guarded) GetAssetDeletionRecord(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("GetAssetDeletionRecord", w, r, func(r *http.Request) { g.ServerInterface.GetAssetDeletionRecord(w, r, assetID) })
 }
 
 func (g guarded) GetAssetManifest(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {

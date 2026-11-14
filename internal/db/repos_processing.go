@@ -245,3 +245,9 @@ func (r *Repos) SetAssetMasking(ctx context.Context, tenantID id.TenantID, asset
 	}
 	return assetFromRow(row), nil
 }
+
+// ArtifactKinds returns every kind asset_artifacts can hold. The purge registry (package purge)
+// must register each of them.
+func ArtifactKinds() []ArtifactKind {
+	return []ArtifactKind{ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster}
+}

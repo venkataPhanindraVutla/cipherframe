@@ -80,6 +80,7 @@ const (
 	ProblemCodeInvalidRequest        ProblemCode = "invalid_request"
 	ProblemCodeMethodNotAllowed      ProblemCode = "method_not_allowed"
 	ProblemCodeNotAnchored           ProblemCode = "not_anchored"
+	ProblemCodeNotDeleted            ProblemCode = "not_deleted"
 	ProblemCodeNotFound              ProblemCode = "not_found"
 	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
@@ -110,6 +111,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeMethodNotAllowed:
 		return true
 	case ProblemCodeNotAnchored:
+		return true
+	case ProblemCodeNotDeleted:
 		return true
 	case ProblemCodeNotFound:
 		return true

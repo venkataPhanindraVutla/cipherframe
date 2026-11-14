@@ -32,6 +32,27 @@ func (q *Queries) CountViewerSessionsCreatedSince(ctx context.Context, arg Count
 	return count, err
 }
 
+const deletePlaybackEventsBefore = `-- name: DeletePlaybackEventsBefore :execrows
+DELETE FROM playback_events
+WHERE id IN (
+    SELECT e.id FROM playback_events e WHERE e.at < $1::timestamptz ORDER BY e.at LIMIT $2::integer
+)
+`
+
+type DeletePlaybackEventsBeforeParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
+
+// Retention (M6-4): one bounded batch of anomaly events older than the cutoff.
+func (q *Queries) DeletePlaybackEventsBefore(ctx context.Context, arg DeletePlaybackEventsBeforeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePlaybackEventsBefore, arg.Cutoff, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertSessionAnomaly = `-- name: InsertSessionAnomaly :execrows
 INSERT INTO playback_events (tenant_id, session_hash, viewer_id, asset_id, kind, at, detail)
 SELECT $1::uuid, $2::bytea,

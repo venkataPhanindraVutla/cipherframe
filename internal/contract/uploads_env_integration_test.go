@@ -31,6 +31,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/storagetest"
@@ -170,10 +171,18 @@ func newUpEnvWith(t *testing.T, limits uploads.Limits) *upEnv {
 	if err := jobs.Declare[uploads.MaskArgs](reg, jobs.KindConfig{Queue: jobs.QueueMask}); err != nil {
 		t.Fatal(err)
 	}
+	if err := purge.Declare(reg); err != nil {
+		t.Fatal(err)
+	}
 	queue, err := jobs.NewQueue(e.pool, reg, jobs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	requester, err := purge.NewRequester(e.pool, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester.Now = e.clk.Now
 	e.svc, err = uploads.NewService(uploads.Deps{
 		Pool: e.pool, Source: e.buckets.Source, Queue: queue, Limits: limits, EdgeURL: edgeURL, Log: log, Now: e.clk.Now,
 	})
@@ -182,7 +191,7 @@ func newUpEnvWith(t *testing.T, limits uploads.Limits) *upEnv {
 	}
 	e.mgr = auth.NewManager(e.pool, onePepper{}, e.clk.Now)
 	a := api.New(api.Deps{
-		Log: log, Verifier: auth.NewVerifier(e.repos, onePepper{}, log, e.clk.Now), Manager: e.mgr, Assets: e.svc,
+		Log: log, Verifier: auth.NewVerifier(e.repos, onePepper{}, log, e.clk.Now), Manager: e.mgr, Assets: e.svc, Purge: requester, Repos: e.repos,
 	})
 	e.apiSrv = httptest.NewServer(a.Handler())
 	t.Cleanup(e.apiSrv.Close)
@@ -453,7 +462,7 @@ func (e *upEnv) assertEveryUploadOperationExercised() {
 			if strings.HasSuffix(path, "/access-log") {
 				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
 			}
-			if strings.HasSuffix(path, "/manifest") || strings.HasSuffix(path, "/manifest/timestamp") || strings.HasSuffix(path, "/proof") {
+			if strings.HasSuffix(path, "/manifest") || strings.HasSuffix(path, "/manifest/timestamp") || strings.HasSuffix(path, "/proof") || strings.HasSuffix(path, "/deletion-record") {
 				continue // exercised by TestIntegrityOperationsMatchSpec
 			}
 			tus := false

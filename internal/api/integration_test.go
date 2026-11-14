@@ -26,11 +26,13 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/kmstest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 )
 
@@ -114,9 +116,22 @@ func newHarness(t *testing.T) *harness {
 	}
 	signer := signing.NewManager(pool, reg, log, signing.WithClock(clk.Now))
 	t.Cleanup(signer.Close)
+	jreg := jobs.NewRegistry()
+	if err := purge.Declare(jreg); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewQueue(pool, jreg, jobs.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester, err := purge.NewRequester(pool, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester.Now = clk.Now
 	a := api.New(api.Deps{
 		Log: log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr, Playback: pb,
-		Signing: signer, KeySet: signing.NewKeySet(repos, 0, clk.Now), Repos: repos,
+		Signing: signer, KeySet: signing.NewKeySet(repos, 0, clk.Now), Repos: repos, Purge: requester,
 	})
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)

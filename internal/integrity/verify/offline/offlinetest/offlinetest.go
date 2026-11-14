@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/deletion"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
 )
@@ -131,4 +132,35 @@ func New(t testing.TB) *Fixture {
 		t.Fatal(err)
 	}
 	return f
+}
+
+// SignDeletion signs a canonical deletion record and returns the encoded envelope.
+func SignDeletion(t testing.TB, canonical []byte, key Key) []byte {
+	t.Helper()
+	env, err := dsse.Sign(deletion.PayloadType, canonical, dsse.SigningKey{KeyID: key.ID, Key: key.Priv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := env.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// DeletionInput is a deletion record input with obviously fake values: one asset with a masked
+// variant, three source-side and HLS object kinds and two destroyed keys.
+func DeletionInput() deletion.Input {
+	return deletion.Input{
+		AssetID: "ast_00000000000000000000000001", TenantID: "ten_00000000000000000000000001",
+		RequestedAt: time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC), CompletedAt: time.Date(2026, 11, 14, 10, 0, 5, 0, time.UTC),
+		Reason: deletion.ReasonRequested, PipelineVersion: "v0.0.0-test",
+		Objects: []deletion.ObjectCount{
+			{Bucket: "source", Kind: "source", Count: 1, Bytes: 5000},
+			{Bucket: "delivery", Kind: "segment", Variant: "original", Count: 4, Bytes: 4000},
+			{Bucket: "delivery", Kind: "segment", Variant: "masked", Count: 4, Bytes: 4100},
+		},
+		Keys:         []deletion.KeyRef{{ID: "cky_00000000000000000000000001", Variant: "original"}, {ID: "cky_00000000000000000000000002", Variant: "masked"}},
+		ManifestRoot: make([]byte, 32),
+	}
 }

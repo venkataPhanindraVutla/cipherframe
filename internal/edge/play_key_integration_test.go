@@ -220,7 +220,7 @@ func TestKeyAssetGoneIs401(t *testing.T) {
 	t.Run("deleted", func(t *testing.T) {
 		e := newEnv(t)
 		s := e.session("viewer-1")
-		if _, err := e.repos.TransitionAsset(context.Background(), e.res.Tenant.ID, e.asset.ID, db.Transition{From: db.AssetReady, To: db.AssetDeleted}); err != nil {
+		if _, err := e.repos.RequestAssetDeletion(context.Background(), e.res.Tenant.ID, e.asset.ID, db.DeletionRequested, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		want(t, e.get(keyPath(s), s.token), 401)

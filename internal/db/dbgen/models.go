@@ -54,6 +54,10 @@ type Asset struct {
 	MaskFaces           bool
 	MaskingState        *string
 	FacesDetected       *int32
+	DeletionRequestedAt *time.Time
+	DeletionReason      *string
+	DeletedAt           *time.Time
+	ExpiresAt           *time.Time
 }
 
 type AssetArtifact struct {
@@ -66,6 +70,18 @@ type AssetArtifact struct {
 	Sha256    []byte
 	CreatedAt time.Time
 	Variant   string
+}
+
+type AssetDeletionRecord struct {
+	AssetID       pgtype.UUID
+	TenantID      pgtype.UUID
+	Reason        string
+	RequestedAt   time.Time
+	CompletedAt   time.Time
+	KeyID         string
+	PayloadSha256 []byte
+	Envelope      []byte
+	CreatedAt     time.Time
 }
 
 type AssetManifest struct {
@@ -235,10 +251,11 @@ type PlaybackSetting struct {
 }
 
 type PrivacySetting struct {
-	TenantID       pgtype.UUID
-	StoreIp        bool
-	StoreUserAgent bool
-	UpdatedAt      time.Time
+	TenantID        pgtype.UUID
+	StoreIp         bool
+	StoreUserAgent  bool
+	UpdatedAt       time.Time
+	AssetTtlSeconds *int32
 }
 
 type SigningKey struct {

@@ -15,22 +15,23 @@ func TestAssetStateMachineIsExhaustive(t *testing.T) {
 	allowed := map[[2]AssetState]bool{
 		{AssetCreated, AssetUploading}:    true,
 		{AssetCreated, AssetFailed}:       true,
-		{AssetCreated, AssetDeleted}:      true,
+		{AssetCreated, AssetDeleting}:     true,
 		{AssetUploading, AssetCommitted}:  true,
 		{AssetUploading, AssetFailed}:     true,
-		{AssetUploading, AssetDeleted}:    true,
+		{AssetUploading, AssetDeleting}:   true,
 		{AssetCommitted, AssetProcessing}: true,
 		{AssetCommitted, AssetFailed}:     true,
-		{AssetCommitted, AssetDeleted}:    true,
+		{AssetCommitted, AssetDeleting}:   true,
 		{AssetProcessing, AssetReady}:     true,
 		{AssetProcessing, AssetFailed}:    true,
-		{AssetProcessing, AssetDeleted}:   true,
-		{AssetReady, AssetDeleted}:        true,
-		{AssetFailed, AssetDeleted}:       true,
+		{AssetProcessing, AssetDeleting}:  true,
+		{AssetReady, AssetDeleting}:       true,
+		{AssetFailed, AssetDeleting}:      true,
+		{AssetDeleting, AssetDeleted}:     true,
 	}
 	states := AssetStates()
-	if len(states) != 7 {
-		t.Fatalf("AssetStates() has %d states, want 7", len(states))
+	if len(states) != 8 {
+		t.Fatalf("AssetStates() has %d states, want 8", len(states))
 	}
 	seen := map[AssetState]bool{}
 	for _, s := range states {

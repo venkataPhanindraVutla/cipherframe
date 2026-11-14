@@ -23,13 +23,17 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/hls"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/deletion"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/verify/offline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media/testmedia"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
@@ -336,6 +340,73 @@ func TestMaskEndToEnd(t *testing.T) {
 	}
 	if doc.Source.SHA256 != hex.EncodeToString(sourceSum[:]) {
 		t.Error("the re-signed manifest lost the source hash")
+	}
+
+	// Deleting the finished asset (M6) removes both variants, the source and both content keys, and
+	// leaves a signed record that counts them per variant.
+	purger, err := purge.New(purge.Deps{
+		Pool: r.pool, Source: r.buckets.Source, Delivery: r.buckets.Delivery, Keys: r.mgr, Signer: r.signer,
+		Log: slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.repos.RequestAssetDeletion(ctx, a.TenantID, a.ID, db.DeletionRequested, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := purger.Handle(ctx, jobs.Job[purge.DeleteArgs]{
+		Args: purge.DeleteArgs{TenantID: a.TenantID, AssetID: a.ID, Reason: db.DeletionRequested}, Attempt: 1, MaxAttempts: 8,
+	}); err != nil {
+		t.Fatalf("asset.delete: %v", err)
+	}
+	for _, p := range keys.AssetPrefixes(a.TenantID, a.ID) {
+		store := storage.Store(r.buckets.Delivery)
+		if p.Bucket == keys.Source {
+			store = r.buckets.Source
+		}
+		for o, err := range storage.ListAll(ctx, store, p.Prefix) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Errorf("%s object left after the purge: %s", p.Bucket, o.Key)
+		}
+	}
+	for _, v := range []keys.Variant{keys.Original, keys.Masked} {
+		if _, err := r.mgr.Get(ctx, a.TenantID, a.ID, v); err == nil {
+			t.Errorf("the %s content key survived the purge", v)
+		}
+	}
+	now := time.Now().UTC()
+	sid, err := id.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.repos.InsertPlaybackSession(ctx, db.NewPlaybackSession{
+		ID: sid, TenantID: a.TenantID, ClientID: r.client.ID, AssetID: a.ID, Variant: keys.Masked, ViewerID: "v", Now: now, ExpiresAt: now.Add(time.Hour),
+	}); !errors.Is(err, db.ErrStateChanged) {
+		t.Errorf("a playback session for the deleted asset: %v", err)
+	}
+	rec, err := r.repos.GetDeletionRecord(ctx, a.TenantID, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keySet := offline.KeySet{}
+	for _, k := range pubs {
+		keySet[k.KeyID] = k.PublicKey
+	}
+	signed, err := offline.OpenDeletion(rec.Envelope, keySet)
+	if err != nil {
+		t.Fatalf("the deletion record does not verify offline: %v", err)
+	}
+	counts := map[string]int64{}
+	for _, o := range signed.Record.Objects {
+		counts[o.Bucket+"/"+o.Variant] += o.Count
+	}
+	if counts["delivery/original"] != int64(len(before)) || counts["delivery/masked"] != int64(len(masked)) || counts["source/"] != 1 {
+		t.Errorf("record counts %v, want %d original, %d masked and one source object", counts, len(before), len(masked))
+	}
+	if signed.Record.ContentKeys.Destroyed != 2 || signed.Record.ManifestRoot != doc.TopLevel.Root || signed.Record.Reason != deletion.ReasonRequested {
+		t.Errorf("record = %+v", signed.Record)
 	}
 }
 

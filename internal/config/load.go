@@ -108,6 +108,7 @@ func (l *loader) load() *Config {
 	c.KMS = l.kms(prod)
 	c.Media = l.media()
 	c.TSA = l.tsa(prod)
+	c.Retention = l.retention()
 	return c
 }
 

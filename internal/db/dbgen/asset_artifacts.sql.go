@@ -11,6 +11,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteAssetArtifacts = `-- name: DeleteAssetArtifacts :execrows
+DELETE FROM asset_artifacts WHERE asset_id = $1
+`
+
+// Every registry row of the asset (the purge: the objects are gone, so are their rows).
+func (q *Queries) DeleteAssetArtifacts(ctx context.Context, assetID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAssetArtifacts, assetID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteAssetHLSArtifacts = `-- name: DeleteAssetHLSArtifacts :execrows
 DELETE FROM asset_artifacts
 WHERE asset_id = $1::uuid AND variant = $2::text

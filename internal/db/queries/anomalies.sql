@@ -50,3 +50,10 @@ WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND (at, id) < (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::uuid)
 ORDER BY at DESC, id DESC
 LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: DeletePlaybackEventsBefore :execrows
+-- Retention (M6-4): one bounded batch of anomaly events older than the cutoff.
+DELETE FROM playback_events
+WHERE id IN (
+    SELECT e.id FROM playback_events e WHERE e.at < sqlc.arg(cutoff)::timestamptz ORDER BY e.at LIMIT sqlc.arg(batch)::integer
+);

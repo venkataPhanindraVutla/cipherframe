@@ -29,6 +29,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
@@ -180,7 +181,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		}
 	}
 	if Has(opts.Roles, RoleAPI) {
-		assets, err := newAssetService(pool, buckets, cfg, log)
+		assets, requester, err := newAssetService(pool, buckets, cfg, log)
 		if err != nil {
 			cleanup()
 			return err
@@ -202,6 +203,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Signing:     signer,
 			KeySet:      keySet,
 			Repos:       repos,
+			Purge:       requester,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
@@ -235,7 +237,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		services = append(services, workerService{w: w})
+		ret, err := newRetention(pool, cfg, log)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		services = append(services, workerService{w: w}, ret)
 	}
 
 	log.InfoContext(ctx, "serving", slog.Any("roles", opts.Roles))
@@ -247,30 +254,38 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 // lockPoolConns caps the connections that hold tus upload locks (one per active upload request).
 const lockPoolConns = 16
 
-// newAssetService builds the asset service of the api role. The api role needs the edge's public
-// URL to tell clients where to upload; it refuses to start without it.
-func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.Config, log *slog.Logger) (*uploads.Service, error) {
+// newAssetService builds the asset service of the api role, and the requester that starts
+// deletions. The api role needs the edge's public URL to tell clients where to upload; it refuses
+// to start without it.
+func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.Config, log *slog.Logger) (*uploads.Service, *purge.Requester, error) {
 	if cfg.Uploads.EdgePublicURL == "" {
-		return nil, fmt.Errorf("%s is required when the api role runs", config.EnvEdgePublicURL)
+		return nil, nil, fmt.Errorf("%s is required when the api role runs", config.EnvEdgePublicURL)
 	}
-	// An insert-only queue: the api role enqueues asset.process, the worker role handles it.
-	// The registry has no handlers, so it is told which queue asset.process runs on.
+	// An insert-only queue: the api role enqueues asset.process and asset.delete, the worker role
+	// handles them. The registry has no handlers, so it is told which queue each runs on.
 	reg := jobs.NewRegistry()
 	if err := pipeline.Declare(reg); err != nil {
-		return nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, fmt.Errorf("assets: %w", err)
+	}
+	if err := purge.Declare(reg); err != nil {
+		return nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	queue, err := jobs.NewQueue(pool, reg, jobs.Config{Logger: log})
 	if err != nil {
-		return nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	svc, err := uploads.NewService(uploads.Deps{
 		Pool: pool, Source: buckets.Source, Queue: queue, Limits: uploads.LimitsFrom(cfg.Uploads),
 		EdgeURL: cfg.Uploads.EdgePublicURL, Log: log,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, fmt.Errorf("assets: %w", err)
 	}
-	return svc, nil
+	requester, err := purge.NewRequester(pool, queue)
+	if err != nil {
+		return nil, nil, fmt.Errorf("assets: %w", err)
+	}
+	return svc, requester, nil
 }
 
 // newPlaybackService builds the playback service of the api role: it signs playback tokens with
@@ -410,6 +425,12 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 	}
 	if proc != nil {
 		if err := registerProcessing(reg, pool, inserter, contentKeys, proc, log); err != nil {
+			return nil, fmt.Errorf("worker: %w", err)
+		}
+		// Verified deletion needs both buckets, which only a process with processing has.
+		if err := purge.Register(reg, purge.Deps{
+			Pool: pool, Source: proc.Buckets.Source, Delivery: proc.Buckets.Delivery, Keys: contentKeys, Signer: proc.Signer, Log: log,
+		}); err != nil {
 			return nil, fmt.Errorf("worker: %w", err)
 		}
 	}

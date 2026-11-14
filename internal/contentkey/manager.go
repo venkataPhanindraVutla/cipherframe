@@ -149,14 +149,17 @@ func (m *Manager) Get(ctx context.Context, tenant id.TenantID, asset id.AssetID,
 // row was deleted. Crypto-shredding (M6) calls it: the row is destroyed, not flagged, so every
 // copy of the ciphertext is unreadable afterwards. Another tenant's asset deletes nothing.
 func (m *Manager) Destroy(ctx context.Context, tx *db.Repos, tenant id.TenantID, asset id.AssetID) (bool, error) {
+	destroyed, err := m.DestroyAll(ctx, tx, tenant, asset)
+	return len(destroyed) > 0, err
+}
+
+// DestroyAll is Destroy that also returns which keys it destroyed (IDs and variants, never key
+// material), for the signed deletion record (M6-3).
+func (m *Manager) DestroyAll(ctx context.Context, tx *db.Repos, tenant id.TenantID, asset id.AssetID) ([]db.DestroyedKey, error) {
 	if tx == nil {
-		return false, errs.New(errs.InvalidRequest, "a transaction is required")
+		return nil, errs.New(errs.InvalidRequest, "a transaction is required")
 	}
-	n, err := tx.DeleteContentKey(ctx, tenant, asset)
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
+	return tx.DestroyContentKeys(ctx, tenant, asset)
 }
 
 // logUnwrapFailure records identifiers, never values. A failed authentication is an integrity

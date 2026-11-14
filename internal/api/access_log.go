@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -145,7 +146,7 @@ func (s *server) GetPlaybackSessionAccessLog(ctx context.Context, req gen.GetPla
 }
 
 func privacyOut(s db.PrivacySettings) gen.PrivacySettings {
-	out := gen.PrivacySettings{StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent}
+	out := gen.PrivacySettings{StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent, AssetTtlSeconds: s.AssetTTLSeconds}
 	if !s.UpdatedAt.IsZero() {
 		t := s.UpdatedAt
 		out.UpdatedAt = &t
@@ -193,7 +194,14 @@ func (s *server) UpdatePrivacySettings(ctx context.Context, req gen.UpdatePrivac
 	if len(missing) > 0 {
 		return nil, errs.Invalid("The privacy settings are incomplete.", missing)
 	}
-	set, err := svc.PutPrivacy(ctx, p.TenantID, actor, db.PrivacySettings{StoreIP: *req.Body.StoreIp, StoreUserAgent: *req.Body.StoreUserAgent})
+	if t := req.Body.AssetTtlSeconds; t != nil && (*t < db.MinAssetTTLSeconds || *t > db.MaxAssetTTLSeconds) {
+		return nil, errs.Invalid("The privacy settings are invalid.", []errs.FieldError{
+			{Field: "asset_ttl_seconds", Message: fmt.Sprintf("must be a whole number of seconds from %d to %d, or left out", db.MinAssetTTLSeconds, db.MaxAssetTTLSeconds)},
+		})
+	}
+	set, err := svc.PutPrivacy(ctx, p.TenantID, actor, db.PrivacySettings{
+		StoreIP: *req.Body.StoreIp, StoreUserAgent: *req.Body.StoreUserAgent, AssetTTLSeconds: req.Body.AssetTtlSeconds,
+	})
 	if err != nil {
 		return nil, err
 	}

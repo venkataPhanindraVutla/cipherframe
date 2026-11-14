@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -34,6 +37,7 @@ func assetOut(a db.Asset) gen.Asset {
 		ReadyAt:             a.ReadyAt,
 		FailedAt:            a.FailedAt,
 		MaskFaces:           a.MaskFaces,
+		ExpiresAt:           a.ExpiresAt,
 	}
 	if a.MaskFaces {
 		m := gen.Masking{State: gen.MaskingStatePending, FacesDetected: a.FacesDetected}
@@ -49,6 +53,11 @@ func assetOut(a db.Asset) gen.Asset {
 	if a.FailureCode != "" {
 		fc := a.FailureCode
 		out.FailureCode = &fc
+	}
+	if a.DeletionRequestedAt != nil {
+		out.Deletion = &gen.Deletion{
+			Reason: gen.DeletionReason(a.DeletionReason), RequestedAt: *a.DeletionRequestedAt, CompletedAt: a.DeletedAt,
+		}
 	}
 	return out
 }
@@ -86,6 +95,7 @@ func (s *server) CreateAsset(ctx context.Context, req gen.CreateAssetRequestObje
 	if req.Body.MaskFaces != nil {
 		in.MaskFaces = *req.Body.MaskFaces
 	}
+	in.ExpiresAt, in.TTLSeconds = req.Body.ExpiresAt, req.Body.TtlSeconds
 	created, err := svc.Create(ctx, in)
 	if err != nil {
 		return nil, err
@@ -155,7 +165,7 @@ func (s *server) GetAsset(ctx context.Context, req gen.GetAssetRequestObject) (g
 	if err != nil {
 		return nil, err
 	}
-	a, err := svc.Get(ctx, p.TenantID, aid)
+	a, err := svc.View(ctx, p.TenantID, aid)
 	if err != nil {
 		return nil, err
 	}
@@ -202,4 +212,91 @@ func (s *server) AbortAsset(ctx context.Context, req gen.AbortAssetRequestObject
 		return nil, err
 	}
 	return gen.AbortAsset200JSONResponse{Body: assetOut(a), Headers: gen.AbortAsset200ResponseHeaders{XRequestId: requestID(ctx)}}, nil
+}
+
+// DeleteAsset starts the verified deletion of an asset: it is marked deleting and the purge job is
+// queued in one transaction. Repeating the call is harmless.
+func (s *server) DeleteAsset(ctx context.Context, req gen.DeleteAssetRequestObject) (gen.DeleteAssetResponseObject, error) {
+	p, actor, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.purge == nil {
+		return nil, errs.New(errs.DependencyUnavailable, "Deletion is not available.")
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	a, err := s.purge.Request(ctx, p.TenantID, aid, db.DeletionRequested, &actor)
+	if err != nil {
+		return nil, err
+	}
+	return gen.DeleteAsset202JSONResponse{Body: assetOut(a), Headers: gen.DeleteAsset202ResponseHeaders{XRequestId: requestID(ctx)}}, nil
+}
+
+// UpdateAsset sets or clears the asset's time-to-live. The body is read raw so that an explicit
+// null (clear the expiry) is told apart from a member that is absent.
+func (s *server) UpdateAsset(ctx context.Context, req gen.UpdateAssetRequestObject) (gen.UpdateAssetResponseObject, error) {
+	p, actor, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	svc, err := s.service()
+	if err != nil {
+		return nil, err
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	if req.Body == nil {
+		return nil, errs.New(errs.InvalidRequest, "A request body is required.")
+	}
+	change, err := retentionChange(*req.Body)
+	if err != nil {
+		return nil, err
+	}
+	a, err := svc.SetRetention(ctx, p.TenantID, actor, aid, change)
+	if err != nil {
+		return nil, err
+	}
+	return gen.UpdateAsset200JSONResponse{Body: assetOut(a), Headers: gen.UpdateAsset200ResponseHeaders{XRequestId: requestID(ctx)}}, nil
+}
+
+// retentionChange reads the one member of an UpdateAsset body: expires_at or ttl_seconds, each a
+// value or null (clear). Anything else (no member, two members, another member, a value of the
+// wrong type) is invalid_request.
+func retentionChange(body map[string]json.RawMessage) (uploads.RetentionChange, error) {
+	invalid := func(field, msg string) (uploads.RetentionChange, error) {
+		return uploads.RetentionChange{}, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: field, Message: msg}})
+	}
+	if len(body) != 1 {
+		return invalid("expires_at", "give exactly one of expires_at and ttl_seconds")
+	}
+	for name, raw := range body {
+		isNull := bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+		switch name {
+		case "expires_at":
+			if isNull {
+				return uploads.RetentionChange{Clear: true}, nil
+			}
+			var t time.Time
+			if err := json.Unmarshal(raw, &t); err != nil {
+				return invalid(name, "must be a date-time or null")
+			}
+			return uploads.RetentionChange{ExpiresAt: &t}, nil
+		case "ttl_seconds":
+			if isNull {
+				return uploads.RetentionChange{Clear: true}, nil
+			}
+			var n int
+			if err := json.Unmarshal(raw, &n); err != nil {
+				return invalid(name, "must be a whole number of seconds or null")
+			}
+			return uploads.RetentionChange{TTLSeconds: &n}, nil
+		}
+		return invalid(name, "is not a member of the request")
+	}
+	return uploads.RetentionChange{}, nil // unreachable: the body has one member
 }

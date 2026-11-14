@@ -360,10 +360,29 @@ func TestUploadLifecycleAndSourceIsNeverAddressable(t *testing.T) {
 		t.Fatalf("list returned %v, want %v (oldest first)", seen, want)
 	}
 
+	// ---- retention and deletion (M6): set a time-to-live, delete, and read the tombstone.
+	rt := e.create(key, mpSize, "multipart")
+	rtAsset := e.dbAsset(rt.assetID)
+	m, _ = e.call(key, "PATCH", "/v1/assets/"+rt.assetID, map[string]any{"ttl_seconds": 3600}, 200)
+	if m["expires_at"] == nil {
+		t.Fatalf("PATCH did not set expires_at: %v", m)
+	}
+	m, _ = e.call(key, "DELETE", "/v1/assets/"+rt.assetID, nil, 202)
+	if m["state"] != "deleting" {
+		t.Fatalf("DELETE response: %v", m)
+	}
+	m, _ = e.call(key, "GET", "/v1/assets/"+rt.assetID, nil, 200)
+	if m["state"] != "deleting" || m["deletion"].(map[string]any)["reason"] != "requested" {
+		t.Fatalf("GET of a deleting asset: %v", m)
+	}
+	e.edgeCall(rt.token, "GET", "/v1/uploads/multipart/"+rt.assetID+"/parts", nil, 401) // uploads stop with the deletion
+	e.call(key, "POST", "/v1/assets/"+rt.assetID+"/commit", nil, 409)
+	e.call(key, "PATCH", "/v1/assets/"+rt.assetID, map[string]any{"ttl_seconds": 3600}, 409)
+
 	e.assertEveryUploadOperationExercised()
 
 	// ---- the scan.
-	e.assertSourceNeverAddressable([]db.Asset{mpAsset, tuAsset, abAsset, ab2Asset}, []upload{mp, tu, ab, ab2})
+	e.assertSourceNeverAddressable([]db.Asset{mpAsset, tuAsset, abAsset, ab2Asset, rtAsset}, []upload{mp, tu, ab, ab2, rt})
 }
 
 func (e *upEnv) sourceObjectByKey(key string) string {

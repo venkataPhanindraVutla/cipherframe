@@ -12,11 +12,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteAccessLogBefore = `-- name: DeleteAccessLogBefore :execrows
+DELETE FROM playback_access_log
+WHERE id IN (
+    SELECT l.id FROM playback_access_log l WHERE l.at < $1::timestamptz ORDER BY l.at LIMIT $2::integer
+)
+`
+
+type DeleteAccessLogBeforeParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
+
+// Retention (M6-4): one bounded batch of rows older than the cutoff, in the partitions that were
+// not dropped whole (the one the cutoff falls in). The id comes from one sequence, so it picks
+// exactly the rows chosen.
+func (q *Queries) DeleteAccessLogBefore(ctx context.Context, arg DeleteAccessLogBeforeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAccessLogBefore, arg.Cutoff, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dropAccessLogPartitionsBefore = `-- name: DropAccessLogPartitionsBefore :many
 SELECT playback_access_log_drop_partitions_before($1::date)::text
 `
 
-// Not called by the service yet (retention is M6-4); see the function's comment.
+// Retention (M6-4): whole monthly partitions that lie entirely before the cutoff.
 func (q *Queries) DropAccessLogPartitionsBefore(ctx context.Context, before pgtype.Date) ([]string, error) {
 	rows, err := q.db.Query(ctx, dropAccessLogPartitionsBefore, before)
 	if err != nil {
@@ -49,7 +72,7 @@ func (q *Queries) EnsureAccessLogPartition(ctx context.Context, month pgtype.Dat
 }
 
 const getPrivacySettings = `-- name: GetPrivacySettings :one
-SELECT tenant_id, store_ip, store_user_agent, updated_at FROM privacy_settings WHERE tenant_id = $1
+SELECT tenant_id, store_ip, store_user_agent, updated_at, asset_ttl_seconds FROM privacy_settings WHERE tenant_id = $1
 `
 
 func (q *Queries) GetPrivacySettings(ctx context.Context, tenantID pgtype.UUID) (PrivacySetting, error) {
@@ -60,6 +83,7 @@ func (q *Queries) GetPrivacySettings(ctx context.Context, tenantID pgtype.UUID) 
 		&i.StoreIp,
 		&i.StoreUserAgent,
 		&i.UpdatedAt,
+		&i.AssetTtlSeconds,
 	)
 	return i, err
 }
@@ -265,18 +289,21 @@ func (q *Queries) SessionViewers(ctx context.Context, hashes [][]byte) ([]Sessio
 }
 
 const upsertPrivacySettings = `-- name: UpsertPrivacySettings :one
-INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, updated_at)
-VALUES ($1::uuid, $2::boolean, $3::boolean, $4::timestamptz)
+INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, asset_ttl_seconds, updated_at)
+VALUES ($1::uuid, $2::boolean, $3::boolean,
+        $4::integer, $5::timestamptz)
 ON CONFLICT (tenant_id) DO UPDATE SET
-    store_ip = EXCLUDED.store_ip, store_user_agent = EXCLUDED.store_user_agent, updated_at = EXCLUDED.updated_at
-RETURNING tenant_id, store_ip, store_user_agent, updated_at
+    store_ip = EXCLUDED.store_ip, store_user_agent = EXCLUDED.store_user_agent,
+    asset_ttl_seconds = EXCLUDED.asset_ttl_seconds, updated_at = EXCLUDED.updated_at
+RETURNING tenant_id, store_ip, store_user_agent, updated_at, asset_ttl_seconds
 `
 
 type UpsertPrivacySettingsParams struct {
-	TenantID       pgtype.UUID
-	StoreIp        bool
-	StoreUserAgent bool
-	At             time.Time
+	TenantID        pgtype.UUID
+	StoreIp         bool
+	StoreUserAgent  bool
+	AssetTtlSeconds *int32
+	At              time.Time
 }
 
 func (q *Queries) UpsertPrivacySettings(ctx context.Context, arg UpsertPrivacySettingsParams) (PrivacySetting, error) {
@@ -284,6 +311,7 @@ func (q *Queries) UpsertPrivacySettings(ctx context.Context, arg UpsertPrivacySe
 		arg.TenantID,
 		arg.StoreIp,
 		arg.StoreUserAgent,
+		arg.AssetTtlSeconds,
 		arg.At,
 	)
 	var i PrivacySetting
@@ -292,6 +320,7 @@ func (q *Queries) UpsertPrivacySettings(ctx context.Context, arg UpsertPrivacySe
 		&i.StoreIp,
 		&i.StoreUserAgent,
 		&i.UpdatedAt,
+		&i.AssetTtlSeconds,
 	)
 	return i, err
 }
