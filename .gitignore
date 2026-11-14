@@ -30,3 +30,4 @@ coverage.*
 
 # Output of build/test-media.sh (the FFmpeg test binaries)
 /out/
+/cmd/cipherframe/cipherframe

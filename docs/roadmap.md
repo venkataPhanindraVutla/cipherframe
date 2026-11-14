@@ -38,13 +38,14 @@ Last updated: 2026-11-14.
   asset ([integrity.md](integrity.md), [ADR 0033](adr/0033-integrity-design.md))
 - [x] M5-2 Signing keys with key IDs and rotation, published at `/.well-known/cipherframe-keys.json`
 - [x] M5-3 Verify API and per-segment proof endpoint ([ADR 0039](adr/0039-verify-api-proofs-and-offline-verifier.md))
-- [ ] M5-4 Public-key-only verifier (library and CLI) with the outcomes "ours", "modified version of
-  ours" and "cannot say"
+- [x] M5-4 Public-key-only verifier (library and CLI) with the outcomes "ours", "modified version of
+  ours" and "cannot say" (`cipherframe verify`, [integrity.md](integrity.md#verifying))
 - [ ] M5-5 Optional RFC 3161 anchoring ([ADR 0034](adr/0034-timestamp-authority-recommendations.md))
 
-Acceptance, still to show: flipping one byte fails and names the exact object; verification works
-without any signing secret; rotated keys still verify old records; a timestamp token round trip
-against a local TSA.
+Acceptance shown by M5-4 tests: flipping one byte reports `modified` with the exact path;
+verification works with public keys only; a rotated and retired key still verifies old records;
+unknown key, malformed envelope, unknown path and an unreachable `--keys-url` are "cannot say",
+never "modified". Still to show (M5-5): a timestamp token round trip against a local TSA.
 
 ### Face masking
 
