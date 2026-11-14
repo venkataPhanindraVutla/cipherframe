@@ -233,6 +233,19 @@ func TestPartitionMaintenanceFromALimitedRole(t *testing.T) {
 
 	now := time.Now().UTC()
 	old := now.AddDate(0, -6, 0)
+	// Not every role that can connect may run the functions (they run as their owner)...
+	if _, err := lr.EnsureAccessLogPartitions(ctx, old, 1); err == nil {
+		t.Fatalf("%s ran the partition function without being granted EXECUTE", role)
+	}
+	if _, err := limited.Exec(ctx, `SELECT playback_access_log_drop_partitions_before(current_date)`); err == nil {
+		t.Fatalf("%s ran the drop function without being granted EXECUTE", role)
+	}
+	// ... only a role the operator granted them to, as a deployment with a separate service role does.
+	for _, fn := range []string{"playback_access_log_ensure_partition(date)", "playback_access_log_drop_partitions_before(date)"} {
+		if _, err := r.pool.Exec(ctx, fmt.Sprintf(`GRANT EXECUTE ON FUNCTION %s TO %s`, fn, role)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// A new partition is created by a role that could not do it itself...
 	created, err := lr.EnsureAccessLogPartitions(ctx, old, 1)
 	if err != nil || created != 2 {

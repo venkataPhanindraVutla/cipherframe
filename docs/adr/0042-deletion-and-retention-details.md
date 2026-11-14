@@ -74,9 +74,10 @@ This records each, with the conservative option taken.
   the window.
 - The two access-log partition functions become `SECURITY DEFINER` with the migrating session's
   `search_path`, so any role the service connects as can create and drop partitions (the follow-up
-  "make access-log partition creation work from any role"). `EXECUTE` stays with `PUBLIC`: the functions
-  only touch `playback_access_log_pYYYYMM` tables and refuse a cutoff in the future, and the service role
-  is not known at migration time.
+  "make access-log partition creation work from any role"). `EXECUTE` is revoked from `PUBLIC`, because
+  any role that could call the drop function could erase the access trail. The owner, which is the
+  service role when the service runs its own migrations, keeps it. A deployment whose service connects
+  as a role other than the one that ran the migrations grants `EXECUTE` on both functions to that role.
 
 **Not covered, flagged.** `audit_events` and `playback_sessions` (which holds the viewer ID, no address)
 have no retention window. ADR 0040 names neither; they should get one before v1.0.0.

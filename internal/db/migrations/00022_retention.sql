@@ -25,8 +25,15 @@ CREATE INDEX playback_events_at_idx ON playback_events (at);
 
 ALTER FUNCTION playback_access_log_ensure_partition(date) SECURITY DEFINER SET search_path FROM CURRENT;
 ALTER FUNCTION playback_access_log_drop_partitions_before(date) SECURITY DEFINER SET search_path FROM CURRENT;
+-- Running as the owner, they must not be callable by every role that can connect: dropping past
+-- partitions would let any role erase the access trail. The owner (the service, which runs these
+-- migrations) keeps EXECUTE; a deployment whose service connects as another role grants it there.
+REVOKE EXECUTE ON FUNCTION playback_access_log_ensure_partition(date) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION playback_access_log_drop_partitions_before(date) FROM PUBLIC;
 
 -- +goose Down
+GRANT EXECUTE ON FUNCTION playback_access_log_ensure_partition(date) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION playback_access_log_drop_partitions_before(date) TO PUBLIC;
 ALTER FUNCTION playback_access_log_drop_partitions_before(date) SECURITY INVOKER RESET search_path;
 ALTER FUNCTION playback_access_log_ensure_partition(date) SECURITY INVOKER RESET search_path;
 DROP INDEX playback_events_at_idx;
