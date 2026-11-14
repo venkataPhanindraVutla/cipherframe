@@ -96,4 +96,7 @@ or fail closed.
   so.
 - Not covered: voice disguise, blurring named regions (ID cards, name tiles), or choosing which faces
   to keep. Each would be a new decision.
+- The shipped FFmpeg gains the `rawvideo` demuxer and decoder (amending ADR 0024's list) so the
+  masker can pipe frames in. FFmpeg never probes input as raw video, so an uploaded file is not
+  read through it; it is used only when `-f rawvideo` is given.
 - Deletion (M6) must purge both variants and destroy both content keys.
