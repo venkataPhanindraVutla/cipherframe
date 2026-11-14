@@ -40,6 +40,7 @@ is the hash of the ciphertext.
 | `artifacts` | The master playlist (`kind` `master`) and each media playlist (`kind` `playlist`, with its `rendition`): `kind`, `path`, `sha256`, `size`. |
 | `top_level` | `order`, the leaf labels of the top-level tree, and `root`. |
 | `source` | `sha256` and `size` of the uploaded original. |
+| `masked` | Only for an asset with a face-masked variant (ADR 0036); see "The masked variant". |
 
 Trees. Rendition `merkle_root`: leaves are the init segment and then the media segments in
 playlist order, each leaf's data being the artifact's 32-byte SHA-256. Top-level `root`: leaves in
@@ -80,6 +81,34 @@ signed bytes are the canonical form without whitespace):
   "source": {"sha256": "2200...22", "size": 52428800}
 }
 ```
+
+### The masked variant
+
+An asset created with `mask_faces` is first ready with the original variant and a manifest as above.
+When its masked variant is published (`asset.mask`), the manifest is built again with one more member,
+`masked`, and signed again; the new envelope replaces the old one in the same transaction that registers
+the masked objects and sets `masking_state` to `ready`. The schema stays `cipherframe.manifest/v1`: a
+verifier that does not know `masked` still checks the signature and the original variant, whose members
+are carried over exactly as they were signed.
+
+`masked` has the same shapes as the top-level members, with every `path` relative to the masked
+variant's HLS prefix (`masked/hls/`, the original's being `hls/`), and its own trees. Paths repeat
+between the variants (`720p/seg-0.m4s` exists in both), so a hash is always checked against the
+prefix of the section it appears in. Segments of the two variants are encrypted under different content
+keys, so their hashes differ even where the picture does not.
+
+| `masked` member | Content |
+| --- | --- |
+| `created_at` | When the masked variant was published. |
+| `faces_detected` | Frames in which the masker found at least one face (held boxes do not count). |
+| `frames` | Frames the masker wrote. |
+| `rungs` | The encoder setting of each masked rendition (the ladder is chosen from the masked file). |
+| `renditions`, `artifacts`, `top_level` | As at the top level, for the masked variant. |
+
+The `top_root` column stays the original variant's top-level root; the masked variant's is
+`masked.top_level.root` in the envelope. The encoder block at the top level describes the original
+variant; the masked file goes through the same code and the same encoder settings. An asset whose
+masking failed, or is still pending, has no `masked` member and keeps its first manifest.
 
 The `asset_manifests` row also records the `key_id` of the signer, the SHA-256 of the payload and
 the top-level root as separate columns, so a lookup does not need to parse the envelope. A signer

@@ -35,6 +35,13 @@ x-cipherframe-build: &cipherframe-build
   context: ../..
   dockerfile: build/Dockerfile
 
+# The worker and the masker share one work directory (ADR 0036): the plaintext video the masker reads
+# and writes stays on this volume, never in storage. Both run as the same non-root UID, and the
+# volume is owned by it with mode 0700, so no other user can reach it.
+x-work-dir: &work-dir
+  CIPHERFRAME_WORK_DIR: /work
+x-work-user: &work-user "65532:65532"
+
 services:
   postgres:
     image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
@@ -117,7 +124,11 @@ services:
       dockerfile: build/worker.Dockerfile
     profiles: ["worker"]
     command: ["--role=worker"]
-    environment: *cipherframe-env
+    user: *work-user
+    environment:
+      <<: [*cipherframe-env, *work-dir]
+    volumes:
+      - work:/work
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,7 +136,62 @@ services:
         condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
+      work-init:
+        condition: service_completed_successfully
+
+  # One-shot. A new named volume is owned by root; hand it to the UID the worker and the masker run as.
+  work-init:
+    image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    profiles: ["worker"]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c", "chown 65532:65532 /work && chmod 0700 /work"]
+    volumes:
+      - work:/work
+    restart: "no"
+
+  # One-shot. Creates the masker's database role, limited to external_tasks (spec/jobs/README.md).
+  # It is a script, not a migration: a role is cluster-wide and carries a password, which belongs to
+  # the deployment (here a public placeholder), not to the schema.
+  masker-db-init:
+    image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    profiles: ["worker"]
+    entrypoint:
+      - psql
+      - postgres://cipherframe:dev-placeholder-postgres@postgres:5432/cipherframe
+      - -v
+      - ON_ERROR_STOP=1
+      - -f
+      - /masker-role.sql
+    volumes:
+      - ./masker-role.sql:/masker-role.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # The face masker (ADR 0036): claims media.mask_faces tasks, blurs faces in files of the shared work
+  # directory. Its FFmpeg is the worker image's, so the worker image is built first.
+  masker:
+    image: cipherframe-masker:dev
+    build:
+      context: ../../ml
+      dockerfile: Dockerfile
+      additional_contexts:
+        cipherframe-worker: service:worker
+    profiles: ["worker"]
+    user: *work-user
+    environment:
+      <<: *work-dir
+      CIPHERFRAME_ML_DATABASE_URL: postgres://cipherframe_masker:dev-placeholder-masker@postgres:5432/cipherframe?sslmode=disable
+    volumes:
+      - work:/work
+    depends_on:
+      masker-db-init:
+        condition: service_completed_successfully
+      work-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:
   seaweedfs-data:
+  work:

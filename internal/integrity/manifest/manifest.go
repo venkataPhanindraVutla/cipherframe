@@ -37,6 +37,21 @@ type Manifest struct {
 	Artifacts       []Artifact  `json:"artifacts"`
 	TopLevel        TopLevel    `json:"top_level"`
 	Source          Source      `json:"source"`
+	// Masked is present once the asset's face-masked variant is published (ADR 0036).
+	Masked *Masked `json:"masked,omitempty"`
+}
+
+// Masked describes the masked variant: the same shapes as the original's members, with every path
+// relative to the masked variant's own HLS prefix. Rungs are recorded because the ladder is picked
+// from the masked file, not assumed equal to the original's.
+type Masked struct {
+	CreatedAt     string      `json:"created_at"`
+	FacesDetected int         `json:"faces_detected"`
+	Frames        int         `json:"frames"`
+	Rungs         []Rung      `json:"rungs"`
+	Renditions    []Rendition `json:"renditions"`
+	Artifacts     []Artifact  `json:"artifacts"`
+	TopLevel      TopLevel    `json:"top_level"`
 }
 
 // Encoder records how the renditions were made.
@@ -157,10 +172,31 @@ func Build(in Input) (*Built, error) {
 	}
 	m.Encoder.Rungs = append([]Rung(nil), in.Encoder.Rungs...)
 
+	t := buildTree(in.Renditions, in.Master)
+	m.Renditions, m.Artifacts, m.TopLevel = t.renditions, t.artifacts, t.top
+
+	canonical, err := jcs.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("manifest: encode: %w", err)
+	}
+	return &Built{Manifest: m, Canonical: canonical, TopRoot: t.root}, nil
+}
+
+// tree is the renditions, playlists and top-level tree of one variant.
+type tree struct {
+	renditions []Rendition
+	artifacts  []Artifact
+	top        TopLevel
+	root       merkle.Hash
+}
+
+// buildTree computes one tree per rendition and the top-level tree over them.
+func buildTree(renditions []RenditionInput, master StoredObject) tree {
+	var t tree
 	var topLeaves, playlistLeaves []merkle.Hash
 	var order, playlistOrder []string
 	var playlists []Artifact
-	for _, r := range in.Renditions {
+	for _, r := range renditions {
 		leaves := make([]merkle.Hash, 0, 1+len(r.Segments))
 		leaves = append(leaves, merkle.HashLeaf(r.Init.SHA256[:]))
 		segs := make([]Object, 0, len(r.Segments))
@@ -169,7 +205,7 @@ func Build(in Input) (*Built, error) {
 			segs = append(segs, object(s))
 		}
 		root := merkle.RootOf(leaves)
-		m.Renditions = append(m.Renditions, Rendition{
+		t.renditions = append(t.renditions, Rendition{
 			Name: r.Name, Width: r.Width, Height: r.Height, Bandwidth: r.Bandwidth,
 			SegmentCount: len(r.Segments), Init: object(r.Init), Segments: segs,
 			MerkleRoot: hex.EncodeToString(root[:]),
@@ -184,17 +220,53 @@ func Build(in Input) (*Built, error) {
 		playlistLeaves = append(playlistLeaves, merkle.HashLeaf(r.Playlist.SHA256[:]))
 		playlistOrder = append(playlistOrder, "playlist:"+r.Name)
 	}
-	m.Artifacts = append([]Artifact{{
-		Kind: KindMaster, Path: in.Master.Path, SHA256: hex.EncodeToString(in.Master.SHA256[:]), Size: in.Master.Size,
+	t.artifacts = append([]Artifact{{
+		Kind: KindMaster, Path: master.Path, SHA256: hex.EncodeToString(master.SHA256[:]), Size: master.Size,
 	}}, playlists...)
-	topLeaves = append(topLeaves, merkle.HashLeaf(in.Master.SHA256[:]))
+	topLeaves = append(topLeaves, merkle.HashLeaf(master.SHA256[:]))
 	order = append(order, "master")
 	topLeaves = append(topLeaves, playlistLeaves...)
 	order = append(order, playlistOrder...)
 
-	top := merkle.RootOf(topLeaves)
-	m.TopLevel = TopLevel{Order: order, Root: hex.EncodeToString(top[:])}
+	t.root = merkle.RootOf(topLeaves)
+	t.top = TopLevel{Order: order, Root: hex.EncodeToString(t.root[:])}
+	return t
+}
 
+// MaskedInput is what WithMasked needs about the masked variant. Renditions are in ladder order.
+type MaskedInput struct {
+	CreatedAt     time.Time
+	FacesDetected int
+	Frames        int
+	Rungs         []Rung
+	Renditions    []RenditionInput
+	Master        StoredObject
+}
+
+// WithMasked returns m with its masked section set (replacing an earlier one) and the new canonical
+// encoding, which is what gets signed again. Every other member is carried over unchanged, so the
+// original variant's trees and hashes stay as they were signed. TopRoot stays the original
+// variant's top-level root; the masked variant's is in Manifest.Masked.TopLevel.
+func WithMasked(m Manifest, in MaskedInput) (*Built, error) {
+	if in.CreatedAt.IsZero() || in.FacesDetected < 0 || in.Frames < 0 {
+		return nil, errors.New("manifest: the masked section needs a time and non-negative counts")
+	}
+	if err := validateRenditions(in.Renditions, in.Master); err != nil {
+		return nil, err
+	}
+	var top merkle.Hash
+	raw, err := hex.DecodeString(m.TopLevel.Root)
+	if err != nil || len(raw) != len(top) {
+		return nil, errors.New("manifest: the original top-level root is malformed")
+	}
+	copy(top[:], raw)
+
+	t := buildTree(in.Renditions, in.Master)
+	m.Masked = &Masked{
+		CreatedAt:     in.CreatedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
+		FacesDetected: in.FacesDetected, Frames: in.Frames, Rungs: append([]Rung(nil), in.Rungs...),
+		Renditions: t.renditions, Artifacts: t.artifacts, TopLevel: t.top,
+	}
 	canonical, err := jcs.Marshal(m)
 	if err != nil {
 		return nil, fmt.Errorf("manifest: encode: %w", err)
@@ -214,14 +286,19 @@ func validate(in Input) error {
 		return errors.New("manifest: creation time is required")
 	case in.SourceSize < 1:
 		return errors.New("manifest: source size is required")
-	case len(in.Renditions) == 0:
+	}
+	return validateRenditions(in.Renditions, in.Master)
+}
+
+func validateRenditions(renditions []RenditionInput, master StoredObject) error {
+	if len(renditions) == 0 {
 		return errors.New("manifest: at least one rendition is required")
 	}
-	if err := checkObject("master playlist", in.Master); err != nil {
+	if err := checkObject("master playlist", master); err != nil {
 		return err
 	}
 	seen := map[string]bool{}
-	for _, r := range in.Renditions {
+	for _, r := range renditions {
 		if r.Name == "" || strings.Contains(r.Name, ":") || seen[r.Name] {
 			return errors.New("manifest: rendition names must be unique, non-empty and without ':'")
 		}

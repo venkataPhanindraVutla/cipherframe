@@ -53,7 +53,15 @@ docker build -f build/worker.Dockerfile -t cipherframe-worker .
 docker build -f ml/Dockerfile --build-arg FFMPEG_IMAGE=cipherframe-worker -t cipherframe-ml ml
 ```
 
-Run it next to the Go worker with the same work directory mounted.
+Run it next to the Go worker with the same work directory mounted, as the same non-root UID (the
+worker creates job directories with mode 0700). The Compose stack does this: `docker compose -f
+deploy/compose/compose.yaml --profile worker up --build` starts the worker, the masker and the shared
+`work` volume, and creates the limited database role from `deploy/compose/masker-role.sql`.
+
+The Go side of the hand-off is the `asset.mask` job (`internal/pipeline/mask.go`). See
+[docs/usage.md](../docs/usage.md#face-masking) for how to enable masking and the requirements of
+running the two together, and [docs/architecture.md](../docs/architecture.md#processing-pipeline) for
+the flow.
 
 ## Tests
 

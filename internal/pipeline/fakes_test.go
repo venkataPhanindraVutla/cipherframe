@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,14 +18,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // ---- in-memory object store -------------------------------------------------------------------
@@ -130,6 +134,9 @@ type fakeRepo struct {
 	// that removed one.
 	manifest        *db.AssetManifest
 	manifestDeletes int
+	// maskingCompletes counts CompleteMasking calls; maskingStates is every state SetMasking got.
+	maskingCompletes int
+	maskingStates    []string
 }
 
 func newFakeRepo(a db.Asset) *fakeRepo {
@@ -186,12 +193,49 @@ func (r *fakeRepo) ResetProgress(context.Context, id.TenantID, id.AssetID) error
 	return nil
 }
 
-func (r *fakeRepo) DeleteHLSArtifacts(context.Context, id.AssetID) (int64, error) {
+func (r *fakeRepo) DeleteHLSArtifacts(_ context.Context, _ id.AssetID, variant string) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	n := int64(len(r.artifacts))
-	r.artifacts = map[string]db.Artifact{}
+	var n int64
+	for k, a := range r.artifacts {
+		if a.Variant == variant || (a.Variant == "" && variant == db.VariantOriginal) {
+			delete(r.artifacts, k)
+			n++
+		}
+	}
 	return n, nil
+}
+
+func (r *fakeRepo) GetManifest(context.Context, id.AssetID) (db.AssetManifest, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.manifest == nil {
+		return db.AssetManifest{}, errs.New(errs.NotFound, "no manifest")
+	}
+	return *r.manifest, nil
+}
+
+func (r *fakeRepo) CompleteMasking(_ context.Context, _ id.TenantID, _ id.AssetID, arts []db.Artifact, m db.AssetManifest, faces int, _ time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.asset.State != db.AssetReady {
+		return errs.Wrap(errs.Conflict, "state", db.ErrStateChanged)
+	}
+	for _, a := range arts {
+		r.artifacts[a.Bucket+"/"+a.ObjectKey] = a
+	}
+	r.manifest = &m
+	r.asset.MaskingState, r.asset.FacesDetected = db.MaskingReady, &faces
+	r.maskingCompletes++
+	return nil
+}
+
+func (r *fakeRepo) SetMasking(_ context.Context, _ id.TenantID, _ id.AssetID, state string, faces *int, _ time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.asset.MaskingState, r.asset.FacesDetected = state, faces
+	r.maskingStates = append(r.maskingStates, state)
+	return nil
 }
 
 func (r *fakeRepo) DeleteManifest(context.Context, id.AssetID) (bool, error) {
@@ -237,20 +281,25 @@ func (r *fakeRepo) snapshot() db.Asset {
 // ---- content key source -----------------------------------------------------------------------
 
 type fakeKeys struct {
-	mu      sync.Mutex
-	key     []byte
-	creates int
-	calls   int
-	events  *[]string
+	mu sync.Mutex
+	// key is the original variant's key, maskedKey the masked variant's.
+	key, maskedKey []byte
+	creates        int
+	calls          int
+	events         *[]string
 }
 
-func (k *fakeKeys) Ensure(context.Context, id.TenantID, id.AssetID) (Key, error) {
+func (k *fakeKeys) Ensure(_ context.Context, _ id.TenantID, _ id.AssetID, variant keys.Variant) (Key, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.calls++
-	if k.key == nil {
-		k.key = make([]byte, contentkey.KeyBytes)
-		if _, err := rand.Read(k.key); err != nil {
+	slot := &k.key
+	if variant == keys.Masked {
+		slot = &k.maskedKey
+	}
+	if *slot == nil {
+		*slot = make([]byte, contentkey.KeyBytes)
+		if _, err := rand.Read(*slot); err != nil {
 			return nil, err
 		}
 		k.creates++
@@ -258,7 +307,7 @@ func (k *fakeKeys) Ensure(context.Context, id.TenantID, id.AssetID) (Key, error)
 	if k.events != nil {
 		*k.events = append(*k.events, "key")
 	}
-	return testKey{b: slices.Clone(k.key)}, nil
+	return testKey{b: slices.Clone(*slot)}, nil
 }
 
 type testKey struct{ b []byte }
@@ -418,4 +467,54 @@ func (s *fakeSigner) Sign(_ context.Context, message []byte) (string, []byte, er
 
 func (s *fakeSigner) PublicKeys(context.Context) ([]signing.PublicKey, error) {
 	return []signing.PublicKey{{KeyID: s.keyID, Algorithm: signing.AlgEd25519, PublicKey: s.priv.Public().(ed25519.PublicKey)}}, nil
+}
+
+// ---- hand-off table ---------------------------------------------------------------------------
+
+// fakeTasks plays the hand-off table and the masker: create records the envelope, and get returns
+// whatever the test's script says for that call number (1 for the first look).
+type fakeTasks struct {
+	mu      sync.Mutex
+	created []jobs.Envelope
+	opts    []*jobs.TaskOpts
+	gets    int
+	// get is called with the task's envelope and the call number.
+	get func(env jobs.Envelope, call int) jobs.Task
+}
+
+func (f *fakeTasks) Create(_ context.Context, env jobs.Envelope, opts *jobs.TaskOpts) (jobs.Task, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	env.TaskID = uuid.NewV7()
+	f.created = append(f.created, env)
+	f.opts = append(f.opts, opts)
+	return jobs.Task{ID: env.TaskID, Kind: env.Kind, Envelope: env, State: jobs.StatePending, MaxAttempts: 2}, nil
+}
+
+func (f *fakeTasks) Get(_ context.Context, taskID uuid.UUID) (jobs.Task, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gets++
+	env := f.created[len(f.created)-1]
+	t := f.get(env, f.gets)
+	t.ID, t.Kind, t.Envelope = taskID, env.Kind, env
+	if t.MaxAttempts == 0 {
+		t.MaxAttempts = 2
+	}
+	return t, nil
+}
+
+func succeededTask(taskID uuid.UUID, output string) jobs.Task {
+	res, _ := json.Marshal(jobs.Result{
+		EnvelopeVersion: jobs.EnvelopeVersion, TaskID: taskID, Status: jobs.StatusSucceeded, Output: json.RawMessage(output),
+	})
+	return jobs.Task{State: jobs.StateSucceeded, Result: res}
+}
+
+func failedTask(taskID uuid.UUID, code string, retryable bool, attempts int) jobs.Task {
+	res, _ := json.Marshal(jobs.Result{
+		EnvelopeVersion: jobs.EnvelopeVersion, TaskID: taskID, Status: jobs.StatusFailed,
+		Error: &jobs.TaskError{Code: code, Retryable: retryable, Message: "test-fixture failure"},
+	})
+	return jobs.Task{State: jobs.StateFailed, Result: res, Attempts: attempts}
 }

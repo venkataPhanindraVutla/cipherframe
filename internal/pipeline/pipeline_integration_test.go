@@ -146,7 +146,10 @@ func generate(t *testing.T, s testmedia.Spec) string {
 
 // commit stores the file as an asset's source and walks the asset to committed, the way the
 // upload API does. It returns the asset and the SHA-256 of the file, hashed here independently.
-func (r *rig) commit(file string) (db.Asset, [sha256.Size]byte) {
+func (r *rig) commit(file string) (db.Asset, [sha256.Size]byte) { return r.commitAs(file, false) }
+
+// commitAs is commit for an asset created with or without mask_faces (ADR 0036).
+func (r *rig) commitAs(file string, maskFaces bool) (db.Asset, [sha256.Size]byte) {
 	r.t.Helper()
 	ctx := context.Background()
 	data, err := os.ReadFile(file) //nolint:gosec // a fixture the test just generated
@@ -157,7 +160,7 @@ func (r *rig) commit(file string) (db.Asset, [sha256.Size]byte) {
 	srcKey := keys.NewSource(r.tenant.ID, assetID)
 	a, err := r.repos.CreateUploadAsset(ctx, db.NewUploadAsset{
 		ID: assetID, TenantID: r.tenant.ID, ClientID: r.client.ID, SizeBytes: int64(len(data)), ContentType: "video/mp4",
-		Method: db.UploadMultipart, SourceKey: srcKey, ExpiresAt: time.Now().Add(time.Hour),
+		Method: db.UploadMultipart, SourceKey: srcKey, ExpiresAt: time.Now().Add(time.Hour), MaskFaces: maskFaces,
 	})
 	if err != nil {
 		r.t.Fatal(err)

@@ -408,7 +408,7 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 		return nil, fmt.Errorf("worker: %w", err)
 	}
 	if proc != nil {
-		if err := registerProcessing(reg, pool, contentKeys, proc, log); err != nil {
+		if err := registerProcessing(reg, pool, inserter, contentKeys, proc, log); err != nil {
 			return nil, fmt.Errorf("worker: %w", err)
 		}
 	}

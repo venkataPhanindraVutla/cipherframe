@@ -155,12 +155,28 @@ func TestCompleteProcessingAndArtifacts(t *testing.T) {
 	}
 
 	// Deleting the HLS artifacts keeps the poster.
-	n, err := r.DeleteHLSArtifacts(ctx, a.ID)
+	n, err := r.DeleteHLSArtifacts(ctx, a.ID, db.VariantOriginal)
 	if err != nil || n != 4 {
 		t.Fatalf("DeleteHLSArtifacts = %d, %v", n, err)
 	}
 	if list, _ := r.ListArtifacts(ctx, a.ID); len(list) != 1 || list[0].Kind != db.ArtifactPoster {
 		t.Fatalf("after DeleteHLSArtifacts: %+v", list)
+	}
+
+	// The masked variant's rows are separate: deleting one variant leaves the other.
+	masked := artifact(a, db.ArtifactSegment, "720p", "masked-seg")
+	masked.Variant = db.VariantMasked
+	if err := r.RecordArtifact(ctx, masked); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := r.DeleteHLSArtifacts(ctx, a.ID, db.VariantOriginal); err != nil || n != 0 {
+		t.Fatalf("original delete touched the masked rows: %d, %v", n, err)
+	}
+	if n, err := r.DeleteHLSArtifacts(ctx, a.ID, db.VariantMasked); err != nil || n != 1 {
+		t.Fatalf("masked delete = %d, %v", n, err)
+	}
+	if _, err := r.DeleteHLSArtifacts(ctx, a.ID, "other"); err == nil {
+		t.Error("accepted an unknown variant")
 	}
 
 	// Completion is a compare-and-set processing -> ready.

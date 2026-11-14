@@ -18,6 +18,7 @@ const (
 	EnvTranscodeTimeout  = "CIPHERFRAME_TRANSCODE_TIMEOUT"
 	EnvWorkDir           = "CIPHERFRAME_WORK_DIR"
 	EnvMediaConcurrency  = "CIPHERFRAME_WORKER_MEDIA_CONCURRENCY"
+	EnvMaskTimeout       = "CIPHERFRAME_WORKER_MASK_TIMEOUT"
 )
 
 // Media defaults and ceilings. The ceilings keep a typo from disabling a limit.
@@ -30,6 +31,8 @@ const (
 	defaultTranscodeTimeout  = 6 * time.Hour
 	maxSourceDurationCeiling = 7 * 24 * time.Hour
 	transcodeTimeoutCeiling  = 7 * 24 * time.Hour
+	defaultMaskTimeout       = 2 * time.Hour
+	maskTimeoutCeiling       = 7 * 24 * time.Hour
 	defaultMediaConcurrency  = 1
 	maxMediaConcurrency      = 64
 	minSourceDimension       = 16
@@ -50,6 +53,9 @@ type Media struct {
 	MaxSourceHeight   int
 	// TranscodeTimeout bounds one whole transcode.
 	TranscodeTimeout time.Duration
+	// MaskTimeout bounds how long an asset.mask job waits for the masker (ADR 0036) to finish one
+	// video. Past it the asset's masked variant is marked failed; the original stays playable.
+	MaskTimeout time.Duration
 	// WorkDir is the private directory under which each processing job gets its own subdirectory
 	// for the downloaded source and the plaintext segments FFmpeg writes. The worker creates it
 	// with mode 0700 and removes a job's subdirectory when the job ends.
@@ -67,6 +73,7 @@ func (l *loader) media() Media {
 		MaxSourceWidth:    l.dimension(EnvMaxSourceWidth, defaultMaxSourceWidth),
 		MaxSourceHeight:   l.dimension(EnvMaxSourceHeight, defaultMaxSourceHeight),
 		TranscodeTimeout:  l.positiveDuration(EnvTranscodeTimeout, defaultTranscodeTimeout, transcodeTimeoutCeiling),
+		MaskTimeout:       l.positiveDuration(EnvMaskTimeout, defaultMaskTimeout, maskTimeoutCeiling),
 		WorkDir:           l.workDir(),
 		Concurrency:       l.mediaConcurrency(),
 	}

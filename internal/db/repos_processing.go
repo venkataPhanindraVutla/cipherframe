@@ -45,8 +45,18 @@ type Artifact struct {
 	ObjectKey string
 	SizeBytes int64
 	SHA256    []byte
+	// Variant is "original" or "masked" (ADR 0036); empty means original.
+	Variant   string
 	CreatedAt time.Time
 }
+
+// Variants an artifact can belong to (asset_artifacts.variant).
+const (
+	VariantOriginal = "original"
+	VariantMasked   = "masked"
+)
+
+func validVariant(v string) bool { return v == VariantOriginal || v == VariantMasked }
 
 // RecordSource stores the SHA-256 and size the worker measured while streaming the source. It
 // changes nothing, and returns a conflict, unless the asset is processing.
@@ -150,13 +160,16 @@ func (r *Repos) RecordArtifact(ctx context.Context, a Artifact) error {
 	if err != nil {
 		return err
 	}
-	if !a.Kind.Valid() || (a.Bucket != "source" && a.Bucket != "delivery") || a.ObjectKey == "" ||
+	if a.Variant == "" {
+		a.Variant = VariantOriginal
+	}
+	if !a.Kind.Valid() || !validVariant(a.Variant) || (a.Bucket != "source" && a.Bucket != "delivery") || a.ObjectKey == "" ||
 		a.SizeBytes < 0 || len(a.SHA256) != 32 {
 		return errs.New(errs.InternalError, "An internal error occurred.")
 	}
 	return mapError(r.q.UpsertAssetArtifact(ctx, dbgen.UpsertAssetArtifactParams{
 		AssetID: aid, Kind: string(a.Kind), Rendition: strPtr(a.Rendition), Bucket: a.Bucket,
-		ObjectKey: a.ObjectKey, SizeBytes: a.SizeBytes, Sha256: a.SHA256,
+		ObjectKey: a.ObjectKey, SizeBytes: a.SizeBytes, Sha256: a.SHA256, Variant: a.Variant,
 	}))
 }
 
@@ -174,21 +187,24 @@ func (r *Repos) ListArtifacts(ctx context.Context, assetID id.AssetID) ([]Artifa
 	for i, row := range rows {
 		out[i] = Artifact{
 			AssetID: assetID, Kind: ArtifactKind(row.Kind), Rendition: strVal(row.Rendition), Bucket: row.Bucket,
-			ObjectKey: row.ObjectKey, SizeBytes: row.SizeBytes, SHA256: row.Sha256, CreatedAt: row.CreatedAt.UTC(),
+			ObjectKey: row.ObjectKey, SizeBytes: row.SizeBytes, SHA256: row.Sha256, Variant: row.Variant, CreatedAt: row.CreatedAt.UTC(),
 		}
 	}
 	return out, nil
 }
 
-// DeleteHLSArtifacts removes the asset's playlist, init segment and media segment rows (what the
-// processing job produces again on a retry; a poster is kept) and returns how many there were. The
-// objects themselves are the caller's to delete.
-func (r *Repos) DeleteHLSArtifacts(ctx context.Context, assetID id.AssetID) (int64, error) {
+// DeleteHLSArtifacts removes the playlist, init segment and media segment rows of one variant of the
+// asset (what the processing job, or the masking job for "masked", produces again on a retry; a
+// poster is kept) and returns how many there were. The objects themselves are the caller's to delete.
+func (r *Repos) DeleteHLSArtifacts(ctx context.Context, assetID id.AssetID, variant string) (int64, error) {
 	aid, err := requirePG(assetID)
 	if err != nil {
 		return 0, err
 	}
-	n, err := r.q.DeleteAssetHLSArtifacts(ctx, aid)
+	if !validVariant(variant) {
+		return 0, errs.New(errs.InvalidRequest, "invalid variant")
+	}
+	n, err := r.q.DeleteAssetHLSArtifacts(ctx, dbgen.DeleteAssetHLSArtifactsParams{AssetID: aid, Variant: variant})
 	return n, mapError(err)
 }
 

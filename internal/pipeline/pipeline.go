@@ -18,6 +18,10 @@
 //
 // The job is idempotent: a retry starts by removing the previous attempt's delivery objects and
 // artifact rows, reuses the content key, and runs every step again.
+//
+// An asset created with mask_faces gets a second job, asset.mask (mask.go, ADR 0036), enqueued in the
+// same transaction that makes the asset ready. It hands the source to the masker through the job's
+// private directory, then runs the masked file through the same steps into the "masked" variant.
 package pipeline
 
 import (
@@ -73,7 +77,14 @@ type Deps struct {
 	WorkDir string
 	// TranscodeTimeout bounds the FFmpeg run (CIPHERFRAME_TRANSCODE_TIMEOUT).
 	TranscodeTimeout time.Duration
-	Log              *slog.Logger
+	// Tasks is the hand-off table the asset.mask job writes to. Without it asset.mask is not
+	// registered (Register) and a masking asset cannot be completed.
+	Tasks Tasks
+	// MaskTimeout bounds the wait for the masker (CIPHERFRAME_WORKER_MASK_TIMEOUT). Required with Tasks.
+	MaskTimeout time.Duration
+	// MaskPoll is how often the masking task is looked at; default jobs.DefaultAwaitPoll.
+	MaskPoll time.Duration
+	Log      *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// ProgressInterval is how often the progress column is written; default 3 seconds.
@@ -98,6 +109,11 @@ func NewProcessor(d Deps) (*Processor, error) {
 		return nil, errors.New("pipeline: transcode timeout must be positive")
 	case d.WorkDir == "":
 		return nil, errors.New("pipeline: work directory is required")
+	case d.Tasks != nil && d.MaskTimeout <= 0:
+		return nil, errors.New("pipeline: mask timeout must be positive")
+	}
+	if d.MaskPoll <= 0 {
+		d.MaskPoll = jobs.DefaultAwaitPoll
 	}
 	if d.Log == nil {
 		d.Log = slog.Default()
@@ -111,7 +127,7 @@ func NewProcessor(d Deps) (*Processor, error) {
 	if err := prepareWorkDir(d.WorkDir); err != nil {
 		return nil, err
 	}
-	if n, err := sweepStaleJobDirs(d.WorkDir, d.TranscodeTimeout+staleJobGrace, d.Now()); err != nil {
+	if n, err := sweepStaleJobDirs(d.WorkDir, d.TranscodeTimeout+d.MaskTimeout+staleJobGrace, d.Now()); err != nil {
 		d.Log.Warn("could not sweep stale job directories", slog.String("error", err.Error()))
 	} else if n > 0 {
 		d.Log.Info("removed stale job directories", slog.Int("count", n))
@@ -122,7 +138,7 @@ func NewProcessor(d Deps) (*Processor, error) {
 // staleJobGrace is added to the transcode timeout before a leftover job directory counts as stale.
 const staleJobGrace = time.Hour
 
-// sweepStaleJobDirs removes job directories (job-*) last modified before now-olderThan. A worker
+// sweepStaleJobDirs removes job directories (job-*, which includes job-mask-*) last modified before now-olderThan. A worker
 // killed without cleanup (SIGKILL, OOM) can leave plaintext segments behind; a directory older than
 // any job may run cannot belong to a live job, even if several workers share the base directory.
 func sweepStaleJobDirs(dir string, olderThan time.Duration, now time.Time) (int, error) {
@@ -173,13 +189,26 @@ func prepareWorkDir(dir string) error {
 	return nil
 }
 
-// Register registers the asset.process job kind. The kind is only registered in the worker role.
+// maskJobAttempts is the attempt limit of asset.mask; each attempt can repeat the whole masking.
+const maskJobAttempts = 3
+
+// Register registers the asset.process job kind, and asset.mask when d.Tasks is set. The kinds are
+// only registered in the worker role. asset.mask holds a media queue slot while it waits for the
+// masker, so CIPHERFRAME_WORKER_MEDIA_CONCURRENCY should allow for it.
 func Register(reg *jobs.Registry, d Deps) error {
 	p, err := NewProcessor(d)
 	if err != nil {
 		return err
 	}
-	return jobs.Register(reg, p.Handle, jobs.KindConfig{Timeout: d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia})
+	if err := jobs.Register(reg, p.Handle, jobs.KindConfig{Timeout: d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia}); err != nil {
+		return err
+	}
+	if d.Tasks == nil {
+		return nil
+	}
+	return jobs.Register(reg, p.HandleMask, jobs.KindConfig{
+		Timeout: d.MaskTimeout + d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia, MaxAttempts: maskJobAttempts,
+	})
 }
 
 // Declare tells a process that only inserts asset.process jobs (the api role) which queue the kind
@@ -205,7 +234,7 @@ func (e *permanentError) errsCode() errs.Code {
 	switch e.code {
 	case FailureInvalidMedia:
 		return errs.InvalidRequest
-	case FailureTranscodeTimeout:
+	case FailureTranscodeTimeout, FailureMaskTimeout:
 		return errs.Timeout
 	case FailureSourceMismatch:
 		return errs.Conflict

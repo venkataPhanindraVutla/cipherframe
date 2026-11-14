@@ -43,7 +43,7 @@ type RenditionSummary struct {
 	Bytes            int64   `json:"bytes"`
 }
 
-// published is the result of encrypting and uploading every rendition.
+// published is the result of encrypting and uploading every rendition of one variant.
 type published struct {
 	artifacts []db.Artifact
 	summary   []RenditionSummary
@@ -51,9 +51,9 @@ type published struct {
 }
 
 // publish encrypts each rendition's media segments, uploads them with the init segments, then
-// writes and uploads the canonical playlists. Each object's SHA-256 is computed over the bytes as
-// stored, and each is returned as an artifact for the registry.
-func (p *Processor) publish(ctx context.Context, asset db.Asset, key []byte, outs []media.RenditionOutput, info media.Info, log *slog.Logger) (published, error) {
+// writes and uploads the canonical playlists, under the variant's own prefix. Each object's SHA-256
+// is computed over the bytes as stored, and each is returned as an artifact for the registry.
+func (p *Processor) publish(ctx context.Context, asset db.Asset, variant keys.Variant, key []byte, outs []media.RenditionOutput, info media.Info, log *slog.Logger) (published, error) {
 	t0 := p.Now()
 	rate := media.OutputFrameRate(info.Video.FrameRate)
 	var pub published
@@ -66,7 +66,7 @@ func (p *Processor) publish(ctx context.Context, asset db.Asset, key []byte, out
 		}
 		pub.artifacts = append(pub.artifacts, db.Artifact{
 			AssetID: asset.ID, Kind: kind, Rendition: rendition, Bucket: string(keys.Delivery),
-			ObjectKey: objKey, SizeBytes: int64(len(body)), SHA256: sum[:],
+			ObjectKey: objKey, SizeBytes: int64(len(body)), SHA256: sum[:], Variant: variant.String(),
 		})
 		return nil
 	}
@@ -88,7 +88,7 @@ func (p *Processor) publish(ctx context.Context, asset db.Asset, key []byte, out
 		if err != nil {
 			return pub, err
 		}
-		initKey := keys.InitSegment(asset.TenantID, asset.ID, name)
+		initKey := keys.VariantInitSegment(asset.TenantID, asset.ID, variant, name)
 		if err := put(db.ArtifactInit, rname, initKey, typeInit, initBytes); err != nil {
 			return pub, err
 		}
@@ -99,14 +99,14 @@ func (p *Processor) publish(ctx context.Context, asset db.Asset, key []byte, out
 		var peakAny int64
 		var peakAnyDur time.Duration
 		for _, s := range o.Segments {
-			segKey := keys.Segment(asset.TenantID, asset.ID, name, s.Index)
+			segKey := keys.VariantSegment(asset.TenantID, asset.ID, variant, name, s.Index)
 			iv, size, sum, err := p.encryptAndUpload(ctx, key, s.Path, segKey)
 			if err != nil {
 				return pub, err
 			}
 			pub.artifacts = append(pub.artifacts, db.Artifact{
 				AssetID: asset.ID, Kind: db.ArtifactSegment, Rendition: rname, Bucket: string(keys.Delivery),
-				ObjectKey: segKey, SizeBytes: size, SHA256: sum[:],
+				ObjectKey: segKey, SizeBytes: size, SHA256: sum[:], Variant: variant.String(),
 			})
 			pl.Segments = append(pl.Segments, hls.Segment{URI: path.Base(segKey), Duration: s.Duration, IV: iv})
 			total += size
@@ -131,13 +131,13 @@ func (p *Processor) publish(ctx context.Context, asset db.Asset, key []byte, out
 		if err != nil {
 			return pub, err
 		}
-		plKey := keys.Playlist(asset.TenantID, asset.ID, name)
+		plKey := keys.VariantPlaylist(asset.TenantID, asset.ID, variant, name)
 		if err := put(db.ArtifactPlaylist, rname, plKey, typePlaylist, []byte(text)); err != nil {
 			return pub, err
 		}
 
 		variants = append(variants, hls.Variant{
-			URI:       strings.TrimPrefix(plKey, keys.HLSPrefix(asset.TenantID, asset.ID)),
+			URI:       strings.TrimPrefix(plKey, keys.VariantHLSPrefix(asset.TenantID, asset.ID, variant)),
 			Bandwidth: bandwidth, AverageBandwidth: average,
 			Width: o.Rendition.Width, Height: o.Rendition.Height, Codecs: codecs, FrameRate: rate.FPS,
 		})
@@ -148,18 +148,21 @@ func (p *Processor) publish(ctx context.Context, asset db.Asset, key []byte, out
 		if i == 0 {
 			pub.duration = totalDur
 		}
-		// The upload fills the share of progress between the transcode and "ready".
-		_ = p.Repo.SetProgress(ctx, asset.TenantID, asset.ID, transcodeShare+(uploadShare-transcodeShare)*(i+1)/len(outs))
+		// The upload fills the share of progress between the transcode and "ready". The masked
+		// variant is built after "ready" and reports none.
+		if variant == keys.Original {
+			_ = p.Repo.SetProgress(ctx, asset.TenantID, asset.ID, transcodeShare+(uploadShare-transcodeShare)*(i+1)/len(outs))
+		}
 	}
 
 	master, err := hls.RenderMaster(variants)
 	if err != nil {
 		return pub, err
 	}
-	if err := put(db.ArtifactMaster, "", keys.Master(asset.TenantID, asset.ID), typePlaylist, []byte(master)); err != nil {
+	if err := put(db.ArtifactMaster, "", keys.VariantMaster(asset.TenantID, asset.ID, variant), typePlaylist, []byte(master)); err != nil {
 		return pub, err
 	}
-	log.InfoContext(ctx, "output published", slog.Int("objects", len(pub.artifacts)), slog.Duration("elapsed", p.Now().Sub(t0)))
+	log.InfoContext(ctx, "output published", slog.String("variant", variant.String()), slog.Int("objects", len(pub.artifacts)), slog.Duration("elapsed", p.Now().Sub(t0)))
 	return pub, nil
 }
 

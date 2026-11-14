@@ -1,9 +1,11 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -61,6 +63,11 @@ func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src source
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: build the manifest: %w", err)
 	}
+	return p.signManifest(ctx, asset, built, at)
+}
+
+// signManifest signs the canonical manifest as a DSSE envelope and returns the row to store.
+func (p *Processor) signManifest(ctx context.Context, asset db.Asset, built *manifest.Built, at time.Time) (*db.AssetManifest, error) {
 	keyID, sig, err := p.Signer.Sign(ctx, dsse.PAE(manifest.PayloadType, built.Canonical))
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: sign the manifest: %w", err)
@@ -84,13 +91,74 @@ func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src source
 	}, nil
 }
 
+// sealMasked adds the masked variant to the asset's stored manifest and signs it again. The stored
+// manifest's own members are carried over as signed; only the masked section is new.
+func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.AssetManifest, ladder []media.Rendition, pub published, faces, frames int, at time.Time) (*db.AssetManifest, error) {
+	env, err := dsse.Decode(current.Envelope)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: read the stored manifest: %w", err)
+	}
+	var m manifest.Manifest
+	dec := json.NewDecoder(bytes.NewReader(env.Payload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return nil, errors.New("pipeline: the stored manifest does not decode")
+	}
+	renditions, master, err := renditionInputs(keys.VariantHLSPrefix(asset.TenantID, asset.ID, keys.Masked), pub)
+	if err != nil {
+		return nil, err
+	}
+	built, err := manifest.WithMasked(m, manifest.MaskedInput{
+		CreatedAt: at, FacesDetected: faces, Frames: frames, Rungs: rungsOf(ladder), Renditions: renditions, Master: master,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: build the manifest: %w", err)
+	}
+	return p.signManifest(ctx, asset, built, at)
+}
+
 // manifestInput gathers what manifest.Build needs from what the pipeline already has: the
 // registry rows in publish order and the rendition summaries.
 func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, ffmpeg string, at time.Time) (manifest.Input, error) {
-	prefix := keys.HLSPrefix(asset.TenantID, asset.ID)
+	in := manifest.Input{
+		AssetID: asset.ID.String(), TenantID: asset.TenantID.String(), CreatedAt: at,
+		PipelineVersion: version.Get().Version, SourceSHA256: src.sha256, SourceSize: src.size,
+	}
+	var err error
+	in.Renditions, in.Master, err = renditionInputs(keys.HLSPrefix(asset.TenantID, asset.ID), pub)
+	if err != nil {
+		return in, err
+	}
+
+	enc := manifest.Encoder{
+		FFmpeg: ffmpeg, VideoCodec: "libx264", Preset: media.X264Preset,
+		FrameRate: rational(media.OutputFrameRate(info.Video.FrameRate).Expr), SegmentSeconds: media.SegmentSeconds,
+		KeyframeSeconds: media.KeyframeSeconds, Encryption: "AES-128",
+	}
+	enc.Rungs = rungsOf(ladder)
+	in.Encoder = enc
+	return in, nil
+}
+
+// rungsOf records the encoder settings of each rendition.
+func rungsOf(ladder []media.Rendition) []manifest.Rung {
+	rungs := make([]manifest.Rung, 0, len(ladder))
+	for _, r := range ladder {
+		rungs = append(rungs, manifest.Rung{
+			Name: r.Name, CRF: r.CRF, MaxrateKbps: r.MaxrateKbps, BufsizeKbps: r.BufsizeKbps, AudioKbps: r.AudioKbps,
+		})
+	}
+	return rungs
+}
+
+// renditionInputs turns the registry rows of one variant, in publish order, into the manifest's
+// per-rendition input and its master playlist. Paths are made relative to prefix, the variant's
+// HLS prefix.
+func renditionInputs(prefix string, pub published) ([]manifest.RenditionInput, manifest.StoredObject, error) {
+	var master manifest.StoredObject
 	stored := func(a db.Artifact) (manifest.StoredObject, error) {
 		if len(a.SHA256) != sha256.Size || !strings.HasPrefix(a.ObjectKey, prefix) {
-			return manifest.StoredObject{}, errors.New("pipeline: an artifact does not belong to the asset's HLS prefix")
+			return manifest.StoredObject{}, errors.New("pipeline: an artifact does not belong to the variant's HLS prefix")
 		}
 		o := manifest.StoredObject{Path: strings.TrimPrefix(a.ObjectKey, prefix), Size: a.SizeBytes}
 		copy(o.SHA256[:], a.SHA256)
@@ -98,27 +166,23 @@ func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, i
 	}
 
 	byRendition := make(map[string]*manifest.RenditionInput, len(pub.summary))
-	in := manifest.Input{
-		AssetID: asset.ID.String(), TenantID: asset.TenantID.String(), CreatedAt: at,
-		PipelineVersion: version.Get().Version, SourceSHA256: src.sha256, SourceSize: src.size,
-	}
-	in.Renditions = make([]manifest.RenditionInput, len(pub.summary))
+	renditions := make([]manifest.RenditionInput, len(pub.summary))
 	for i, s := range pub.summary {
-		in.Renditions[i] = manifest.RenditionInput{Name: s.Name, Width: s.Width, Height: s.Height, Bandwidth: s.Bandwidth}
-		byRendition[s.Name] = &in.Renditions[i]
+		renditions[i] = manifest.RenditionInput{Name: s.Name, Width: s.Width, Height: s.Height, Bandwidth: s.Bandwidth}
+		byRendition[s.Name] = &renditions[i]
 	}
 	for _, a := range pub.artifacts {
 		o, err := stored(a)
 		if err != nil {
-			return in, err
+			return nil, master, err
 		}
 		if a.Kind == db.ArtifactMaster {
-			in.Master = o
+			master = o
 			continue
 		}
 		r := byRendition[a.Rendition]
 		if r == nil {
-			return in, errors.New("pipeline: an artifact names an unknown rendition")
+			return nil, master, errors.New("pipeline: an artifact names an unknown rendition")
 		}
 		switch a.Kind {
 		case db.ArtifactInit:
@@ -129,19 +193,7 @@ func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, i
 			r.Playlist = o
 		}
 	}
-
-	enc := manifest.Encoder{
-		FFmpeg: ffmpeg, VideoCodec: "libx264", Preset: media.X264Preset,
-		FrameRate: rational(media.OutputFrameRate(info.Video.FrameRate).Expr), SegmentSeconds: media.SegmentSeconds,
-		KeyframeSeconds: media.KeyframeSeconds, Encryption: "AES-128",
-	}
-	for _, r := range ladder {
-		enc.Rungs = append(enc.Rungs, manifest.Rung{
-			Name: r.Name, CRF: r.CRF, MaxrateKbps: r.MaxrateKbps, BufsizeKbps: r.BufsizeKbps, AudioKbps: r.AudioKbps,
-		})
-	}
-	in.Encoder = enc
-	return in, nil
+	return renditions, master, nil
 }
 
 // rational writes an FFmpeg frame rate expression ("30", "30000/1001" or "23.976") as a rational
