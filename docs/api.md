@@ -210,7 +210,9 @@ URL is ever returned.
 **Create.** `POST /v1/assets` with `{"size_bytes": 1073741824, "content_type": "video/mp4",
 "upload_method": "tus"}` (`tus` or `multipart`; `content_type` is optional). `size_bytes` must be
 exact and at most `CIPHERFRAME_MAX_SOURCE_BYTES` (default 10 GiB; `413 payload_too_large`). No file
-name is accepted or stored. The `201` answer, `Cache-Control: no-store`:
+name is accepted or stored. `mask_faces` (boolean, default `false`) asks for a second, face-masked
+variant of the asset (see "Variants" below); it is fixed at creation. The `201` answer,
+`Cache-Control: no-store`:
 
 ```json
 {
@@ -255,6 +257,15 @@ repeats the cleanup; a committed asset is `409`.
 **Read.** `GET /v1/assets/{asset_id}` and `GET /v1/assets` (`limit`, `cursor`, oldest first). An asset
 of another tenant is `404`, never `403`.
 
+**Variants (ADR 0036).** Every asset has an `original` variant. An asset created with `mask_faces:
+true` also gets a `masked` variant, built after the original is `ready`. The asset shows
+`"mask_faces": true` and `"masking": {"state": "pending" | "ready" | "failed", "faces_detected": 2}`
+(`faces_detected` is absent until the masker has run; `0` means no face was found and the masked
+variant was published anyway). An asset without `mask_faces` has `"mask_faces": false` and no
+`masking`. Each variant has its own HLS tree and its own content key. This release stores and serves
+variants and the `pending` state; building the masked variant is a later change, so `masking.state`
+stays `pending` until then.
+
 CORS: the multipart endpoints answer any origin without credentials, because the token in the
 `Authorization` header is the only authentication; tus answers with tusd's defaults.
 
@@ -276,8 +287,8 @@ control plane, the edge playlist, segment and key routes, and the session lifecy
 and revoke (below).
 
 **Start a session.** `POST /v1/playback-sessions` (scope `sessions:write`) with
-`{"asset_id": "ast_…", "viewer_id": "u-8f3a…"}`. The asset must belong to your tenant and be `ready`.
-The `201` answer, `Cache-Control: no-store`:
+`{"asset_id": "ast_…", "viewer_id": "u-8f3a…"}`, and optionally `"variant": "original" | "masked"`.
+The asset must belong to your tenant and be `ready`. The `201` answer, `Cache-Control: no-store`:
 
 ```json
 {
@@ -287,9 +298,16 @@ The `201` answer, `Cache-Control: no-store`:
   "heartbeat_interval_seconds": 60,
   "session_expires_at": "2026-11-12T14:00:00Z",
   "manifest_url": "https://media.example.com/v1/play/ses_…/master.m3u8",
-  "token_transport": "header"
+  "token_transport": "header",
+  "variant": "original"
 }
 ```
+
+**The session's variant.** A session is bound to one variant for its whole life, and edge serves only
+that variant's playlists, segments and key: a `masked` session cannot fetch a byte or the key of the
+`original`, and the reverse. Without `variant`, an asset created with `mask_faces` gets `masked` and
+any other asset gets `original`; to play the original of a masking asset you must ask for
+`"variant": "original"` explicitly, which is your application's decision. There is never a fallback.
 
 Give `manifest_url`, the token and the heartbeat interval to the player. With `token_transport`
 `header` (the default) the player sends `Authorization: Bearer <token>` on every request to edge, and
@@ -303,6 +321,8 @@ the session itself. The session ends after 4 hours at most, or after 5 minutes w
 | `403` | `forbidden` | The key lacks `sessions:write`. |
 | `404` | `not_found` | No such asset, including an asset of another tenant (never `403`). |
 | `409` | `asset_not_ready` | The asset is not `ready` (still uploading or processing, or failed). |
+| `409` | `variant_unavailable` | `variant` is `masked` but the asset was created without `mask_faces`. |
+| `409` | `variant_not_ready` | The masked variant is requested (or is the default) and is not `ready` (`pending` or `failed`). |
 | `409` | `session_limit` | The viewer already has the maximum number of active sessions. |
 
 **Viewer IDs and privacy.** `viewer_id` (1 to 128 printable characters, no control characters) is
@@ -784,6 +804,14 @@ response is `Cache-Control: no-store`. The body of the request is
 { "asset_id": "ast_…", "method": "callback", "ticket": "<opaque string from your page>" }
 ```
 
+**The viewer never chooses the variant.** Your application decides it: for `jwt`, with an optional
+`variant` claim (`original` or `masked`); for `callback`, by approving the variant the callback body
+names. Without a claim the asset's default applies (`masked` for an asset created with `mask_faces`,
+else `original`). The request body may also carry `"variant"`, but only to confirm: a value that
+differs from the one your application decided is `403 forbidden`, so a viewer cannot pick `original`
+unless the default already is `original`. The `variant` checks of the session (`409
+variant_unavailable`, `409 variant_not_ready`) apply as for `POST /v1/playback-sessions`.
+
 A tenant that has configured nothing, a method that is off, a bad token, a callback that refuses, a
 replayed token, an unknown tenant: all are the **same generic `401`** (`unauthenticated`, with
 `WWW-Authenticate: Bearer`), so the answer says nothing about why. A malformed body is `400`. If
@@ -834,6 +862,7 @@ Sign the token on **your** server, for one viewer and one asset, when the viewer
 | `nbf`, `iat` | Honoured if present, with 60 seconds of skew. |
 | `jti` | Required, at most 128 characters, and **single use**: it creates at most one session (see below). |
 | `asset_id` | Required, equal to the `asset_id` in the request body. |
+| `variant` | Optional string, `original` or `masked`: which variant this viewer may play. Absent means the asset's default. Any other value is the generic `401`. |
 | viewer | The claim named by `jwt_viewer_claim` (default `sub`) must be a string that is a valid viewer ID: 1 to 128 printable characters, no control characters, and pseudonymous (never an email address). |
 
 **`asset_id` is an implementation detail of ADR 0029**, not in the ADR's list of required claims. Without
@@ -877,9 +906,13 @@ webhook-id: msg_8c1f…
 webhook-timestamp: 1789000000
 webhook-signature: v1,<base64>[ v1,<base64>]
 
-{"type":"playback.authorize","tenant_id":"ten_…","asset_id":"ast_…","ticket":"…",
+{"type":"playback.authorize","tenant_id":"ten_…","asset_id":"ast_…","variant":"masked","ticket":"…",
  "request_id":"0195c8a2-…","timestamp":"2026-11-11T15:00:00Z"}
 ```
+
+`variant` is the variant the session would be bound to (`masked` for an asset created with
+`mask_faces`, else `original`). Answering `allow: true` approves that specific variant; the viewer's
+request cannot ask for another.
 
 Your endpoint answers **HTTP 200** with
 
@@ -1046,6 +1079,8 @@ server-side only.
 | `payload_too_large` | 413 | no | The request body exceeds the allowed size. |
 | `asset_not_ready` | 409 | no | The operation needs a `ready` asset and this one is not (yet). |
 | `session_limit` | 409 | no | The viewer already has the tenant's maximum number of active playback sessions. |
+| `variant_unavailable` | 409 | no | A session asked for the masked variant of an asset created without `mask_faces`. |
+| `variant_not_ready` | 409 | no | A session asked for the masked variant (or it is the default) and it is not `ready`. |
 | `rate_limited` | 429 | yes | Too many requests; retry later. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |

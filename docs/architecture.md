@@ -310,7 +310,10 @@ already uses every core) and 10 default-queue jobs; the api role inserts into `m
    [integrity.md](integrity.md#manifest-format)). A signer failure is an ordinary, retried failure.
 
 Object keys are `hls/master.m3u8` and, per rendition, `hls/<name>/playlist.m3u8`, `init.mp4` and
-`seg-<n>.m4s` (n from 0), under `t/<tenant>/a/<asset>/`.
+`seg-<n>.m4s` (n from 0), under `t/<tenant>/a/<asset>/`. These are the `original` variant. The `masked`
+variant of an asset created with `mask_faces` (ADR 0036) uses the same names under
+`t/<tenant>/a/<asset>/masked/hls/`, so the original's keys do not move and neither prefix contains
+the other.
 
 **The FFmpeg invocation** (one process, argument array, empty environment, `file:` paths, protocols
 limited to `file,pipe`; `TranscodeArgs` in `internal/media/transcode.go`):
@@ -381,9 +384,10 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
 - **Guard** (`internal/edge/play_guard.go`): path allowlist, token from the header (or `t` when the
   tenant allows it), `Keyring.Open` (MAC, expiry, scope), the token's session equal to the path's,
   then the tenant's settings for `token_in_url` and CORS. Playlists add the stateful session check.
-- **The token carries the tenant.** Claims hold session, asset and tenant, so a segment's object key
-  (`t/<tenant>/a/<asset>/hls/<rendition>/seg-N.m4s`, built by `internal/storage/keys`) comes from the
-  authenticated claims alone and a segment request needs no database round trip. The alternative
+- **The token carries the tenant and the variant.** Claims hold session, asset, tenant and the
+  session's variant (ADR 0036), so a segment's object key
+  (`t/<tenant>/a/<asset>/hls/<rendition>/seg-N.m4s`, or under `masked/hls/` for the masked variant,
+  built by `internal/storage/keys`) comes from the authenticated claims alone and a segment request needs no database round trip. The alternative
   (a lookup of asset, then tenant) would put a query on the hottest path.
 - **Settings and the session's tenant are cached in process** (`play_cache.go`): 30 seconds, bounded
   (1024 tenants, 4096 sessions), only successful lookups stored (plus "no such session"). The
