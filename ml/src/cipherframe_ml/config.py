@@ -36,15 +36,20 @@ class Config:
     model_path: Path
     lease_seconds: float = 60.0
     poll_seconds: float = 2.0
+    detect_every: int = 1
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Config":
         work = env.get("CIPHERFRAME_WORK_DIR") or str(Path(tempfile.gettempdir()) / "cipherframe")
         if not Path(work).is_absolute():
             raise ConfigError("CIPHERFRAME_WORK_DIR must be an absolute path")
+        raw = env.get("CIPHERFRAME_ML_DETECT_EVERY") or "1"
+        if not raw.isascii() or not raw.isdigit() or int(raw) < 1:
+            raise ConfigError("CIPHERFRAME_ML_DETECT_EVERY must be a whole number of at least 1")
         return cls(
             database_url=read_secret(env, "CIPHERFRAME_ML_DATABASE_URL"),
             work_dir=Path(work),
             ffmpeg_path=env.get("CIPHERFRAME_FFMPEG_PATH") or "ffmpeg",
             model_path=Path(env.get("CIPHERFRAME_ML_MODEL_PATH") or DEFAULT_MODEL_PATH),
+            detect_every=int(raw),
         )

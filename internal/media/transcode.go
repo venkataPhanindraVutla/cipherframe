@@ -2,6 +2,7 @@ package media
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -28,7 +29,8 @@ const (
 	MaxFrameRate = 60
 	// DefaultFrameRate is used when the source's rate is unknown.
 	DefaultFrameRate = 30
-	// X264Preset trades CPU time for compression. It does not change the segment structure.
+	// X264Preset is the default libx264 preset (ADR 0038). A preset trades CPU time for
+	// compression; it does not change the segment structure.
 	X264Preset = "medium"
 	// OutputSampleRate is the audio sample rate of every rendition.
 	OutputSampleRate = 48000
@@ -92,6 +94,13 @@ type TranscodeSpec struct {
 	// Info is the probe result of the source and Renditions the ladder chosen for it.
 	Info       Info
 	Renditions []Rendition
+	// Preset is the libx264 preset of every rendition (ADR 0038); empty means X264Preset.
+	Preset string
+}
+
+// X264Presets are the libx264 presets CIPHERFRAME_WORKER_X264_PRESET accepts, fastest first.
+func X264Presets() []string {
+	return []string{"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"}
 }
 
 // RenditionDir is where FFmpeg writes a rendition's files.
@@ -155,7 +164,7 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 			args = append(args, "-map", fmt.Sprintf("0:%d", spec.Info.Audio.Index))
 		}
 		args = append(args,
-			"-c:v", "libx264", "-profile:v", "high", "-preset", X264Preset,
+			"-c:v", "libx264", "-profile:v", "high", "-preset", cmp.Or(spec.Preset, X264Preset),
 			"-crf", strconv.Itoa(r.CRF),
 			"-maxrate", strconv.Itoa(r.MaxrateKbps)+"k", "-bufsize", strconv.Itoa(r.BufsizeKbps)+"k",
 			"-g", strconv.Itoa(rate.GOP), "-keyint_min", strconv.Itoa(rate.GOP),

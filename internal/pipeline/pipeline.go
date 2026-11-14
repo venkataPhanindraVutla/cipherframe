@@ -89,7 +89,10 @@ type Deps struct {
 	// LadderHeights restricts the ladder of both variants to these rung heights
 	// (CIPHERFRAME_WORKER_LADDER_HEIGHTS); empty means every rung.
 	LadderHeights []int
-	Log           *slog.Logger
+	// X264Preset is the libx264 preset of both variants (CIPHERFRAME_WORKER_X264_PRESET); empty
+	// means media.X264Preset.
+	X264Preset string
+	Log        *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// ProgressInterval is how often the progress column is written; default 3 seconds.

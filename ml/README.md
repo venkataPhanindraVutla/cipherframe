@@ -12,11 +12,15 @@ a 640 px wide copy) and heavy occlusion can be missed.
 2. Resolve `payload.input` and `payload.output` inside `CIPHERFRAME_WORK_DIR` (the directory shared
    with the Go worker). Absolute paths, `..`, backslashes and symlinks leaving the directory are
    rejected as a permanent `invalid_payload` failure.
-3. Decode with OpenCV, detect faces with YuNet (score 0.6, on a copy 640 px wide), pad each box 25 %
+3. Decode with OpenCV, detect faces with YuNet (score 0.6, on a copy 640 px wide) on every
+   `CIPHERFRAME_ML_DETECT_EVERY`-th frame (frames 0, N, 2N, ...; the most recent detection is reused,
+   as if just detected, on the frames in between), pad each box 25 %
    per side, hold the last boxes for 1 s after detection drops, pixelate (8 px blocks) then Gaussian-blur
    every face, and pipe raw frames to FFmpeg (libx264 CRF 12, `yuv420p`) with the source audio copied.
 4. Write `{"status": "succeeded", "output": {"faces_detected": N, "frames": M}}`, where
-   `faces_detected` counts frames with at least one detected face. The masked file stays in the work
+   `faces_detected` counts frames on which at least one face box was applied from a detection,
+   including a reused one (boxes kept only by the hold do not count; with the default of 1 this is
+   the frames with a detected face). The masked file stays in the work
    directory; it is not an artifact and never goes to storage (ADR 0027).
 
 Failures: `invalid_payload`, `input_not_found`, `decode_failed`, `unsupported_envelope` are not
@@ -41,6 +45,7 @@ uv run cipherframe-ml mask-worker
 | `CIPHERFRAME_WORK_DIR` | `<tmp>/cipherframe` |
 | `CIPHERFRAME_FFMPEG_PATH` | `ffmpeg` |
 | `CIPHERFRAME_ML_MODEL_PATH` | `models/face_detection_yunet_2026may.onnx` |
+| `CIPHERFRAME_ML_DETECT_EVERY` | `1`: run the detector on every N-th frame, a whole number of at least 1 (ADR 0038). Higher is faster; with 2 a fast-moving face can be one frame behind its box, covered by the padding and hold. Invalid values stop the worker at startup. |
 
 The worker refuses to start if the model's SHA-256 does not match the one pinned in
 `src/cipherframe_ml/model.py`. The FFmpeg must be able to read raw video from a pipe; the worker

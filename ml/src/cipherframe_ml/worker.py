@@ -72,7 +72,7 @@ def run_task(cfg: Config, envelope: dict, detect: Detector, should_stop) -> dict
         )
     part = Path(f"{dst}.part")
     try:
-        stats = mask_video(src, part, detect, cfg.ffmpeg_path, should_stop)
+        stats = mask_video(src, part, detect, cfg.ffmpeg_path, should_stop, cfg.detect_every)
         part.replace(dst)
     finally:
         part.unlink(missing_ok=True)

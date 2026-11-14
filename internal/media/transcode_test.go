@@ -343,3 +343,23 @@ func TestTranscodeArgsCapsOutputsAtTheVideoDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscodePreset(t *testing.T) {
+	spec := testSpec()
+	for _, tc := range []struct{ set, want string }{{"", "medium"}, {"veryfast", "veryfast"}} {
+		spec.Preset = tc.set
+		args, err := TranscodeArgs(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := argValues(args, "-preset")
+		if len(got) != len(spec.Renditions) {
+			t.Fatalf("presets: %v", got)
+		}
+		for _, p := range got {
+			if p != tc.want {
+				t.Errorf("Preset %q: got %q, want %q", tc.set, p, tc.want)
+			}
+		}
+	}
+}

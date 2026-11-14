@@ -100,7 +100,7 @@ keys, so their hashes differ even where the picture does not.
 | `masked` member | Content |
 | --- | --- |
 | `created_at` | When the masked variant was published. |
-| `faces_detected` | Frames in which the masker found at least one face (held boxes do not count). |
+| `faces_detected` | Frames on which at least one face box was applied from a detection, including a detection reused on frames the masker skipped (`CIPHERFRAME_ML_DETECT_EVERY`); boxes kept only by the hold do not count. |
 | `frames` | Frames the masker wrote. |
 | `rungs` | The encoder setting of each masked rendition (the ladder is chosen from the masked file). |
 | `renditions`, `artifacts`, `top_level` | As at the top level, for the masked variant. |
