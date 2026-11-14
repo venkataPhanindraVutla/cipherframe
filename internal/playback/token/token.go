@@ -109,8 +109,11 @@ type Claims struct {
 	AssetID   string
 	TenantID  string
 	Scopes    Scope
-	IssuedAt  time.Time
-	Expiry    time.Time
+	// Variant is the variant the session is bound to ("original" or "masked", ADR 0036). Empty is
+	// read as original, so a token signed before variants existed stays valid.
+	Variant  string
+	IssuedAt time.Time
+	Expiry   time.Time
 }
 
 // payload is the wire form of Claims.
@@ -119,6 +122,7 @@ type payload struct {
 	Asset   string `json:"a"`
 	Tenant  string `json:"n"`
 	Scopes  uint8  `json:"m"`
+	Variant string `json:"v,omitempty"`
 	Issued  int64  `json:"i"`
 	Expires int64  `json:"e"`
 }
@@ -193,7 +197,7 @@ func (k *Keyring) Sign(c Claims) (string, error) {
 		return "", errors.New("token: expiry must be after issue time")
 	}
 	body, err := json.Marshal(payload{
-		Session: c.SessionID, Asset: c.AssetID, Tenant: c.TenantID, Scopes: uint8(c.Scopes),
+		Session: c.SessionID, Asset: c.AssetID, Tenant: c.TenantID, Scopes: uint8(c.Scopes), Variant: c.Variant,
 		Issued: c.IssuedAt.Unix(), Expires: c.Expiry.Unix(),
 	})
 	if err != nil {
@@ -279,7 +283,7 @@ func (k *Keyring) verify(tok string, now time.Time, need Scope, assetID *string)
 		return Claims{}, false
 	}
 	return Claims{
-		SessionID: p.Session, AssetID: p.Asset, TenantID: p.Tenant, Scopes: sc,
+		SessionID: p.Session, AssetID: p.Asset, TenantID: p.Tenant, Scopes: sc, Variant: p.Variant,
 		IssuedAt: time.Unix(p.Issued, 0).UTC(), Expiry: time.Unix(p.Expires, 0).UTC(),
 	}, true
 }

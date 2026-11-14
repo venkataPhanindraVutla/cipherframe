@@ -25,6 +25,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
 )
 
@@ -101,6 +102,9 @@ type CreateInput struct {
 	// means db.AuthMethodAPIKey.
 	AuthMethod string
 	AssetID    id.AssetID
+	// Variant is the variant the session is bound to. Empty means DefaultVariant of the asset.
+	// Whoever authorises the session decides it; a viewer's browser never does (ADR 0036).
+	Variant keys.Variant
 	// ViewerID is the embedding application's pseudonymous ID for the viewer.
 	ViewerID string
 }
@@ -109,6 +113,7 @@ type CreateInput struct {
 // form: the manifest URL carries the token when the tenant has token_in_url on.
 type Created struct {
 	SessionID                id.SessionID
+	Variant                  keys.Variant
 	Token                    config.Secret
 	TokenExpiresAt           time.Time
 	HeartbeatIntervalSeconds int
@@ -132,6 +137,36 @@ func ValidateViewerID(v string) error {
 	return nil
 }
 
+// DefaultVariant is the variant a session gets when none is asked for: masked for an asset created
+// with mask_faces, original otherwise (ADR 0036).
+func DefaultVariant(a db.Asset) keys.Variant {
+	if a.MaskFaces {
+		return keys.Masked
+	}
+	return keys.Original
+}
+
+// ResolveVariant returns the variant a session on the asset gets: requested, or the default when
+// requested is empty. Masked on an asset without masking is variant_unavailable, and masked before
+// the masked variant is ready is variant_not_ready; neither falls back to the original.
+func ResolveVariant(a db.Asset, requested keys.Variant) (keys.Variant, error) {
+	if requested == "" {
+		requested = DefaultVariant(a)
+	}
+	if !requested.Valid() {
+		return "", errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "variant", Message: "must be original or masked"}})
+	}
+	if requested == keys.Masked {
+		switch {
+		case !a.MaskFaces:
+			return "", errs.New(errs.VariantUnavailable, "The asset has no masked variant.")
+		case a.MaskingState != db.MaskingReady:
+			return "", errs.New(errs.VariantNotReady, "The masked variant is not ready for playback.")
+		}
+	}
+	return requested, nil
+}
+
 // CreateSession starts a playback session on a ready asset of the tenant (ADR 0028).
 //
 // It checks the asset, then, in one transaction holding an advisory lock on the (tenant, viewer)
@@ -142,7 +177,8 @@ func (s *Service) CreateSession(ctx context.Context, in CreateInput) (Created, e
 	c, rapid, err := s.createSession(ctx, in)
 	if err != nil {
 		var e *errs.Error
-		if errors.As(err, &e) && (e.Code == errs.SessionLimit || e.Code == errs.AssetNotReady) {
+		if errors.As(err, &e) && (e.Code == errs.SessionLimit || e.Code == errs.AssetNotReady ||
+			e.Code == errs.VariantUnavailable || e.Code == errs.VariantNotReady) {
 			s.access.RecordSessionDenied(s.accessEvent(ctx, in, nil, db.AccessSessionDenied))
 		}
 		if errors.As(err, &e) && e.Code == errs.SessionLimit {
@@ -207,6 +243,10 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 	if asset.State != db.AssetReady {
 		return Created{}, nil, errs.New(errs.AssetNotReady, "The asset is not ready for playback.")
 	}
+	variant, err := ResolveVariant(asset, in.Variant)
+	if err != nil {
+		return Created{}, nil, err
+	}
 
 	sid, err := id.NewSession()
 	if err != nil {
@@ -220,7 +260,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 	}
 	tok, err := s.keyring.Sign(token.Claims{
 		SessionID: sid.String(), AssetID: asset.ID.String(), TenantID: in.TenantID.String(),
-		Scopes:   token.ScopeManifest | token.ScopeKey | token.ScopeSegment,
+		Scopes: token.ScopeManifest | token.ScopeKey | token.ScopeSegment, Variant: variant.String(),
 		IssuedAt: now, Expiry: tokenExpires,
 	})
 	if err != nil {
@@ -247,7 +287,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 		}
 		_, err := tx.InsertPlaybackSession(ctx, db.NewPlaybackSession{
 			ID: sid, TenantID: in.TenantID, ClientID: in.ClientID, AuthMethod: in.AuthMethod, AssetID: asset.ID,
-			ViewerID: in.ViewerID, Now: now, ExpiresAt: sessionExpires,
+			Variant: variant, ViewerID: in.ViewerID, Now: now, ExpiresAt: sessionExpires,
 		})
 		if errors.Is(err, db.ErrStateChanged) { // the asset stopped being ready since the check above
 			return errs.New(errs.AssetNotReady, "The asset is not ready for playback.")
@@ -278,7 +318,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 		transport = TransportURL
 	}
 	return Created{
-		SessionID: sid, Token: config.NewSecret(tok), TokenExpiresAt: tokenExpires.Truncate(time.Second),
+		SessionID: sid, Variant: variant, Token: config.NewSecret(tok), TokenExpiresAt: tokenExpires.Truncate(time.Second),
 		HeartbeatIntervalSeconds: set.HeartbeatIntervalSeconds, SessionExpiresAt: sessionExpires,
 		ManifestURL: config.NewSecret(manifest), TokenTransport: transport,
 	}, rapid, nil

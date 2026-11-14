@@ -392,3 +392,35 @@ func TestSignRequiresATenant(t *testing.T) {
 		t.Fatal("Sign accepted claims without a tenant")
 	}
 }
+
+func TestVariantIsSignedAndRoundTrips(t *testing.T) {
+	k := testKeyring(t, 1, 1)
+	for _, v := range []string{"", "original", "masked"} {
+		c := claims(t, allScopes)
+		c.Variant = v
+		tok, err := k.Sign(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := k.Open(tok, t0, ScopeSegment)
+		if err != nil || got.Variant != v {
+			t.Fatalf("variant %q: got %q, %v", v, got.Variant, err)
+		}
+	}
+	// The variant is under the MAC: swapping it in the payload invalidates the token.
+	c := claims(t, allScopes)
+	c.Variant = "masked"
+	tok, err := k.Sign(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(tok, ".")
+	raw, err := enc.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts[1] = enc.EncodeToString(bytes.Replace(raw, []byte(`"v":"masked"`), []byte(`"v":"origina"`), 1))
+	if _, err := k.Open(strings.Join(parts, "."), t0, ScopeSegment); !isInvalid(err) {
+		t.Fatalf("a token with an edited variant verified: %v", err)
+	}
+}

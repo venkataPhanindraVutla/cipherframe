@@ -644,3 +644,30 @@ func TestCommitEnqueuesExactlyOnceUnderConcurrency(t *testing.T) {
 	}
 	e.assertState(e.admin, u.assetID, "committed")
 }
+
+func TestCreateAssetMaskFaces(t *testing.T) {
+	e := newUpEnv(t)
+	// Default: no masking, and the response says so.
+	plain := e.create(e.admin, 100, "multipart")
+	m, _ := e.call(e.admin, "GET", "/v1/assets/"+plain.assetID, nil, 200)
+	if m["mask_faces"] != false || m["masking"] != nil {
+		t.Fatalf("a default asset: %v", m)
+	}
+
+	// mask_faces: true is stored and shown, with a pending masked variant from the start.
+	created, _ := e.call(e.admin, "POST", "/v1/assets", map[string]any{"size_bytes": 100, "upload_method": "multipart", "mask_faces": true}, 201)
+	asset := created["asset"].(map[string]any)
+	masking, _ := asset["masking"].(map[string]any)
+	if asset["mask_faces"] != true || masking["state"] != "pending" || masking["faces_detected"] != nil {
+		t.Fatalf("a masking asset: %v", asset)
+	}
+	if !e.dbAsset(asset["id"].(string)).MaskFaces {
+		t.Fatal("mask_faces was not stored")
+	}
+	got, _ := e.call(e.admin, "GET", "/v1/assets/"+asset["id"].(string), nil, 200)
+	if got["mask_faces"] != true || got["masking"].(map[string]any)["state"] != "pending" {
+		t.Fatalf("GET: %v", got)
+	}
+	// A bad type is a 400.
+	e.call(e.admin, "POST", "/v1/assets", map[string]any{"size_bytes": 100, "upload_method": "multipart", "mask_faces": "yes"}, 400)
+}
