@@ -3,9 +3,12 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 )
 
 // Media environment variable names (ADR 0024, ADR 0025).
@@ -19,6 +22,8 @@ const (
 	EnvWorkDir           = "CIPHERFRAME_WORK_DIR"
 	EnvMediaConcurrency  = "CIPHERFRAME_WORKER_MEDIA_CONCURRENCY"
 	EnvMaskTimeout       = "CIPHERFRAME_WORKER_MASK_TIMEOUT"
+	EnvMaskConcurrency   = "CIPHERFRAME_WORKER_MASK_CONCURRENCY"
+	EnvLadderHeights     = "CIPHERFRAME_WORKER_LADDER_HEIGHTS"
 )
 
 // Media defaults and ceilings. The ceilings keep a typo from disabling a limit.
@@ -34,6 +39,7 @@ const (
 	defaultMaskTimeout       = 2 * time.Hour
 	maskTimeoutCeiling       = 7 * 24 * time.Hour
 	defaultMediaConcurrency  = 1
+	defaultMaskConcurrency   = 1
 	maxMediaConcurrency      = 64
 	minSourceDimension       = 16
 	maxSourceDimension       = 16384
@@ -63,6 +69,12 @@ type Media struct {
 	// Concurrency is how many asset.process jobs one worker process runs at once (the media
 	// queue). Each FFmpeg run already uses every core, so the default is 1.
 	Concurrency int
+	// MaskConcurrency is how many asset.mask jobs one worker process runs at once (the mask
+	// queue, ADR 0037). The masker is the heavy part, so the default is 1.
+	MaskConcurrency int
+	// LadderHeights restricts the ladder to these ADR 0024 rung heights, tallest first. Empty
+	// means every rung. Both variants use it.
+	LadderHeights []int
 }
 
 func (l *loader) media() Media {
@@ -75,7 +87,9 @@ func (l *loader) media() Media {
 		TranscodeTimeout:  l.positiveDuration(EnvTranscodeTimeout, defaultTranscodeTimeout, transcodeTimeoutCeiling),
 		MaskTimeout:       l.positiveDuration(EnvMaskTimeout, defaultMaskTimeout, maskTimeoutCeiling),
 		WorkDir:           l.workDir(),
-		Concurrency:       l.mediaConcurrency(),
+		Concurrency:       l.concurrency(EnvMediaConcurrency, defaultMediaConcurrency),
+		MaskConcurrency:   l.concurrency(EnvMaskConcurrency, defaultMaskConcurrency),
+		LadderHeights:     l.ladderHeights(),
 	}
 }
 
@@ -130,15 +144,36 @@ func (l *loader) dimension(name string, def int) int {
 	return n
 }
 
-func (l *loader) mediaConcurrency() int {
-	v := l.plain(EnvMediaConcurrency, "")
+func (l *loader) concurrency(name string, def int) int {
+	v := l.plain(name, "")
 	if v == "" {
-		return defaultMediaConcurrency
+		return def
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 || n > maxMediaConcurrency {
-		l.errf("%s must be a whole number from 1 to %d", EnvMediaConcurrency, maxMediaConcurrency)
-		return defaultMediaConcurrency
+		l.errf("%s must be a whole number from 1 to %d", name, maxMediaConcurrency)
+		return def
 	}
 	return n
+}
+
+// ladderHeights reads CIPHERFRAME_WORKER_LADDER_HEIGHTS: a comma-separated subset of the rung
+// heights of ADR 0024, returned tallest first. Unset means every rung (nil).
+func (l *loader) ladderHeights() []int {
+	v := l.plain(EnvLadderHeights, "")
+	if v == "" {
+		return nil
+	}
+	known := media.RungHeights()
+	var picked []int
+	for part := range strings.SplitSeq(v, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil || !slices.Contains(known, n) || slices.Contains(picked, n) {
+			l.errf("%s must be a comma-separated list of distinct rung heights from %v, for example 720,360", EnvLadderHeights, known)
+			return nil
+		}
+		picked = append(picked, n)
+	}
+	slices.SortFunc(picked, func(a, b int) int { return b - a })
+	return picked
 }

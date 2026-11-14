@@ -127,8 +127,9 @@ UPDATE assets SET
     duration_ms = sqlc.arg(duration_ms)::bigint,
     renditions  = sqlc.arg(renditions)::jsonb,
     progress    = 100,
-    -- A masking asset's masked variant is built after the original is ready (ADR 0036).
-    masking_state = CASE WHEN mask_faces THEN 'pending' ELSE masking_state END
+    -- A masking asset's masked variant is pending until asset.mask publishes it (ADR 0036). asset.mask
+    -- runs beside asset.process (ADR 0037) and may already have recorded failed.
+    masking_state = CASE WHEN mask_faces THEN COALESCE(masking_state, 'pending') ELSE masking_state END
 WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND id = sqlc.arg(id)::uuid
   AND state = 'processing'

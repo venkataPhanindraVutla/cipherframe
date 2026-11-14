@@ -43,6 +43,19 @@ type ProcessArgs struct {
 // Kind implements jobs.Args.
 func (ProcessArgs) Kind() string { return ProcessKind }
 
+// MaskKind is the job kind of the masked variant (ADR 0036, ADR 0037). It is enqueued with
+// asset.process for an asset created with mask_faces. Do not rename it once jobs of that kind exist.
+const MaskKind = "asset.mask"
+
+// MaskArgs are the arguments of the asset.mask job: identifiers only.
+type MaskArgs struct {
+	TenantID id.TenantID `json:"tenant_id"`
+	AssetID  id.AssetID  `json:"asset_id"`
+}
+
+// Kind implements jobs.Args.
+func (MaskArgs) Kind() string { return MaskKind }
+
 // Enqueuer inserts a job in the caller's transaction. *jobs.Queue implements it.
 type Enqueuer interface {
 	Enqueue(ctx context.Context, tx pgx.Tx, args jobs.Args, opts *jobs.EnqueueOpts) (int64, error)
@@ -223,7 +236,7 @@ func (s *Service) List(ctx context.Context, tenantID id.TenantID, after id.Asset
 // Commit finishes the upload of an asset and hands it to processing: it completes a multipart
 // upload from the parts edge recorded, verifies that the source object exists with exactly the
 // declared size, then in one transaction moves the asset to committed, ends the upload token and
-// enqueues asset.process. It is idempotent: committing an asset that is already committed (or
+// enqueues asset.process (and asset.mask for a mask_faces asset). It is idempotent: committing an asset that is already committed (or
 // further along) returns it without enqueueing again.
 func (s *Service) Commit(ctx context.Context, tenantID id.TenantID, actor Actor, assetID id.AssetID) (db.Asset, error) {
 	a, err := s.Get(ctx, tenantID, assetID)
@@ -264,7 +277,14 @@ func (s *Service) Commit(ctx context.Context, tenantID id.TenantID, actor Actor,
 		if err := s.audit(ctx, r, tenantID, actor, AuditAssetCommit, assetID); err != nil {
 			return err
 		}
-		_, err = s.queue.Enqueue(ctx, tx, ProcessArgs{TenantID: tenantID, AssetID: assetID}, nil)
+		if _, err := s.queue.Enqueue(ctx, tx, ProcessArgs{TenantID: tenantID, AssetID: assetID}, nil); err != nil {
+			return err
+		}
+		if !committed.MaskFaces {
+			return nil
+		}
+		// The masked variant is built beside the original, not after it (ADR 0037).
+		_, err = s.queue.Enqueue(ctx, tx, MaskArgs{TenantID: tenantID, AssetID: assetID}, nil)
 		return err
 	})
 	if errors.Is(err, db.ErrStateChanged) {

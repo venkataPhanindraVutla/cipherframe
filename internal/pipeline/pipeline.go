@@ -20,8 +20,9 @@
 // artifact rows, reuses the content key, and runs every step again.
 //
 // An asset created with mask_faces gets a second job, asset.mask (mask.go, ADR 0036), enqueued in the
-// same transaction that makes the asset ready. It hands the source to the masker through the job's
-// private directory, then runs the masked file through the same steps into the "masked" variant.
+// same transaction that commits the upload (ADR 0037) and run on its own queue, in parallel with
+// asset.process. It hands the source to the masker through the job's private directory, runs the
+// masked file through the same steps, and publishes the "masked" variant once the asset is ready.
 package pipeline
 
 import (
@@ -82,9 +83,13 @@ type Deps struct {
 	Tasks Tasks
 	// MaskTimeout bounds the wait for the masker (CIPHERFRAME_WORKER_MASK_TIMEOUT). Required with Tasks.
 	MaskTimeout time.Duration
-	// MaskPoll is how often the masking task is looked at; default jobs.DefaultAwaitPoll.
+	// MaskPoll is how often the masking task, and then the asset's state, is looked at; default
+	// jobs.DefaultAwaitPoll.
 	MaskPoll time.Duration
-	Log      *slog.Logger
+	// LadderHeights restricts the ladder of both variants to these rung heights
+	// (CIPHERFRAME_WORKER_LADDER_HEIGHTS); empty means every rung.
+	LadderHeights []int
+	Log           *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// ProgressInterval is how often the progress column is written; default 3 seconds.
@@ -127,7 +132,7 @@ func NewProcessor(d Deps) (*Processor, error) {
 	if err := prepareWorkDir(d.WorkDir); err != nil {
 		return nil, err
 	}
-	if n, err := sweepStaleJobDirs(d.WorkDir, d.TranscodeTimeout+d.MaskTimeout+staleJobGrace, d.Now()); err != nil {
+	if n, err := sweepStaleJobDirs(d.WorkDir, d.TranscodeTimeout+2*d.MaskTimeout+staleJobGrace, d.Now()); err != nil {
 		d.Log.Warn("could not sweep stale job directories", slog.String("error", err.Error()))
 	} else if n > 0 {
 		d.Log.Info("removed stale job directories", slog.Int("count", n))
@@ -193,8 +198,8 @@ func prepareWorkDir(dir string) error {
 const maskJobAttempts = 3
 
 // Register registers the asset.process job kind, and asset.mask when d.Tasks is set. The kinds are
-// only registered in the worker role. asset.mask holds a media queue slot while it waits for the
-// masker, so CIPHERFRAME_WORKER_MEDIA_CONCURRENCY should allow for it.
+// only registered in the worker role. asset.mask runs on its own queue (ADR 0037), so waiting for
+// the masker never takes a media slot from asset.process.
 func Register(reg *jobs.Registry, d Deps) error {
 	p, err := NewProcessor(d)
 	if err != nil {
@@ -207,14 +212,18 @@ func Register(reg *jobs.Registry, d Deps) error {
 		return nil
 	}
 	return jobs.Register(reg, p.HandleMask, jobs.KindConfig{
-		Timeout: d.MaskTimeout + d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia, MaxAttempts: maskJobAttempts,
+		// The masker, the wait for the original and the masked transcode each have their own limit.
+		Timeout: 2*d.MaskTimeout + d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMask, MaxAttempts: maskJobAttempts,
 	})
 }
 
-// Declare tells a process that only inserts asset.process jobs (the api role) which queue the kind
-// runs on, so its inserts land on the media queue the worker role serves.
+// Declare tells a process that only inserts jobs (the api role) which queue asset.process and
+// asset.mask run on, so its inserts land on the queues the worker role serves.
 func Declare(reg *jobs.Registry) error {
-	return jobs.Declare[uploads.ProcessArgs](reg, jobs.KindConfig{Queue: jobs.QueueMedia})
+	if err := jobs.Declare[uploads.ProcessArgs](reg, jobs.KindConfig{Queue: jobs.QueueMedia}); err != nil {
+		return err
+	}
+	return jobs.Declare[uploads.MaskArgs](reg, jobs.KindConfig{Queue: jobs.QueueMask})
 }
 
 // permanentError marks a failure that no retry can fix. The asset is failed with code.

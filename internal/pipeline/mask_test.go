@@ -367,8 +367,8 @@ func TestMaskRefusesASourceThatIsNotTheProcessedOne(t *testing.T) {
 	if err := m.runMask(1, 3); !isCancel(err) {
 		t.Fatalf("error = %v", err)
 	}
-	if len(m.tasks.created) != 0 {
-		t.Error("a task was created for a source that does not match")
+	if len(m.maskedKeys()) != 0 || m.repo.maskingCompletes != 0 {
+		t.Error("masked output was published for a source that does not match")
 	}
 	if a := m.repo.snapshot(); a.MaskingState != db.MaskingFailed {
 		t.Fatalf("masking state = %s", a.MaskingState)
@@ -423,8 +423,8 @@ func TestMaskAssetDeletedWhileMaskingLeavesNoOutput(t *testing.T) {
 		}
 		return succeededTask(env.TaskID, `{"faces_detected":1,"frames":9}`)
 	}
-	if err := m.runMask(1, 3); err != nil {
-		t.Fatal(err)
+	if err := m.runMask(1, 3); !isCancel(err) {
+		t.Fatalf("error = %v", err)
 	}
 	if len(m.maskedKeys()) != 0 || m.repo.maskingCompletes != 0 {
 		t.Errorf("masked output left for a deleted asset: %v", m.maskedKeys())
@@ -467,5 +467,72 @@ func TestRegisterAddsAssetMaskOnlyWithTasks(t *testing.T) {
 	d.MaskTimeout = 0
 	if _, err := NewProcessor(d); err == nil {
 		t.Error("tasks without a mask timeout were accepted")
+	}
+}
+
+// The mask job starts with the original still processing, finishes its own work, and publishes
+// only after the asset is ready (ADR 0037).
+func TestMaskWaitsUntilTheAssetIsReady(t *testing.T) {
+	m := newMaskHarness(t)
+	m.repo.asset.State = db.AssetProcessing
+	const readyAt = 5
+	m.repo.onGet = func(n int) {
+		if n < readyAt && len(m.maskedKeys()) != 0 {
+			t.Errorf("masked objects published before the asset was ready (look %d)", n)
+		}
+		if n == readyAt {
+			m.repo.mu.Lock()
+			m.repo.asset.State = db.AssetReady
+			m.repo.mu.Unlock()
+		}
+	}
+	if err := m.runMask(1, 3); err != nil {
+		t.Fatal(err)
+	}
+	if m.repo.gets < readyAt {
+		t.Fatalf("the job finished after %d looks at the asset, before it was ready", m.repo.gets)
+	}
+	if a := m.repo.snapshot(); a.State != db.AssetReady || a.MaskingState != db.MaskingReady || m.repo.maskingCompletes != 1 {
+		t.Fatalf("asset = %+v, completes = %d", a, m.repo.maskingCompletes)
+	}
+	if len(m.maskedKeys()) == 0 {
+		t.Error("no masked objects")
+	}
+	m.originalUntouched()
+}
+
+func TestMaskStopsWhenTheAssetFailsMeanwhile(t *testing.T) {
+	m := newMaskHarness(t)
+	m.repo.asset.State = db.AssetProcessing
+	m.repo.onGet = func(n int) {
+		if n == 4 {
+			m.repo.mu.Lock()
+			m.repo.asset.State = db.AssetFailed
+			m.repo.mu.Unlock()
+		}
+	}
+	if err := m.runMask(1, 3); !isCancel(err) {
+		t.Fatalf("error = %v", err)
+	}
+	if a := m.repo.snapshot(); a.MaskingState != db.MaskingFailed || m.repo.maskingCompletes != 0 {
+		t.Fatalf("masking = %q, completes = %d", a.MaskingState, m.repo.maskingCompletes)
+	}
+	if len(m.maskedKeys()) != 0 {
+		t.Errorf("masked objects left behind: %v", m.maskedKeys())
+	}
+}
+
+func TestMaskWaitForTheOriginalTimesOut(t *testing.T) {
+	m := newMaskHarness(t)
+	m.repo.asset.State = db.AssetProcessing
+	m.proc.MaskTimeout = 100 * time.Millisecond
+	m.tasks.get = func(env jobs.Envelope, _ int) jobs.Task {
+		return succeededTask(env.TaskID, `{"faces_detected":1,"frames":9}`)
+	}
+	if err := m.runMask(1, 3); !isCancel(err) {
+		t.Fatalf("error = %v", err)
+	}
+	if a := m.repo.snapshot(); a.MaskingState != db.MaskingFailed || len(m.maskedKeys()) != 0 {
+		t.Fatalf("masking = %q, masked objects = %v", a.MaskingState, m.maskedKeys())
 	}
 }

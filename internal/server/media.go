@@ -43,7 +43,6 @@ func checkMediaTools(ctx context.Context, cfg *config.Config, log *slog.Logger) 
 func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Queue, contentKeys *contentkey.Manager, proc *processing, log *slog.Logger) error {
 	cfg := proc.Config
 	repo := pipeline.NewDBRepo(pool)
-	repo.Queue = inserter // asset.mask is enqueued in the transaction that completes a masking asset
 	// The masker's hand-off tasks get an await job (ADR 0010): it requeues retryable failures and
 	// expires leases. asset.mask itself reads the outcome, so nothing is left to do on a result.
 	if err := jobs.RegisterExternal(reg, pool, jobs.ExternalConfig{
@@ -61,6 +60,7 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Q
 		Limits: media.Limits{
 			MaxDuration: cfg.Media.MaxSourceDuration, MaxWidth: cfg.Media.MaxSourceWidth, MaxHeight: cfg.Media.MaxSourceHeight,
 		},
+		LadderHeights:    cfg.Media.LadderHeights,
 		WorkDir:          cfg.Media.WorkDir,
 		TranscodeTimeout: cfg.Media.TranscodeTimeout,
 		Tasks:            pipeline.DBTasks{Pool: pool, Queue: inserter},

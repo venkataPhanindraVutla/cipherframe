@@ -418,8 +418,9 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 	}
 	jc := jobs.Config{Workers: workerConcurrency, Logger: log}
 	if proc != nil {
-		// asset.process has its own queue so a transcode never takes a slot from kms.rewrap.
-		jc.Queues = map[string]int{jobs.QueueMedia: proc.Config.Media.Concurrency}
+		// asset.process and asset.mask have their own queues so neither takes a slot from kms.rewrap
+		// or from the other (ADR 0037).
+		jc.Queues = map[string]int{jobs.QueueMedia: proc.Config.Media.Concurrency, jobs.QueueMask: proc.Config.Media.MaskConcurrency}
 	}
 	q, err := jobs.NewQueue(pool, reg, jc)
 	if err != nil {

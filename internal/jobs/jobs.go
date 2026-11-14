@@ -75,6 +75,9 @@ type KindConfig struct {
 // its own, separate worker count (Config.Queues).
 const QueueMedia = "media"
 
+// QueueMask is the queue of asset.mask, which runs beside asset.process (ADR 0037).
+const QueueMask = "mask"
+
 // queueNameRE and maxQueueName follow River's queue-name rules, which River does not export:
 // lowercase letters and numbers, optionally separated by single underscores or hyphens, at most
 // 64 characters.
