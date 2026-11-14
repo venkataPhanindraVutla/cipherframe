@@ -148,6 +148,11 @@ type Asset struct {
 	DurationMS      int64
 	Renditions      []byte
 	Progress        int
+	// MaskFaces is chosen at creation (ADR 0036). MaskingState is empty unless MaskFaces is set,
+	// then pending, ready or failed. FacesDetected is nil until the masker reports.
+	MaskFaces     bool
+	MaskingState  string
+	FacesDetected *int
 }
 
 // String implements fmt.Stringer without the source key or upload ID.

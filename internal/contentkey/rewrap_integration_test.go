@@ -28,6 +28,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/kmstest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/vault"
+	storekeys "github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // manager returns a Manager on the same database as e with another provider set, as a process
@@ -51,7 +52,7 @@ func (e *env) createN(t *testing.T, mgr *contentkey.Manager, n int) map[id.Asset
 		var k contentkey.ContentKey
 		err := db.Tx(ctx, e.pool, func(tx *db.Repos) error {
 			var err error
-			k, err = mgr.Create(ctx, tx, e.tenant.ID, asset)
+			k, err = mgr.Create(ctx, tx, e.tenant.ID, asset, storekeys.Original)
 			return err
 		})
 		if err != nil {
@@ -182,7 +183,7 @@ func (e *env) usage(t *testing.T) []db.KEKUsage {
 func (e *env) assertKeys(t *testing.T, mgr *contentkey.Manager, want map[id.AssetID][]byte) {
 	t.Helper()
 	for asset, key := range want {
-		got, err := mgr.Get(context.Background(), e.tenant.ID, asset)
+		got, err := mgr.Get(context.Background(), e.tenant.ID, asset, storekeys.Original)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -416,7 +417,7 @@ func TestLogsNeverHoldKeyMaterial(t *testing.T) {
 
 	keys := e.createN(t, e.mgr, 3)
 	for asset := range keys {
-		_, err := e.mgr.Get(ctx, e.tenant.ID, asset)
+		_, err := e.mgr.Get(ctx, e.tenant.ID, asset, storekeys.Original)
 		note(err)
 	}
 
@@ -434,14 +435,14 @@ func TestLogsNeverHoldKeyMaterial(t *testing.T) {
 	asset := e.newAsset(t, e.tenant, e.client)
 	for _, a := range []id.AssetID{asset} {
 		err := db.Tx(ctx, e.pool, func(tx *db.Repos) error {
-			_, err := down.Create(ctx, tx, e.tenant.ID, a)
+			_, err := down.Create(ctx, tx, e.tenant.ID, a, storekeys.Original)
 			return err
 		})
 		wantCode(t, err, errs.DependencyUnavailable)
 		note(err)
 	}
 	for a := range keys {
-		_, err := down.Get(ctx, e.tenant.ID, a)
+		_, err := down.Get(ctx, e.tenant.ID, a, storekeys.Original)
 		wantCode(t, err, errs.DependencyUnavailable)
 		note(err)
 		break
@@ -454,7 +455,7 @@ func TestLogsNeverHoldKeyMaterial(t *testing.T) {
 	f.SetOutage(false)
 	f.SetIntegrityFailure(true)
 	for a := range keys {
-		_, err := down.Get(ctx, e.tenant.ID, a)
+		_, err := down.Get(ctx, e.tenant.ID, a, storekeys.Original)
 		wantCode(t, err, errs.InternalError)
 		note(err)
 		break
@@ -691,7 +692,7 @@ func TestRewrapOutageOfVaultMidRun(t *testing.T) {
 	}
 	// Keys still on local stay readable while the key service is down.
 	for i := 2; i < len(after); i++ {
-		got, err := mgr.Get(ctx, e.tenant.ID, after[i].AssetID)
+		got, err := mgr.Get(ctx, e.tenant.ID, after[i].AssetID, storekeys.Original)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -700,6 +701,6 @@ func TestRewrapOutageOfVaultMidRun(t *testing.T) {
 		}
 	}
 	// A key on the unavailable provider fails closed, as retryable.
-	_, err := mgr.Get(ctx, e.tenant.ID, after[0].AssetID)
+	_, err := mgr.Get(ctx, e.tenant.ID, after[0].AssetID, storekeys.Original)
 	wantCode(t, err, errs.DependencyUnavailable)
 }

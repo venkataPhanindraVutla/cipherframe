@@ -195,7 +195,7 @@ func (q *Queries) EndStalePlaybackSessions(ctx context.Context, arg EndStalePlay
 }
 
 const getPlaybackSession = `-- name: GetPlaybackSession :one
-SELECT id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at FROM playback_sessions WHERE tenant_id = $1 AND id_hash = $2
+SELECT id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at, variant FROM playback_sessions WHERE tenant_id = $1 AND id_hash = $2
 `
 
 type GetPlaybackSessionParams struct {
@@ -224,6 +224,7 @@ func (q *Queries) GetPlaybackSession(ctx context.Context, arg GetPlaybackSession
 		&i.AuthMethod,
 		&i.SegmentsServed,
 		&i.KeyServedAt,
+		&i.Variant,
 	)
 	return i, err
 }
@@ -276,7 +277,7 @@ WHERE tenant_id = $2::uuid
   AND expires_at > $1::timestamptz
   AND last_heartbeat_at > $1::timestamptz - make_interval(secs => $5::integer)
   AND last_heartbeat_at <= $1::timestamptz - make_interval(secs => $6::integer)
-RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at, variant
 `
 
 type HeartbeatPlaybackSessionParams struct {
@@ -320,26 +321,28 @@ func (q *Queries) HeartbeatPlaybackSession(ctx context.Context, arg HeartbeatPla
 		&i.AuthMethod,
 		&i.SegmentsServed,
 		&i.KeyServedAt,
+		&i.Variant,
 	)
 	return i, err
 }
 
 const insertPlaybackSession = `-- name: InsertPlaybackSession :one
 INSERT INTO playback_sessions (
-    id_hash, tenant_id, client_id, auth_method, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at
+    id_hash, tenant_id, client_id, auth_method, asset_id, variant, viewer_id, state, created_at, last_heartbeat_at, expires_at
 )
 SELECT $1::bytea, a.tenant_id, $2::uuid, $3::text, a.id,
-       $4::text,
-       'active', $5::timestamptz, $5::timestamptz, $6::timestamptz
+       $4::text, $5::text,
+       'active', $6::timestamptz, $6::timestamptz, $7::timestamptz
 FROM assets a
-WHERE a.id = $7::uuid AND a.tenant_id = $8::uuid AND a.state = 'ready'
-RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at
+WHERE a.id = $8::uuid AND a.tenant_id = $9::uuid AND a.state = 'ready'
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at, variant
 `
 
 type InsertPlaybackSessionParams struct {
 	IDHash     []byte
 	ClientID   pgtype.UUID
 	AuthMethod string
+	Variant    string
 	ViewerID   string
 	Now        time.Time
 	ExpiresAt  time.Time
@@ -353,6 +356,7 @@ func (q *Queries) InsertPlaybackSession(ctx context.Context, arg InsertPlaybackS
 		arg.IDHash,
 		arg.ClientID,
 		arg.AuthMethod,
+		arg.Variant,
 		arg.ViewerID,
 		arg.Now,
 		arg.ExpiresAt,
@@ -378,6 +382,7 @@ func (q *Queries) InsertPlaybackSession(ctx context.Context, arg InsertPlaybackS
 		&i.AuthMethod,
 		&i.SegmentsServed,
 		&i.KeyServedAt,
+		&i.Variant,
 	)
 	return i, err
 }
@@ -475,7 +480,7 @@ const revokePlaybackSession = `-- name: RevokePlaybackSession :one
 UPDATE playback_sessions SET state = 'revoked', revoked_at = $1::timestamptz,
     revoke_reason = $2::text
 WHERE tenant_id = $3::uuid AND id_hash = $4::bytea AND state = 'active'
-RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at
+RETURNING id_hash, tenant_id, client_id, asset_id, viewer_id, state, created_at, last_heartbeat_at, expires_at, ended_at, revoked_at, revoke_reason, key_window_start, key_window_count, auth_method, segments_served, key_served_at, variant
 `
 
 type RevokePlaybackSessionParams struct {
@@ -512,6 +517,7 @@ func (q *Queries) RevokePlaybackSession(ctx context.Context, arg RevokePlaybackS
 		&i.AuthMethod,
 		&i.SegmentsServed,
 		&i.KeyServedAt,
+		&i.Variant,
 	)
 	return i, err
 }

@@ -160,6 +160,12 @@ func assetFromRow(r dbgen.Asset) Asset {
 		SourceSHA256:        r.SourceSha256,
 		Renditions:          r.Renditions,
 		Progress:            int(r.Progress),
+		MaskFaces:           r.MaskFaces,
+		MaskingState:        strVal(r.MaskingState),
+	}
+	if r.FacesDetected != nil {
+		n := int(*r.FacesDetected)
+		a.FacesDetected = &n
 	}
 	if r.SizeBytes != nil {
 		a.SizeBytes = *r.SizeBytes

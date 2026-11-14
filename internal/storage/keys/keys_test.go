@@ -28,6 +28,10 @@ func allKeys(t *testing.T, tn id.TenantID, a id.AssetID) []builtKey {
 		{"Segment0", keys.Delivery, keys.Segment(tn, a, r, 0)},
 		{"Segment9999", keys.Delivery, keys.Segment(tn, a, r, 9999)},
 		{"Poster", keys.Delivery, keys.Poster(tn, a)},
+		{"MaskedMaster", keys.Delivery, keys.VariantMaster(tn, a, keys.Masked)},
+		{"MaskedPlaylist", keys.Delivery, keys.VariantPlaylist(tn, a, keys.Masked, r)},
+		{"MaskedInitSegment", keys.Delivery, keys.VariantInitSegment(tn, a, keys.Masked, r)},
+		{"MaskedSegment7", keys.Delivery, keys.VariantSegment(tn, a, keys.Masked, r, 7)},
 	}
 }
 
@@ -121,9 +125,31 @@ func TestHLSPrefixCoversEveryHLSKeyAndNothingElse(t *testing.T) {
 	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
 	for _, k := range allKeys(t, tn, a) {
 		under := strings.HasPrefix(k.key, keys.HLSPrefix(tn, a))
-		isHLS := k.bucket == keys.Delivery && k.name != "Poster"
+		isHLS := k.bucket == keys.Delivery && k.name != "Poster" && !strings.HasPrefix(k.name, "Masked")
 		if under != isHLS {
 			t.Errorf("%s: under HLSPrefix = %v, want %v", k.name, under, isHLS)
 		}
+	}
+}
+
+func TestVariantLayout(t *testing.T) {
+	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
+	root := "t/" + tn.String() + "/a/" + a.String() + "/"
+	r, _ := keys.ParseRendition("720p")
+	if got, want := keys.Master(tn, a), root+"hls/master.m3u8"; got != want {
+		t.Errorf("original master moved: %q, want %q", got, want)
+	}
+	if got, want := keys.VariantMaster(tn, a, keys.Masked), root+"masked/hls/master.m3u8"; got != want {
+		t.Errorf("masked master = %q, want %q", got, want)
+	}
+	if got, want := keys.VariantSegment(tn, a, keys.Masked, r, 3), root+"masked/hls/720p/seg-3.m4s"; got != want {
+		t.Errorf("masked segment = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(keys.VariantHLSPrefix(tn, a, keys.Masked), keys.VariantHLSPrefix(tn, a, keys.Original)) ||
+		strings.HasPrefix(keys.VariantHLSPrefix(tn, a, keys.Original), keys.VariantHLSPrefix(tn, a, keys.Masked)) {
+		t.Error("variant prefixes overlap")
+	}
+	if keys.Variant("other").Valid() || !keys.Masked.Valid() || !keys.Original.Valid() {
+		t.Error("Variant.Valid is wrong")
 	}
 }

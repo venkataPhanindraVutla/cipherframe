@@ -24,7 +24,7 @@ type DeleteContentKeyByAssetParams struct {
 	AssetID  pgtype.UUID
 }
 
-// Crypto-shredding: the row is destroyed, not flagged. Returns the number of rows deleted.
+// Crypto-shredding: every variant's row is destroyed, not flagged. Returns the number of rows deleted.
 func (q *Queries) DeleteContentKeyByAsset(ctx context.Context, arg DeleteContentKeyByAssetParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteContentKeyByAsset, arg.TenantID, arg.AssetID)
 	if err != nil {
@@ -34,19 +34,21 @@ func (q *Queries) DeleteContentKeyByAsset(ctx context.Context, arg DeleteContent
 }
 
 const getContentKeyByAsset = `-- name: GetContentKeyByAsset :one
-SELECT k.id, k.asset_id, k.provider, k.kek_key_id, k.kek_version, k.envelope_version, k.wrapped, k.created_at, k.rewrapped_at FROM content_keys k
+SELECT k.id, k.asset_id, k.provider, k.kek_key_id, k.kek_version, k.envelope_version, k.wrapped, k.created_at, k.rewrapped_at, k.variant FROM content_keys k
 JOIN assets a ON a.id = k.asset_id
 WHERE a.tenant_id = $1::uuid AND k.asset_id = $2::uuid
+  AND k.variant = $3::text
 `
 
 type GetContentKeyByAssetParams struct {
 	TenantID pgtype.UUID
 	AssetID  pgtype.UUID
+	Variant  string
 }
 
-// Tenant-scoped lookup through the asset.
+// Tenant-scoped lookup of one variant's key through the asset.
 func (q *Queries) GetContentKeyByAsset(ctx context.Context, arg GetContentKeyByAssetParams) (ContentKey, error) {
-	row := q.db.QueryRow(ctx, getContentKeyByAsset, arg.TenantID, arg.AssetID)
+	row := q.db.QueryRow(ctx, getContentKeyByAsset, arg.TenantID, arg.AssetID, arg.Variant)
 	var i ContentKey
 	err := row.Scan(
 		&i.ID,
@@ -58,21 +60,23 @@ func (q *Queries) GetContentKeyByAsset(ctx context.Context, arg GetContentKeyByA
 		&i.Wrapped,
 		&i.CreatedAt,
 		&i.RewrappedAt,
+		&i.Variant,
 	)
 	return i, err
 }
 
 const insertContentKey = `-- name: InsertContentKey :one
-INSERT INTO content_keys (id, asset_id, provider, kek_key_id, kek_version, envelope_version, wrapped)
-SELECT $1::uuid, a.id, $2::text, $3::text,
-       $4::text, $5::smallint, $6::bytea
+INSERT INTO content_keys (id, asset_id, variant, provider, kek_key_id, kek_version, envelope_version, wrapped)
+SELECT $1::uuid, a.id, $2::text, $3::text, $4::text,
+       $5::text, $6::smallint, $7::bytea
 FROM assets a
-WHERE a.id = $7::uuid AND a.tenant_id = $8::uuid
-RETURNING id, asset_id, provider, kek_key_id, kek_version, envelope_version, wrapped, created_at, rewrapped_at
+WHERE a.id = $8::uuid AND a.tenant_id = $9::uuid
+RETURNING id, asset_id, provider, kek_key_id, kek_version, envelope_version, wrapped, created_at, rewrapped_at, variant
 `
 
 type InsertContentKeyParams struct {
 	ID              pgtype.UUID
+	Variant         string
 	Provider        string
 	KekKeyID        string
 	KekVersion      string
@@ -83,10 +87,12 @@ type InsertContentKeyParams struct {
 }
 
 // The asset must belong to the tenant; otherwise no row is inserted (not_found). A second key for
-// the same asset violates content_keys_asset_id_key (conflict): there is one key per asset (I7).
+// the same asset and variant violates content_keys_asset_id_variant_key (conflict): there is one key
+// per variant of an asset (I7, ADR 0036).
 func (q *Queries) InsertContentKey(ctx context.Context, arg InsertContentKeyParams) (ContentKey, error) {
 	row := q.db.QueryRow(ctx, insertContentKey,
 		arg.ID,
+		arg.Variant,
 		arg.Provider,
 		arg.KekKeyID,
 		arg.KekVersion,
@@ -106,12 +112,13 @@ func (q *Queries) InsertContentKey(ctx context.Context, arg InsertContentKeyPara
 		&i.Wrapped,
 		&i.CreatedAt,
 		&i.RewrappedAt,
+		&i.Variant,
 	)
 	return i, err
 }
 
 const listContentKeysForRewrap = `-- name: ListContentKeysForRewrap :many
-SELECT id, asset_id, provider, kek_key_id, kek_version, envelope_version, wrapped, created_at, rewrapped_at FROM content_keys
+SELECT id, asset_id, provider, kek_key_id, kek_version, envelope_version, wrapped, created_at, rewrapped_at, variant FROM content_keys
 WHERE provider = $1::text
   AND kek_key_id = $2::text
   AND kek_version = $3::text
@@ -154,6 +161,7 @@ func (q *Queries) ListContentKeysForRewrap(ctx context.Context, arg ListContentK
 			&i.Wrapped,
 			&i.CreatedAt,
 			&i.RewrappedAt,
+			&i.Variant,
 		); err != nil {
 			return nil, err
 		}

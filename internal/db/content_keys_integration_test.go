@@ -10,13 +10,14 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 var kekV1 = db.KEKRef{Provider: "local", KeyID: "local", Version: "1"}
 
 func newRow(assetID id.AssetID, kek db.KEKRef) db.NewContentKeyRow {
 	return db.NewContentKeyRow{
-		ID: id.New[id.ContentKeyKind](), AssetID: assetID, KEK: kek,
+		ID: id.New[id.ContentKeyKind](), AssetID: assetID, Variant: keys.Original, KEK: kek,
 		EnvelopeVersion: 1, Wrapped: bytes.Repeat([]byte{7}, 45),
 	}
 }
@@ -39,7 +40,7 @@ func TestContentKeyRepo(t *testing.T) {
 		!bytes.Equal(row.Wrapped, in.Wrapped) || row.RewrappedAt != nil || row.CreatedAt.IsZero() {
 		t.Fatalf("unexpected row: %+v", row)
 	}
-	got, err := r.GetContentKey(ctx, f.tenant.ID, a.ID)
+	got, err := r.GetContentKey(ctx, f.tenant.ID, a.ID, keys.Original)
 	if err != nil || got.ID != row.ID {
 		t.Fatalf("GetContentKey = %+v, %v", got, err)
 	}
@@ -47,7 +48,7 @@ func TestContentKeyRepo(t *testing.T) {
 	// One key per asset (I7): a second insert conflicts and leaves the first untouched.
 	_, err = r.CreateContentKey(ctx, f.tenant.ID, newRow(a.ID, kekV1))
 	wantCode(t, err, errs.Conflict)
-	got, err = r.GetContentKey(ctx, f.tenant.ID, a.ID)
+	got, err = r.GetContentKey(ctx, f.tenant.ID, a.ID, keys.Original)
 	if err != nil || got.ID != row.ID {
 		t.Fatal("the existing key changed after a conflicting insert")
 	}
@@ -63,7 +64,7 @@ func TestContentKeyRepo(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("DeleteContentKey = %d, %v", n, err)
 	}
-	_, err = r.GetContentKey(ctx, f.tenant.ID, a.ID)
+	_, err = r.GetContentKey(ctx, f.tenant.ID, a.ID, keys.Original)
 	wantCode(t, err, errs.NotFound)
 	if n, err := r.DeleteContentKey(ctx, f.tenant.ID, a.ID); err != nil || n != 0 {
 		t.Fatalf("second delete = %d, %v; want 0", n, err)
@@ -91,12 +92,12 @@ func TestContentKeyTenantIsolation(t *testing.T) {
 	if _, err := r.CreateContentKey(ctx, f1.tenant.ID, newRow(a1.ID, kekV1)); err != nil {
 		t.Fatal(err)
 	}
-	_, err = r.GetContentKey(ctx, f2.tenant.ID, a1.ID)
+	_, err = r.GetContentKey(ctx, f2.tenant.ID, a1.ID, keys.Original)
 	wantCode(t, err, errs.NotFound)
 	if n, err := r.DeleteContentKey(ctx, f2.tenant.ID, a1.ID); err != nil || n != 0 {
 		t.Fatalf("cross-tenant delete = %d, %v; want 0", n, err)
 	}
-	if _, err := r.GetContentKey(ctx, f1.tenant.ID, a1.ID); err != nil {
+	if _, err := r.GetContentKey(ctx, f1.tenant.ID, a1.ID, keys.Original); err != nil {
 		t.Fatal("the owner's key was affected by another tenant")
 	}
 }
@@ -156,7 +157,7 @@ func TestContentKeyRewrapListing(t *testing.T) {
 	if err != nil || !moved {
 		t.Fatalf("UpdateContentKeyWrapped = %v, %v", moved, err)
 	}
-	got, err := r.GetContentKey(ctx, f.tenant.ID, rows[0].AssetID)
+	got, err := r.GetContentKey(ctx, f.tenant.ID, rows[0].AssetID, keys.Original)
 	if err != nil || got.KEK != kekV2 || got.RewrappedAt == nil || !bytes.Equal(got.Wrapped, bytes.Repeat([]byte{9}, 45)) {
 		t.Fatalf("after rewrap: %+v, %v", got, err)
 	}

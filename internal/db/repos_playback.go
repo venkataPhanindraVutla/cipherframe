@@ -13,6 +13,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbgen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // PlaybackSettings are a tenant's playback parameters (ADR 0028, 0030). A tenant without a stored
@@ -82,6 +83,7 @@ type PlaybackSession struct {
 	ClientID        id.ClientID
 	AuthMethod      string
 	AssetID         id.AssetID
+	Variant         keys.Variant
 	ViewerID        string
 	State           string
 	CreatedAt       time.Time
@@ -134,6 +136,7 @@ func sessionFromRow(r dbgen.PlaybackSession) PlaybackSession {
 		ClientID:        fromPG[id.ClientKind](r.ClientID),
 		AuthMethod:      r.AuthMethod,
 		AssetID:         fromPG[id.AssetKind](r.AssetID),
+		Variant:         keys.Variant(r.Variant),
 		ViewerID:        r.ViewerID,
 		State:           r.State,
 		CreatedAt:       r.CreatedAt.UTC(),
@@ -248,9 +251,11 @@ type NewPlaybackSession struct {
 	// AuthMethod is one of the AuthMethod constants; empty means AuthMethodAPIKey.
 	AuthMethod string
 	AssetID    id.AssetID
-	ViewerID   string
-	Now        time.Time
-	ExpiresAt  time.Time
+	// Variant is the variant the session may fetch; empty means keys.Original.
+	Variant   keys.Variant
+	ViewerID  string
+	Now       time.Time
+	ExpiresAt time.Time
 }
 
 // InsertPlaybackSession stores an active session under the hash of its ID. The asset must belong
@@ -281,12 +286,15 @@ func (r *Repos) InsertPlaybackSession(ctx context.Context, in NewPlaybackSession
 	if err != nil {
 		return PlaybackSession{}, err
 	}
-	if in.ID.IsZero() || in.ViewerID == "" || !in.ExpiresAt.After(in.Now) {
+	if in.Variant == "" {
+		in.Variant = keys.Original
+	}
+	if !in.Variant.Valid() || in.ID.IsZero() || in.ViewerID == "" || !in.ExpiresAt.After(in.Now) {
 		return PlaybackSession{}, errs.New(errs.InvalidRequest, "invalid playback session")
 	}
 	row, err := r.q.InsertPlaybackSession(ctx, dbgen.InsertPlaybackSessionParams{
 		IDHash: SessionHash(in.ID), ClientID: cid, AuthMethod: in.AuthMethod, ViewerID: in.ViewerID, Now: in.Now,
-		ExpiresAt: in.ExpiresAt, AssetID: aid, TenantID: tid,
+		ExpiresAt: in.ExpiresAt, AssetID: aid, Variant: in.Variant.String(), TenantID: tid,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
