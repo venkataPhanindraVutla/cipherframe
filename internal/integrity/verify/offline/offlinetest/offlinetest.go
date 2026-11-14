@@ -124,7 +124,7 @@ func New(t testing.TB) *Fixture {
 	f.Files["masked"] = mpaths
 	f.Built, err = manifest.WithMasked(built.Manifest, manifest.MaskedInput{
 		CreatedAt: time.Date(2026, 11, 14, 8, 0, 0, 0, time.UTC), FacesDetected: 3, Frames: 100,
-		Rungs: []manifest.Rung{{Name: "720p", CRF: 23, MaxrateKbps: 3000, BufsizeKbps: 6000, AudioKbps: 128}},
+		Rungs:      []manifest.Rung{{Name: "720p", CRF: 23, MaxrateKbps: 3000, BufsizeKbps: 6000, AudioKbps: 128}},
 		Renditions: mrends, Master: mmaster,
 	})
 	if err != nil {

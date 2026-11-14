@@ -1,0 +1,46 @@
+// Command cipherframe is the Cipherframe command line tool. It currently has one working
+// subcommand, verify, which checks files against a signed manifest with public keys only
+// (ADR 0039). It is a static binary with no server dependencies.
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/venkataPhanindraVutla/cipherframe/internal/version"
+)
+
+const usage = `cipherframe: Cipherframe command line tool
+
+Usage:
+  cipherframe verify --manifest m.json (--keys keys.json | --keys-url URL) [--variant original|masked]
+                     [--path P] [--root DIR] [--json] <file-or-dir>...
+  cipherframe verify --manifest m.json (--keys keys.json | --keys-url URL) --proof p.json <file>
+  cipherframe version
+  cipherframe help
+
+Exit codes for verify: 0 all ours, 1 any modified, 2 any cannot say (none modified), 3 usage error.
+`
+
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return exitUsage
+	}
+	switch args[0] {
+	case "verify":
+		return runVerify(args[1:], stdout, stderr)
+	case "version", "--version":
+		info := version.Get()
+		fmt.Fprintf(stdout, "cipherframe %s %s\n", info.Version, info.GoVersion)
+		return 0
+	case "help", "-h", "--help":
+		fmt.Fprint(stdout, usage)
+		return 0
+	}
+	fmt.Fprintf(stderr, "cipherframe: unknown command %q\n\n%s", args[0], usage)
+	return exitUsage
+}

@@ -125,8 +125,10 @@ func TestParseKeySet(t *testing.T) {
 	if err != nil || len(ks) != 0 {
 		t.Errorf("an unknown status must not be trusted: %v %v", ks, err)
 	}
-	for _, bad := range []string{``, `{}`, `{"keys":[{"keyid":"","alg":"ed25519"}]}`,
-		`{"keys":[{"keyid":"x","alg":"ed25519","status":"active","public_key":"AAAA"}]}`} {
+	for _, bad := range []string{
+		``, `{}`, `{"keys":[{"keyid":"","alg":"ed25519"}]}`,
+		`{"keys":[{"keyid":"x","alg":"ed25519","status":"active","public_key":"AAAA"}]}`,
+	} {
 		if _, err := offline.ParseKeySet([]byte(bad)); !errors.Is(err, verify.ErrMalformed) {
 			t.Errorf("%q: %v", bad, err)
 		}
