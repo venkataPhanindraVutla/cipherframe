@@ -266,6 +266,8 @@ asset to `ready` (ADR 0024). Job arguments are the tenant and asset IDs and noth
 The job runs on its own River queue, `media`, apart from the default queue that carries `kms.rewrap`. A worker
 process works `CIPHERFRAME_WORKER_MEDIA_CONCURRENCY` media jobs at once (default 1, because one FFmpeg run
 already uses every core) and 10 default-queue jobs; the api role inserts into `media` directly.
+`asset.mask` has a queue of its own, `mask` (`CIPHERFRAME_WORKER_MASK_CONCURRENCY`, default 1), so the two
+overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder to a subset of the rungs.
 
 1. **Claim.** Compare-and-set `committed -> processing`. A retried job finds the asset already
    `processing` and carries on; an asset that is `ready`, `failed` or `deleted` needs no work and the
@@ -316,16 +318,18 @@ variant of an asset created with `mask_faces` (ADR 0036) uses the same names und
 the other.
 
 **Masked variant.** An asset created with `mask_faces` (ADR 0036) gets a second job, `asset.mask`
-(`internal/pipeline/mask.go`, media queue), enqueued in the transaction of step 9. The job runs
+(`internal/pipeline/mask.go`, `mask` queue), enqueued by the upload commit in the same transaction as
+`asset.process` (ADR 0037), so it runs beside the original's processing. The job runs
 start to finish on one worker so plaintext stays on that worker's disk: it clears the masked prefix
-and its artifact rows, streams the source into a private `job-mask-*` directory (checking it against
-the hash recorded in step 3), creates a `media.mask_faces` row in the `external_tasks` hand-off table
+and its artifact rows, streams the source into a private `job-mask-*` directory (checking its size at once and its hash
+against the one recorded in step 3 once the asset is ready), creates a `media.mask_faces` row in the `external_tasks` hand-off table
 ([ADR 0010](adr/0010-language-neutral-job-contract.md)) with the input and output paths relative to the work
 directory, and polls the row until it succeeds, fails for good or `CIPHERFRAME_WORKER_MASK_TIMEOUT`
 passes. The await job of the hand-off requeues retryable failures and expires leases. The masker (a
 Python worker beside the Go worker, sharing the work directory and running as the same UID) writes
-`masked.mp4` into the job directory. The job then probes it and runs steps 5 to 8 on it with the
-masked content key into `masked/hls/`, registers the objects with `variant = masked`, adds a `masked`
+`masked.mp4` into the job directory. The job then probes it and runs steps 5 to 8 on it, but before
+step 7 (encrypt and upload) it polls until the asset is `ready`; if the asset failed or was deleted it stops and
+removes the masked prefix. It encrypts with the masked content key into `masked/hls/`, registers the objects with `variant = masked`, adds a `masked`
 section to the manifest, signs it again, and in one transaction records the artifacts, replaces the
 manifest and sets `masking_state = ready` and `faces_detected`. Failure sets `masking_state = failed`,
 removes the masked prefix only, and leaves the original variant untouched. The source object is not
