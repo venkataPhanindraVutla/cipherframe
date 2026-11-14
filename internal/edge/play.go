@@ -82,9 +82,9 @@ type KeyStore interface {
 	MarkPlaybackKeyServed(ctx context.Context, tenantID id.TenantID, sessionHash []byte, now time.Time) error
 }
 
-// ContentKeyReader unwraps an asset's content key. *contentkey.Manager implements it.
+// ContentKeyReader unwraps the content key of one variant of an asset. *contentkey.Manager implements it.
 type ContentKeyReader interface {
-	Get(ctx context.Context, tenant id.TenantID, asset id.AssetID) (contentkey.ContentKey, error)
+	Get(ctx context.Context, tenant id.TenantID, asset id.AssetID, variant keys.Variant) (contentkey.ContentKey, error)
 }
 
 // PlaybackDeps are the collaborators of Playback.
@@ -207,8 +207,11 @@ func (p *Playback) tenantOfSession(ctx context.Context, hash []byte) (id.TenantI
 
 // grant is what the guard learned from a verified request and the handlers need.
 type grant struct {
-	tenant  id.TenantID
-	asset   id.AssetID
+	tenant id.TenantID
+	asset  id.AssetID
+	// variant is the variant the session is bound to. Every storage key and the content key are
+	// resolved from it, never from anything the request says (ADR 0036).
+	variant keys.Variant
 	session id.SessionID
 	// urlToken is the token to put in rewritten URIs: set only when the tenant has token_in_url on.
 	urlToken string
@@ -240,7 +243,7 @@ var reSegmentFile = regexp.MustCompile(`^seg-(0|[1-9][0-9]{0,8})\.m4s$`)
 
 func segmentObject(g grant, rend keys.Rendition, file string) (key, contentType string, ok bool) {
 	if file == "init.mp4" {
-		return keys.InitSegment(g.tenant, g.asset, rend), "video/mp4", true
+		return keys.VariantInitSegment(g.tenant, g.asset, g.variant, rend), "video/mp4", true
 	}
 	m := reSegmentFile.FindStringSubmatch(file)
 	if m == nil {
@@ -250,7 +253,7 @@ func segmentObject(g grant, rend keys.Rendition, file string) (key, contentType 
 	if err != nil {
 		return "", "", false
 	}
-	return keys.Segment(g.tenant, g.asset, rend, n), "video/iso.segment", true
+	return keys.VariantSegment(g.tenant, g.asset, g.variant, rend, n), "video/iso.segment", true
 }
 
 // maxPresignTTL is the longest lifetime of a presigned segment URL (ADR 0032).
@@ -311,7 +314,7 @@ func (s *server) GetPlaybackMaster(ctx context.Context, _ gen.GetPlaybackMasterR
 	if err != nil {
 		return nil, err
 	}
-	src, err := s.play.readPlaylist(ctx, keys.Master(g.tenant, g.asset))
+	src, err := s.play.readPlaylist(ctx, keys.VariantMaster(g.tenant, g.asset, g.variant))
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +339,7 @@ func (s *server) GetPlaybackMedia(ctx context.Context, req gen.GetPlaybackMediaR
 	if err != nil {
 		return nil, errs.New(errs.NotFound, "No such resource.")
 	}
-	src, err := s.play.readPlaylist(ctx, keys.Playlist(g.tenant, g.asset, rend))
+	src, err := s.play.readPlaylist(ctx, keys.VariantPlaylist(g.tenant, g.asset, g.variant, rend))
 	if err != nil {
 		return nil, err
 	}

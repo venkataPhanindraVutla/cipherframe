@@ -181,7 +181,7 @@ func (r *rig) process(a db.Asset) error {
 
 func (r *rig) key(a db.Asset) []byte {
 	r.t.Helper()
-	k, err := r.mgr.Get(context.Background(), a.TenantID, a.ID)
+	k, err := r.mgr.Get(context.Background(), a.TenantID, a.ID, keys.Original)
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -778,7 +778,7 @@ func TestPipelineRejectsNonMedia(t *testing.T) {
 	if es, _ := os.ReadDir(r.workDir); len(es) != 0 {
 		t.Errorf("work directory not empty: %v", es)
 	}
-	if _, err := r.mgr.Get(context.Background(), a.TenantID, a.ID); err == nil {
+	if _, err := r.mgr.Get(context.Background(), a.TenantID, a.ID, keys.Original); err == nil {
 		t.Error("a content key was created for a file that never got that far")
 	}
 }

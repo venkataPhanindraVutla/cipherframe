@@ -393,3 +393,64 @@ func parseTime(t *testing.T, s string) time.Time {
 	}
 	return v
 }
+
+func TestCreatePlaybackSessionVariants(t *testing.T) {
+	h := newHarness(t)
+	key, res := h.bootstrap("acme")
+	h.setSettings(res, func(s *db.PlaybackSettings) { s.MaxSessionsPerViewer = 0 })
+	create := func(asset db.Asset, variant any) resp {
+		body := map[string]any{"asset_id": asset.ID.String(), "viewer_id": "viewer-v"}
+		if variant != nil {
+			body["variant"] = variant
+		}
+		return h.do(key, "POST", "/v1/playback-sessions", body)
+	}
+	tokenVariant := func(r resp) string {
+		t.Helper()
+		c, err := h.keyring.Open(str(r.m, "token"), h.clk.Now(), token.ScopeManifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.Variant
+	}
+
+	// An asset without masking: original by default; masked is a 409.
+	plain := h.newAsset(res, db.AssetReady)
+	r := h.mustOK(create(plain, nil), 201)
+	if str(r.m, "variant") != "original" || tokenVariant(r) != "original" {
+		t.Fatalf("plain default: %s", r.raw)
+	}
+	h.wantStatus(create(plain, "masked"), 409, "variant_unavailable")
+	h.wantStatus(create(plain, "sepia"), 400, "invalid_request")
+
+	// An asset with masking: the default is masked, never the original.
+	m := h.newAsset(res, db.AssetReady)
+	if _, err := h.pool.Exec(context.Background(), "UPDATE assets SET mask_faces = true, masking_state = 'pending' WHERE id = $1", m.ID.UUID()); err != nil {
+		t.Fatal(err)
+	}
+	h.wantStatus(create(m, nil), 409, "variant_not_ready")
+	h.wantStatus(create(m, "masked"), 409, "variant_not_ready")
+	r = h.mustOK(create(m, "original"), 201)
+	if str(r.m, "variant") != "original" {
+		t.Fatalf("explicit original: %s", r.raw)
+	}
+	faces := 2
+	if _, err := h.repos.SetAssetMasking(context.Background(), res.Tenant.ID, m.ID, db.MaskingReady, &faces, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	r = h.mustOK(create(m, nil), 201)
+	if str(r.m, "variant") != "masked" || tokenVariant(r) != "masked" {
+		t.Fatalf("masking default: %s", r.raw)
+	}
+	sid, err := id.ParseSession(str(r.m, "session_id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row, err := h.repos.GetPlaybackSession(context.Background(), res.Tenant.ID, db.SessionHash(sid)); err != nil || row.Variant != "masked" {
+		t.Fatalf("row: %+v, %v", row, err)
+	}
+	r = h.mustOK(create(m, "original"), 201)
+	if str(r.m, "variant") != "original" {
+		t.Fatalf("original on a masking asset: %s", r.raw)
+	}
+}

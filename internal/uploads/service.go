@@ -110,6 +110,7 @@ type CreateInput struct {
 	SizeBytes   int64
 	ContentType string
 	Method      db.UploadMethod
+	MaskFaces   bool // ADR 0036
 }
 
 // Instructions tell the caller how to upload. Token is the only place the upload token ever
@@ -161,6 +162,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 		asset, err = r.CreateUploadAsset(ctx, db.NewUploadAsset{
 			ID: assetID, TenantID: in.TenantID, ClientID: in.Actor.ClientID, SizeBytes: in.SizeBytes,
 			ContentType: in.ContentType, Method: in.Method, SourceKey: key, S3UploadID: uploadID, ExpiresAt: expires,
+			MaskFaces: in.MaskFaces,
 		})
 		if err != nil {
 			return err

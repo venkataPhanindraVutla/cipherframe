@@ -72,7 +72,7 @@ func (q *Queries) CountContentKeysNotOnKEK(ctx context.Context, arg CountContent
 }
 
 const listContentKeysNotOnKEK = `-- name: ListContentKeysNotOnKEK :many
-SELECT id, asset_id, provider, kek_key_id, kek_version, envelope_version, wrapped, created_at, rewrapped_at FROM content_keys
+SELECT id, asset_id, provider, kek_key_id, kek_version, envelope_version, wrapped, created_at, rewrapped_at, variant FROM content_keys
 WHERE NOT (provider = $1::text
        AND kek_key_id = $2::text
        AND kek_version = $3::text)
@@ -116,6 +116,7 @@ func (q *Queries) ListContentKeysNotOnKEK(ctx context.Context, arg ListContentKe
 			&i.Wrapped,
 			&i.CreatedAt,
 			&i.RewrappedAt,
+			&i.Variant,
 		); err != nil {
 			return nil, err
 		}

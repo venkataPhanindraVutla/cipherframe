@@ -51,6 +51,9 @@ type Asset struct {
 	DurationMs          *int64
 	Renditions          []byte
 	Progress            int16
+	MaskFaces           bool
+	MaskingState        *string
+	FacesDetected       *int32
 }
 
 type AssetArtifact struct {
@@ -103,6 +106,7 @@ type ContentKey struct {
 	Wrapped         []byte
 	CreatedAt       time.Time
 	RewrappedAt     *time.Time
+	Variant         string
 }
 
 type ExternalTask struct {
@@ -205,6 +209,7 @@ type PlaybackSession struct {
 	AuthMethod      string
 	SegmentsServed  int64
 	KeyServedAt     *time.Time
+	Variant         string
 }
 
 type PlaybackSetting struct {

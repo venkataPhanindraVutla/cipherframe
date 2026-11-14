@@ -7,6 +7,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbgen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 // KEKRef names the key-encryption key version that wrapped a content key.
@@ -23,6 +24,7 @@ func (k KEKRef) valid() bool { return k.Provider != "" && k.KeyID != "" && k.Ver
 type ContentKeyRow struct {
 	ID              id.ContentKeyID
 	AssetID         id.AssetID
+	Variant         keys.Variant
 	KEK             KEKRef
 	EnvelopeVersion int
 	Wrapped         []byte
@@ -35,6 +37,7 @@ type ContentKeyRow struct {
 type NewContentKeyRow struct {
 	ID              id.ContentKeyID
 	AssetID         id.AssetID
+	Variant         keys.Variant
 	KEK             KEKRef
 	EnvelopeVersion int
 	Wrapped         []byte
@@ -53,6 +56,7 @@ func contentKeyFromRow(r dbgen.ContentKey) ContentKeyRow {
 	return ContentKeyRow{
 		ID:      fromPG[id.ContentKeyKind](r.ID),
 		AssetID: fromPG[id.AssetKind](r.AssetID),
+		Variant: keys.Variant(r.Variant),
 		KEK: KEKRef{
 			Provider: r.Provider, KeyID: r.KekKeyID, Version: r.KekVersion,
 		},
@@ -64,8 +68,8 @@ func contentKeyFromRow(r dbgen.ContentKey) ContentKeyRow {
 }
 
 // CreateContentKey inserts the content key row of an asset that belongs to tenantID. An asset of
-// another tenant, or a missing one, returns not_found. A second key for the same asset returns
-// conflict (invariant I7).
+// another tenant, or a missing one, returns not_found. A second key for the same asset and variant
+// returns conflict (invariant I7).
 func (r *Repos) CreateContentKey(ctx context.Context, tenantID id.TenantID, in NewContentKeyRow) (ContentKeyRow, error) {
 	tid, err := requirePG(tenantID)
 	if err != nil {
@@ -79,11 +83,11 @@ func (r *Repos) CreateContentKey(ctx context.Context, tenantID id.TenantID, in N
 	if err != nil {
 		return ContentKeyRow{}, err
 	}
-	if !in.KEK.valid() || len(in.Wrapped) == 0 || in.EnvelopeVersion < 1 || in.EnvelopeVersion > 32767 {
+	if !in.Variant.Valid() || !in.KEK.valid() || len(in.Wrapped) == 0 || in.EnvelopeVersion < 1 || in.EnvelopeVersion > 32767 {
 		return ContentKeyRow{}, errs.New(errs.InvalidRequest, "invalid content key")
 	}
 	row, err := r.q.InsertContentKey(ctx, dbgen.InsertContentKeyParams{
-		ID: kid, AssetID: aid, TenantID: tid,
+		ID: kid, AssetID: aid, Variant: in.Variant.String(), TenantID: tid,
 		Provider: in.KEK.Provider, KekKeyID: in.KEK.KeyID, KekVersion: in.KEK.Version,
 		EnvelopeVersion: int16(in.EnvelopeVersion), //nolint:gosec // range checked above
 		Wrapped:         in.Wrapped,
@@ -94,8 +98,11 @@ func (r *Repos) CreateContentKey(ctx context.Context, tenantID id.TenantID, in N
 	return contentKeyFromRow(row), nil
 }
 
-// GetContentKey returns the content key row of the tenant's asset, or not_found.
-func (r *Repos) GetContentKey(ctx context.Context, tenantID id.TenantID, assetID id.AssetID) (ContentKeyRow, error) {
+// GetContentKey returns the content key row of one variant of the tenant's asset, or not_found.
+func (r *Repos) GetContentKey(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, variant keys.Variant) (ContentKeyRow, error) {
+	if !variant.Valid() {
+		return ContentKeyRow{}, errs.New(errs.InvalidRequest, "invalid variant")
+	}
 	tid, err := requirePG(tenantID)
 	if err != nil {
 		return ContentKeyRow{}, err
@@ -104,15 +111,15 @@ func (r *Repos) GetContentKey(ctx context.Context, tenantID id.TenantID, assetID
 	if err != nil {
 		return ContentKeyRow{}, err
 	}
-	row, err := r.q.GetContentKeyByAsset(ctx, dbgen.GetContentKeyByAssetParams{TenantID: tid, AssetID: aid})
+	row, err := r.q.GetContentKeyByAsset(ctx, dbgen.GetContentKeyByAssetParams{TenantID: tid, AssetID: aid, Variant: variant.String()})
 	if err != nil {
 		return ContentKeyRow{}, mapError(err)
 	}
 	return contentKeyFromRow(row), nil
 }
 
-// DeleteContentKey destroys the content key row of the tenant's asset and returns how many rows
-// were deleted (0 or 1). The row is deleted, not flagged (invariant I5).
+// DeleteContentKey destroys every variant's content key row of the tenant's asset and returns how
+// many rows were deleted. The row is deleted, not flagged (invariant I5).
 func (r *Repos) DeleteContentKey(ctx context.Context, tenantID id.TenantID, assetID id.AssetID) (int64, error) {
 	tid, err := requirePG(tenantID)
 	if err != nil {

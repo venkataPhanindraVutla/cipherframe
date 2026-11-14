@@ -79,7 +79,7 @@ func (s *server) HeartbeatPlayback(ctx context.Context, _ gen.HeartbeatPlaybackR
 	p.access.RecordHeartbeat(p.accessEvent(ctx, g, db.AccessHeartbeat))
 	tok, err := p.keyring.Sign(token.Claims{
 		SessionID: g.session.String(), AssetID: g.asset.String(), TenantID: g.tenant.String(),
-		Scopes:   token.ScopeManifest | token.ScopeKey | token.ScopeSegment,
+		Scopes: token.ScopeManifest | token.ScopeKey | token.ScopeSegment, Variant: row.Variant.String(),
 		IssuedAt: now, Expiry: expiry,
 	})
 	if err != nil {

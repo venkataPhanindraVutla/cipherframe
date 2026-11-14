@@ -84,28 +84,28 @@ func (e AccessLogEvent) Valid() bool {
 
 // Defines values for AssetState.
 const (
-	Committed  AssetState = "committed"
-	Created    AssetState = "created"
-	Failed     AssetState = "failed"
-	Processing AssetState = "processing"
-	Ready      AssetState = "ready"
-	Uploading  AssetState = "uploading"
+	AssetStateCommitted  AssetState = "committed"
+	AssetStateCreated    AssetState = "created"
+	AssetStateFailed     AssetState = "failed"
+	AssetStateProcessing AssetState = "processing"
+	AssetStateReady      AssetState = "ready"
+	AssetStateUploading  AssetState = "uploading"
 )
 
 // Valid indicates whether the value is a known member of the AssetState enum.
 func (e AssetState) Valid() bool {
 	switch e {
-	case Committed:
+	case AssetStateCommitted:
 		return true
-	case Created:
+	case AssetStateCreated:
 		return true
-	case Failed:
+	case AssetStateFailed:
 		return true
-	case Processing:
+	case AssetStateProcessing:
 		return true
-	case Ready:
+	case AssetStateReady:
 		return true
-	case Uploading:
+	case AssetStateUploading:
 		return true
 	default:
 		return false
@@ -139,6 +139,27 @@ const (
 func (e HealthResponseStatus) Valid() bool {
 	switch e {
 	case HealthResponseStatusOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MaskingState.
+const (
+	MaskingStateFailed  MaskingState = "failed"
+	MaskingStatePending MaskingState = "pending"
+	MaskingStateReady   MaskingState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the MaskingState enum.
+func (e MaskingState) Valid() bool {
+	switch e {
+	case MaskingStateFailed:
+		return true
+	case MaskingStatePending:
+		return true
+	case MaskingStateReady:
 		return true
 	default:
 		return false
@@ -313,6 +334,8 @@ const (
 	ProblemCodeSessionLimit          ProblemCode = "session_limit"
 	ProblemCodeTimeout               ProblemCode = "timeout"
 	ProblemCodeUnauthenticated       ProblemCode = "unauthenticated"
+	ProblemCodeVariantNotReady       ProblemCode = "variant_not_ready"
+	ProblemCodeVariantUnavailable    ProblemCode = "variant_unavailable"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -343,6 +366,10 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeTimeout:
 		return true
 	case ProblemCodeUnauthenticated:
+		return true
+	case ProblemCodeVariantNotReady:
+		return true
+	case ProblemCodeVariantUnavailable:
 		return true
 	default:
 		return false
@@ -517,6 +544,24 @@ func (e UploadMethod) Valid() bool {
 	}
 }
 
+// Defines values for Variant.
+const (
+	Masked   Variant = "masked"
+	Original Variant = "original"
+)
+
+// Valid indicates whether the value is a known member of the Variant enum.
+func (e Variant) Valid() bool {
+	switch e {
+	case Masked:
+		return true
+	case Original:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccessLogEntry defines model for AccessLogEntry.
 type AccessLogEntry struct {
 	// AssetId The asset the event concerns.
@@ -646,11 +691,17 @@ type Asset struct {
 	FailedAt    *time.Time `json:"failed_at,omitempty"`
 
 	// FailureCode Why the asset failed, for example `upload_aborted`. A stable lower_snake_case code.
-	FailureCode         *string      `json:"failure_code,omitempty"`
-	Id                  AssetIdValue `json:"id"`
-	ProcessingStartedAt *time.Time   `json:"processing_started_at,omitempty"`
-	ReadyAt             *time.Time   `json:"ready_at,omitempty"`
-	SizeBytes           int64        `json:"size_bytes"`
+	FailureCode *string      `json:"failure_code,omitempty"`
+	Id          AssetIdValue `json:"id"`
+
+	// MaskFaces Whether the asset was created with `mask_faces`.
+	MaskFaces bool `json:"mask_faces"`
+
+	// Masking Present exactly when `mask_faces` is true. `pending` until the masked variant is built.
+	Masking             *Masking   `json:"masking,omitempty"`
+	ProcessingStartedAt *time.Time `json:"processing_started_at,omitempty"`
+	ReadyAt             *time.Time `json:"ready_at,omitempty"`
+	SizeBytes           int64      `json:"size_bytes"`
 
 	// State The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`
 	// (`deleted` assets are not returned).
@@ -703,6 +754,11 @@ type CreateAssetRequest struct {
 	// ContentType Optional lower-case media type such as `video/mp4`. Stored as object metadata only.
 	ContentType *string `json:"content_type,omitempty"`
 
+	// MaskFaces Also make a variant of this asset with every detected face blurred (ADR 0036). It is
+	// built after the asset is `ready`; see `masking` on the asset. Chosen at creation and
+	// not changeable afterwards.
+	MaskFaces *bool `json:"mask_faces,omitempty"`
+
 	// SizeBytes The exact size of the source in bytes. Edge and commit both enforce it.
 	SizeBytes    int64        `json:"size_bytes"`
 	UploadMethod UploadMethod `json:"upload_method"`
@@ -728,6 +784,12 @@ type CreateKeyRequest struct {
 // CreatePlaybackSessionRequest defines model for CreatePlaybackSessionRequest.
 type CreatePlaybackSessionRequest struct {
 	AssetId AssetIdValue `json:"asset_id"`
+
+	// Variant Which variant the session may play. Default: `masked` for an asset created with
+	// `mask_faces`, `original` otherwise. `masked` on an asset without masking is
+	// `409 variant_unavailable`; `masked` before it is ready is `409 variant_not_ready`. It
+	// never falls back to the original.
+	Variant *Variant `json:"variant,omitempty"`
 
 	// ViewerId Your pseudonymous ID for the viewer: 1 to 128 printable characters, no control
 	// characters. Use an ID only your application can link to a person, never an email
@@ -792,6 +854,11 @@ type CreatedPlaybackSession struct {
 	// TokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
 	// to tokens in URLs (ADR 0030), and `manifest_url` carries it.
 	TokenTransport CreatedPlaybackSessionTokenTransport `json:"token_transport"`
+
+	// Variant A rendering of an asset (ADR 0036). `original` is the uploaded video. `masked` has faces
+	// blurred and exists only for an asset created with `mask_faces`. Each variant has its own
+	// content key.
+	Variant Variant `json:"variant"`
 }
 
 // CreatedPlaybackSessionTokenTransport `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
@@ -812,6 +879,17 @@ type HealthResponse struct {
 
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
+
+// Masking defines model for Masking.
+type Masking struct {
+	// FacesDetected How many faces the masker found. Absent until it has run. `0` means the masked variant
+	// was published but no face was found; the embedding application may want to warn.
+	FacesDetected *int         `json:"faces_detected,omitempty"`
+	State         MaskingState `json:"state"`
+}
+
+// MaskingState defines model for MaskingState.
+type MaskingState string
 
 // Name A human-readable name, 1 to 100 characters, no control characters.
 type Name = string
@@ -1306,6 +1384,11 @@ type UploadInstructions struct {
 
 // UploadMethod defines model for UploadMethod.
 type UploadMethod string
+
+// Variant A rendering of an asset (ADR 0036). `original` is the uploaded video. `masked` has faces
+// blurred and exists only for an asset created with `mask_faces`. Each variant has its own
+// content key.
+type Variant string
 
 // Whoami defines model for Whoami.
 type Whoami struct {

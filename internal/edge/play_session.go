@@ -17,6 +17,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
 )
 
@@ -63,6 +64,7 @@ type SessionCreator interface {
 // ViewerStore is what the browser-session route reads and writes besides PlaybackStore.
 // *db.Repos implements it.
 type ViewerStore interface {
+	GetAsset(ctx context.Context, tenantID id.TenantID, assetID id.AssetID) (db.Asset, error)
 	GetPlaybackAuth(ctx context.Context, tenantID id.TenantID) (db.PlaybackAuth, error)
 	ListPlaybackJWTKeys(ctx context.Context, tenantID id.TenantID) ([]db.PlaybackJWTKey, error)
 	ClaimPlaybackJWTID(ctx context.Context, tenantID id.TenantID, jti string, expiresAt time.Time) (bool, error)
@@ -137,12 +139,15 @@ func (s *server) CreateBrowserPlaybackSession(ctx context.Context, req gen.Creat
 		return nil, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "asset_id", Message: "must be an asset ID"}})
 	}
 
+	// decided is the variant the embedding application chose (the JWT claim, or the default it was
+	// told in the callback). Empty means the asset's default. The viewer never chooses (ADR 0036).
 	var viewer, method string
+	var decided keys.Variant
 	switch req.Body.Method {
 	case gen.Jwt:
 		method = db.AuthMethodJWT
 		bearer, _ := ctx.Value(bearerKey{}).(string)
-		viewer, err = p.authorizeJWT(ctx, tenant, asset, bearer)
+		viewer, decided, err = p.authorizeJWT(ctx, tenant, asset, bearer)
 	case gen.Callback:
 		method = db.AuthMethodCallback
 		ticket := ""
@@ -152,7 +157,7 @@ func (s *server) CreateBrowserPlaybackSession(ctx context.Context, req gen.Creat
 		if n := len(ticket); n < 1 || n > viewerauth.MaxTicketBytes {
 			return nil, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "ticket", Message: "is required for the callback method: 1 to 2048 bytes"}})
 		}
-		viewer, err = p.authorizeCallback(ctx, tenant, asset, ticket)
+		viewer, decided, err = p.authorizeCallback(ctx, tenant, asset, ticket)
 	default:
 		return nil, errs.Invalid("The request is invalid.", []errs.FieldError{{Field: "method", Message: "must be jwt or callback"}})
 	}
@@ -170,8 +175,20 @@ func (s *server) CreateBrowserPlaybackSession(ctx context.Context, req gen.Creat
 		return nil, err
 	}
 
+	if req.Body.Variant != nil {
+		// Only a check, after authorization so a refusal reveals nothing to an unauthorised caller.
+		if decided == "" {
+			if decided, err = p.defaultVariant(ctx, tenant, asset); err != nil {
+				return nil, err
+			}
+		}
+		if keys.Variant(*req.Body.Variant) != decided {
+			return nil, errs.New(errs.Forbidden, "The variant is decided by the embedding application, not the viewer.")
+		}
+	}
+
 	c, err := p.viewer.Sessions.CreateSession(ctx, playback.CreateInput{
-		TenantID: tenant, AuthMethod: method, AssetID: asset, ViewerID: viewer,
+		TenantID: tenant, AuthMethod: method, AssetID: asset, Variant: decided, ViewerID: viewer,
 	})
 	if err != nil {
 		return nil, err
@@ -179,6 +196,7 @@ func (s *server) CreateBrowserPlaybackSession(ctx context.Context, req gen.Creat
 	return gen.CreateBrowserPlaybackSession201JSONResponse{
 		Body: gen.CreatedPlaybackSession{
 			SessionId:                c.SessionID.String(),
+			Variant:                  gen.Variant(c.Variant),
 			Token:                    c.Token.Reveal(),
 			TokenExpiresAt:           c.TokenExpiresAt,
 			HeartbeatIntervalSeconds: c.HeartbeatIntervalSeconds,
@@ -208,50 +226,75 @@ func denyReason(err error) string {
 	return ""
 }
 
-// authorizeJWT verifies the viewer's token and makes its jti single-use. It returns the viewer ID.
-func (p *Playback) authorizeJWT(ctx context.Context, tenant id.TenantID, asset id.AssetID, bearer string) (string, error) {
+// defaultVariant is the variant a session on the asset gets when nobody chose: the original for an
+// asset that does not exist (the session creation then answers not_found).
+func (p *Playback) defaultVariant(ctx context.Context, tenant id.TenantID, asset id.AssetID) (keys.Variant, error) {
+	a, err := p.viewer.Store.GetAsset(ctx, tenant, asset)
+	if err != nil {
+		var e *errs.Error
+		if errors.As(err, &e) && e.Code == errs.NotFound {
+			return keys.Original, nil
+		}
+		return "", err
+	}
+	return playback.DefaultVariant(a), nil
+}
+
+// authorizeJWT verifies the viewer's token and makes its jti single-use. It returns the viewer ID
+// and the token's variant claim ("" when it has none).
+func (p *Playback) authorizeJWT(ctx context.Context, tenant id.TenantID, asset id.AssetID, bearer string) (string, keys.Variant, error) {
 	cfg, err := p.viewerConfigFor(ctx, tenant)
 	if err != nil {
-		return "", err // our own failure: never a denial
+		return "", "", err // our own failure: never a denial
 	}
 	if !cfg.auth.JWTEnabled {
-		return "", denied("jwt_off")
+		return "", "", denied("jwt_off")
 	}
 	if bearer == "" {
-		return "", denied("no_token")
+		return "", "", denied("no_token")
 	}
 	v, err := p.viewer.Verifier.Verify(ctx, tenant.String(), viewerauth.JWTConfig{
 		Issuer: cfg.auth.JWTIssuer, Audiences: cfg.auth.JWTAudiences, JWKSURL: cfg.auth.JWKSURL,
 		ViewerClaim: cfg.auth.JWTViewerClaim, Uploaded: cfg.keys,
 	}, bearer, asset.String())
 	if err != nil {
-		return "", denied(viewerauth.ReasonOf(err))
+		return "", "", denied(viewerauth.ReasonOf(err))
+	}
+	variant := keys.Variant(v.Variant)
+	if variant != "" && !variant.Valid() {
+		return "", "", denied(viewerauth.ReasonVariant)
 	}
 	// Single use: the jti is kept until the token could no longer verify (exp plus the skew
 	// allowance). The first caller wins; a replay is a denial. A database failure is not.
 	first, err := p.viewer.Store.ClaimPlaybackJWTID(ctx, tenant, v.JTI, v.Expiry.Add(viewerauth.ClockSkew).UTC())
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !first {
-		return "", denied("jti_replay")
+		return "", "", denied("jti_replay")
 	}
-	return v.Viewer, nil
+	return v.Viewer, variant, nil
 }
 
 // authorizeCallback asks the tenant's callback. The configuration is read fresh, and the secrets
-// are unwrapped for this one request only.
-func (p *Playback) authorizeCallback(ctx context.Context, tenant id.TenantID, asset id.AssetID, ticket string) (string, error) {
+// are unwrapped for this one request only. The callback is told the variant the session would get,
+// the asset's default, and so approves that specific variant. It returns the viewer ID and that
+// variant.
+func (p *Playback) authorizeCallback(ctx context.Context, tenant id.TenantID, asset id.AssetID, ticket string) (string, keys.Variant, error) {
 	a, err := p.viewer.Store.GetPlaybackAuth(ctx, tenant)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !a.CallbackEnabled || a.CallbackURL == "" || a.CallbackSecretVersion == 0 || len(a.CallbackSecretEnvelope) == 0 {
-		return "", denied("callback_off")
+		return "", "", denied("callback_off")
+	}
+	variant, err := p.defaultVariant(ctx, tenant, asset)
+	if err != nil {
+		return "", "", err
 	}
 	secrets, err := p.callbackSecrets(ctx, tenant, a)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer func() {
 		for _, s := range secrets {
@@ -259,12 +302,12 @@ func (p *Playback) authorizeCallback(ctx context.Context, tenant id.TenantID, as
 		}
 	}()
 	viewer, err := p.viewer.Callback.Authorize(ctx, a.CallbackURL, secrets, viewerauth.CallbackRequest{
-		TenantID: tenant.String(), AssetID: asset.String(), Ticket: ticket, RequestID: requestID(ctx),
+		TenantID: tenant.String(), AssetID: asset.String(), Variant: variant.String(), Ticket: ticket, RequestID: requestID(ctx),
 	})
 	if err != nil {
-		return "", denied(viewerauth.ReasonOf(err))
+		return "", "", denied(viewerauth.ReasonOf(err))
 	}
-	return viewer, nil
+	return viewer, variant, nil
 }
 
 // callbackSecrets unwraps the current secret, and the previous one while it is still within its

@@ -48,7 +48,7 @@ against a local TSA.
 
 Added 2026-11-14 ([ADR 0036](adr/0036-face-masked-variant.md)). Built before M5-3 to M5-5.
 
-- [ ] FM-1 Variants: `mask_faces` on asset creation, one content key per variant, sessions bound to
+- [x] FM-1 Variants: `mask_faces` on asset creation, one content key per variant, sessions bound to
   a variant
 - [ ] FM-2 Python masker in `ml/`: claims `media.mask_faces` tasks and blurs faces with YuNet
 - [ ] FM-3 `asset.mask` job: hand the job directory to the masker, transcode the masked ladder, add it

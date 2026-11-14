@@ -105,7 +105,7 @@ func TestEdgePlaybackOperationsMatchSpec(t *testing.T) {
 	}
 	keyMgr := contentkey.NewManager(pool, reg, nil)
 	if err := db.Tx(ctx, pool, func(tx *db.Repos) error {
-		ck, err := keyMgr.Create(ctx, tx, res.Tenant.ID, asset.ID)
+		ck, err := keyMgr.Create(ctx, tx, res.Tenant.ID, asset.ID, keys.Original)
 		ck.Zero()
 		return err
 	}); err != nil {

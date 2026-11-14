@@ -20,6 +20,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 )
 
 func TestMain(m *testing.M) { os.Exit(dbtest.Run(m)) }
@@ -63,7 +64,7 @@ func seedKeys(t *testing.T, pool *pgxpool.Pool, mgr *contentkey.Manager, n int) 
 			t.Fatal(err)
 		}
 		if err := db.Tx(ctx, pool, func(tx *db.Repos) error {
-			_, err := mgr.Create(ctx, tx, tn.ID, a.ID)
+			_, err := mgr.Create(ctx, tx, tn.ID, a.ID, keys.Original)
 			return err
 		}); err != nil {
 			t.Fatal(err)

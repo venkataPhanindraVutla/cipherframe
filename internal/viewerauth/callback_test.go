@@ -50,7 +50,7 @@ func callbackServer(t *testing.T, h http.HandlerFunc) (*httptest.Server, *x509.C
 	return srv, pool
 }
 
-var testReq = viewerauth.CallbackRequest{TenantID: "tnt_x", AssetID: "ast_y", Ticket: "test-fixture-ticket-<&>", RequestID: "req-1"}
+var testReq = viewerauth.CallbackRequest{TenantID: "tnt_x", AssetID: "ast_y", Variant: "masked", Ticket: "test-fixture-ticket-<&>", RequestID: "req-1"}
 
 func TestCallbackSignedRequestAndAllow(t *testing.T) {
 	secret, err := viewerauth.GenerateSecret()
@@ -83,7 +83,7 @@ func TestCallbackSignedRequestAndAllow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if body["type"] != "playback.authorize" || body["tenant_id"] != "tnt_x" || body["asset_id"] != "ast_y" ||
-		body["ticket"] != testReq.Ticket || body["request_id"] != "req-1" || len(body) != 6 {
+		body["ticket"] != testReq.Ticket || body["request_id"] != "req-1" || body["variant"] != "masked" || len(body) != 7 {
 		t.Fatalf("body = %v", body)
 	}
 	if _, err := time.Parse(time.RFC3339, body["timestamp"]); err != nil {

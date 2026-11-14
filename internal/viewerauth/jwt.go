@@ -26,6 +26,9 @@ const (
 	MaxLifetime = 24 * time.Hour
 	// AssetClaim is the claim that binds a token to one asset.
 	AssetClaim = "asset_id"
+	// VariantClaim is the optional claim that says which variant of the asset the viewer may play
+	// ("original" or "masked", ADR 0036). Without it the asset's default applies.
+	VariantClaim = "variant"
 )
 
 // Denial reasons. They are for the operator's debug log and the tests; the caller of the API only
@@ -44,6 +47,7 @@ const (
 	ReasonJTI         = "jti"
 	ReasonAsset       = "asset"
 	ReasonViewer      = "viewer"
+	ReasonVariant     = "variant"
 )
 
 // DenyError is a refusal. Reason is one of the Reason constants.
@@ -75,7 +79,9 @@ type JWTConfig struct {
 // Verified is what a valid token yields.
 type Verified struct {
 	Viewer string
-	JTI    string
+	// Variant is the variant claim, or "" when the token has none.
+	Variant string
+	JTI     string
 	// Expiry is the token's exp. Record the jti until Expiry + ClockSkew.
 	Expiry time.Time
 }
@@ -194,5 +200,11 @@ func (v *Verifier) Verify(ctx context.Context, tenant string, cfg JWTConfig, raw
 	if !ok || v.validate(viewer) != nil {
 		return Verified{}, deny(ReasonViewer)
 	}
-	return Verified{Viewer: viewer, JTI: std.ID, Expiry: exp}, nil
+	variant := ""
+	if raw, present := all[VariantClaim]; present {
+		if variant, ok = raw.(string); !ok || variant == "" {
+			return Verified{}, deny(ReasonVariant)
+		}
+	}
+	return Verified{Viewer: viewer, Variant: variant, JTI: std.ID, Expiry: exp}, nil
 }
