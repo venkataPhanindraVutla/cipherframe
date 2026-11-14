@@ -146,14 +146,91 @@ request bodies there.
 
 ### Variants: face-masked playback (ADR 0036)
 
-Create the asset with `"mask_faces": true` to get a second, face-masked variant next to the original
-(the masked variant itself is built by a later change; today the asset records `masking.state:
-pending`). Playback sessions are bound to one variant. For a masking asset the default is `masked`,
+Create the asset with `"mask_faces": true` to get a second, face-masked variant next to the original.
+The asset becomes `ready` with its original variant as usual and records `masking.state: pending`;
+the `asset.mask` job then builds the masked variant (see [Face masking](#face-masking)) and the state
+becomes `ready`, or `failed` with the original unaffected. Playback sessions are bound to one variant. For a masking asset the default is `masked`,
 and your server must ask for `"variant": "original"` to play the original. For browser-started
 sessions the viewer cannot choose: put an optional `variant` claim in the JWT you sign, or approve the
 `variant` that the signed callback body names; a request body `variant` that differs is `403`. See
 [api.md](api.md#assets-and-uploads-adr-0025-0026) and
 [api.md](api.md#browser-started-sessions-jwt-and-signed-callback-adr-0029-0031).
+
+### Face masking
+
+Masking needs a second process next to the worker: the masker, a Python worker (`ml/`,
+[ml/README.md](../ml/README.md)) that claims `media.mask_faces` tasks from the hand-off table. Without
+a masker, an asset created with `mask_faces` still becomes `ready` and playable as the original; its
+`asset.mask` job waits for `CIPHERFRAME_WORKER_MASK_TIMEOUT` (default 2 hours), then marks the masked
+variant `failed`.
+
+How a masking asset flows:
+
+1. `asset.process` finishes the original variant, and in the same transaction enqueues `asset.mask`
+   (on the `media` queue) and sets `masking.state` to `pending`.
+2. `asset.mask` downloads the source into its own job directory under `CIPHERFRAME_WORK_DIR`
+   (`job-mask-*`), writes a `media.mask_faces` task whose payload names `<job dir>/source` and
+   `<job dir>/masked.mp4` relative to the work directory, and waits.
+3. The masker reads the source from the shared work directory, blurs every face and writes
+   `masked.mp4` next to it (to a `.part` file first, then renamed), then records the result.
+4. `asset.mask` runs `masked.mp4` through the same ladder, segmenter and encryptor as the original,
+   under the masked variant's own content key, publishes it under `masked/hls/`, adds it to the
+   asset's signed manifest ([integrity.md](integrity.md#the-masked-variant)) and sets `masking.state`
+   to `ready` with `faces_detected`, all in one transaction. The job directory, with the plaintext
+   source and the masked file, is removed whatever the outcome.
+
+If the masker fails the task for good, does not answer within the timeout, or the masked file cannot
+be transcoded, `masking.state` becomes `failed`, any partial masked objects are removed, and the
+original variant stays ready and playable. A masked session for an asset whose masking is not `ready`
+gets `409 variant_not_ready`; it never falls back to the original. A retryable failure of the job
+itself (a storage outage, say) is retried with the usual backoff and starts by clearing the masked
+prefix. The source object stays in the source bucket until the asset is deleted, so masking can re-read
+it.
+
+**Run it with Docker Compose.** The `worker` profile starts the worker, the masker and what they share:
+
+```sh
+docker compose -f deploy/compose/compose.yaml --profile worker up --build
+```
+
+The masker image is built from `ml/Dockerfile` with the worker image as its FFmpeg source (the first
+build also compiles FFmpeg, which takes minutes, and downloads the face detection model). The two
+containers share the named volume `work`, mounted at `/work` as `CIPHERFRAME_WORK_DIR`, and both run
+as UID 65532.
+
+**Run it without Compose.** Run the masker on the same host as the worker, with the same work
+directory:
+
+```sh
+export CIPHERFRAME_WORK_DIR=/var/lib/cipherframe/work    # the worker's directory, same path
+export CIPHERFRAME_ML_DATABASE_URL_FILE=/run/secrets/masker-db-url
+cipherframe-ml mask-worker                                # see ml/README.md
+```
+
+Requirements, none of which can be skipped:
+
+- **Same machine, same directory.** The plaintext source and the masked file may only exist on the
+  worker's local disk (ADR 0027, ADR 0036). The masker therefore cannot run on another machine; a
+  deployment that needs that needs a different hand-off for plaintext, which is a new decision.
+- **Same UID, no wider modes.** The worker creates each job directory with mode 0700 and the source
+  file with mode 0600, so the masker must run as the same user as the worker (the images use UID
+  65532). Do not loosen the modes or share the directory with other users to make it work; fix the
+  user instead. A masker running as another user cannot read the source, its tasks fail
+  and masking ends as `failed`.
+- **A limited database role.** The masker connects with a role that can only read and update
+  `external_tasks` (the grants are in [spec/jobs/README.md](../spec/jobs/README.md); the Compose stack
+  creates `cipherframe_masker` from `deploy/compose/masker-role.sql`, a script rather than a migration
+  because a role is cluster-wide and carries a password that belongs to the deployment).
+- **Media queue slots.** `asset.mask` holds a `media` queue slot while it waits for the masker. With
+  the default `CIPHERFRAME_WORKER_MEDIA_CONCURRENCY=1`, an asset being masked blocks other
+  `asset.process` jobs on that worker until it is done; raise the setting (masking itself runs in the
+  masker, not on the worker's cores) or run more workers.
+- **Disk.** A masking job needs the source plus the masked file (re-encoded at a high quality, so
+  often larger than the source) plus the transcode output: plan for several times the source size in
+  `CIPHERFRAME_WORK_DIR` per concurrent masking job.
+
+Masking is a privacy aid, not a guarantee. Detection can miss profiles, small faces and heavily
+occluded ones (ADR 0036). Voices are not changed.
 
 ### What running the server does not protect against
 
@@ -183,7 +260,10 @@ docker compose -f deploy/compose/compose.yaml up --build
 | `storage-init` | One-shot. On every `up` it creates the `cipherframe-source` and `cipherframe-delivery` buckets if missing and checks that an anonymous GET of each is refused (403). It exits non-zero otherwise, which stops `server` from starting. | none |
 | `migrate` | One-shot `cipherframe-server migrate`, run once Postgres is healthy. | none |
 | `server` | `cipherframe-server --role=api,edge`. | api `127.0.0.1:8080`, edge `127.0.0.1:8081` |
-| `worker` | Profile `worker` only. `cipherframe-server --role=worker` from the worker image (FFmpeg inside). | none |
+| `worker` | Profile `worker` only. `cipherframe-server --role=worker` from the worker image (FFmpeg inside), with the `work` volume at `/work` as `CIPHERFRAME_WORK_DIR`. | none |
+| `masker` | Profile `worker` only. The face masker (`ml/`), built from the worker image's FFmpeg; shares the `work` volume with `worker` and runs as the same UID. See [Face masking](#face-masking). | none |
+| `work-init` | Profile `worker` only, one-shot. Gives the `work` volume to UID 65532 with mode 0700 (a new volume is owned by root). | none |
+| `masker-db-init` | Profile `worker` only, one-shot. Creates the masker's database role from `deploy/compose/masker-role.sql`. | none |
 
 Check it: `curl http://127.0.0.1:8080/readyz` and `curl http://127.0.0.1:8081/readyz` list the
 `database`, `queue`, `storage_source` and `storage_delivery` checks, all `ok`.

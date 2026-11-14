@@ -23,7 +23,7 @@ Last updated: 2026-11-14.
 | M3 Ingest and processing | Done |
 | M4 Playback sessions and delivery | Done |
 | M5 Integrity and anchoring | In progress |
-| Face masking (ADR 0036) | In progress |
+| Face masking (ADR 0036) | Done |
 | M6 Deletion and retention | Waiting on gate P11 |
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Not started (gate P12) |
 | M8 CLI (Go) and reference player (TypeScript) | Not started (gate P13) |
@@ -50,10 +50,15 @@ Added 2026-11-14 ([ADR 0036](adr/0036-face-masked-variant.md)). Built before M5-
 
 - [x] FM-1 Variants: `mask_faces` on asset creation, one content key per variant, sessions bound to
   a variant
-- [ ] FM-2 Python masker in `ml/`: claims `media.mask_faces` tasks and blurs faces with YuNet
-- [ ] FM-3 `asset.mask` job: hand the job directory to the masker, transcode the masked ladder, add it
+- [x] FM-2 Python masker in `ml/`: claims `media.mask_faces` tasks and blurs faces with YuNet
+- [x] FM-3 `asset.mask` job: hand the job directory to the masker, transcode the masked ladder, add it
   to the manifest
-- [ ] FM-4 Development stack and documentation
+- [x] FM-4 Development stack and documentation
+
+Done: an asset created with `mask_faces` gets a masked variant, published by `asset.mask` once the
+masker (beside the worker, sharing its work directory) has blurred the source, and listed in the
+signed manifest. Still true for M6: the purge job must remove both variants and both content keys,
+and any retention of the source object must wait until `masking.state` is no longer `pending`.
 
 ### M6 Deletion and retention
 
