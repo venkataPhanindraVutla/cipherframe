@@ -137,6 +137,9 @@ type fakeRepo struct {
 	// maskingCompletes counts CompleteMasking calls; maskingStates is every state SetMasking got.
 	maskingCompletes int
 	maskingStates    []string
+	// beforeMaskingComplete, when set, runs once at the start of CompleteMasking (under the lock):
+	// another writer changing the manifest while masking finishes.
+	beforeMaskingComplete func()
 	// onGet, when set, runs before every GetAsset with the 1-based call number (without the lock).
 	onGet func(n int)
 	gets  int
@@ -225,9 +228,16 @@ func (r *fakeRepo) GetManifest(context.Context, id.AssetID) (db.AssetManifest, e
 	return *r.manifest, nil
 }
 
-func (r *fakeRepo) CompleteMasking(_ context.Context, _ id.TenantID, _ id.AssetID, arts []db.Artifact, m db.AssetManifest, _ []byte, faces int, _ time.Time) error {
+func (r *fakeRepo) CompleteMasking(_ context.Context, _ id.TenantID, _ id.AssetID, arts []db.Artifact, m db.AssetManifest, base []byte, faces int, _ time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if f := r.beforeMaskingComplete; f != nil {
+		r.beforeMaskingComplete = nil
+		f()
+	}
+	if r.manifest != nil && !bytes.Equal(r.manifest.PayloadSHA256, base) {
+		return db.ErrManifestChanged
+	}
 	if r.asset.State != db.AssetReady {
 		return errs.Wrap(errs.Conflict, "state", db.ErrStateChanged)
 	}

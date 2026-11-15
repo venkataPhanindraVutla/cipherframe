@@ -544,3 +544,45 @@ func TestMaskWaitForTheOriginalTimesOut(t *testing.T) {
 		t.Fatalf("masking = %q, masked objects = %v", a.MaskingState, m.maskedKeys())
 	}
 }
+
+// A subtitle track added while masking finishes changes the manifest under the job: the job signs
+// again from the new manifest, so the track stays in it next to the masked section.
+func TestMaskResignsWhenTheManifestChangesMeanwhile(t *testing.T) {
+	m := newMaskHarness(t)
+	trackPath := "subtitles/sub_00000000000000000000000001.vtt"
+	m.repo.beforeMaskingComplete = func() {
+		cur := *m.repo.manifest
+		mf, err := DecodeManifest(cur.Envelope)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		built, err := manifest.WithSubtitles(mf, []manifest.SubtitleInput{{
+			ID: "sub_00000000000000000000000001", Language: "en", Origin: "upload",
+			Object: manifest.StoredObject{Path: trackPath, SHA256: [32]byte{1}, Size: 10},
+		}})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		row, err := SignManifest(context.Background(), m.signer, m.args.TenantID, m.args.AssetID, built, time.Now())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		m.repo.manifest = row
+	}
+	if err := m.runMask(1, 3); err != nil {
+		t.Fatal(err)
+	}
+	if m.repo.maskingCompletes != 1 {
+		t.Fatalf("masking completed %d times", m.repo.maskingCompletes)
+	}
+	got, err := DecodeManifest(m.repo.manifest.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Masked == nil || len(got.Subtitles) != 1 || got.Subtitles[0].Path != trackPath {
+		t.Fatalf("the re-signed manifest lost the track or the masked section: masked=%v subtitles=%+v", got.Masked != nil, got.Subtitles)
+	}
+}
