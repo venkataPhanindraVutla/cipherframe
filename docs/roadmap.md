@@ -86,8 +86,9 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 - [ ] M7-2 Thumbnails: poster, sprite sheet with a WebVTT track, I-frame playlist
 - [ ] M7-3 Overlay watermark policy
 - [ ] M7-4 Per-tenant brand logo burned in at transcode
-- [ ] M7-5 Webhooks (`asset.ready`, `asset.failed`, `asset.deleted`, `session.revoked`,
-  `session.anomaly` and more); the `playback_events` outbox already exists
+- [x] M7-5 Webhooks (`asset.ready`, `asset.failed`, `asset.deleted`, `session.revoked`,
+  `session.anomaly`, `retention.expired`): outbox written by triggers, Standard Webhooks signing,
+  retries over about a day, dead-letter list and replay API ([ADR 0045](adr/0045-webhooks.md))
 - [ ] M7-6 Quotas and per-client limits
 
 ### M8 CLI and reference player

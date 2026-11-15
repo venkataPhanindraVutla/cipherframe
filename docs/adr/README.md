@@ -49,6 +49,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0041](0041-rfc-3161-anchoring-of-manifests.md) | RFC 3161 anchoring of manifests | D7 | Accepted (flagged for owner review) | 2026-11-14 |
 | [0042](0042-deletion-and-retention-details.md) | Deletion and retention details | none (details under P11) | Accepted (flagged for owner review) | 2026-11-14 |
 | [0043](0043-subtitle-and-watermark-parameters.md) | Subtitle and watermark parameters | P12 | Accepted | 2026-11-15 |
+| [0045](0045-webhooks.md) | Webhooks: outbox, signing, retries and replay | none (M7-5) | Accepted (flagged for owner review) | 2026-11-15 |
 
 ## Open gates
 
