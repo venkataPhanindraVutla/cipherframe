@@ -32,6 +32,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/storagetest"
@@ -192,6 +193,7 @@ func newUpEnvWith(t *testing.T, limits uploads.Limits) *upEnv {
 	e.mgr = auth.NewManager(e.pool, onePepper{}, e.clk.Now)
 	a := api.New(api.Deps{
 		Log: log, Verifier: auth.NewVerifier(e.repos, onePepper{}, log, e.clk.Now), Manager: e.mgr, Assets: e.svc, Purge: requester, Repos: e.repos,
+		Quota: quota.NewService(e.pool, e.clk.Now), Limiter: quota.NewLimiter(e.repos, log, e.clk.Now),
 	})
 	e.apiSrv = httptest.NewServer(a.Handler())
 	t.Cleanup(e.apiSrv.Close)

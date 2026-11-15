@@ -17,6 +17,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
@@ -58,6 +59,10 @@ type Deps struct {
 	Webhooks *webhook.Service
 	// Subtitles serves the subtitle and transcript endpoints (M7-1). Without it they answer 503.
 	Subtitles *subtitles.Service
+	// Quota serves the quota and usage endpoints (M7-6). Without it they answer 503.
+	Quota *quota.Service
+	// Limiter rate limits requests per API key (M7-6). Nil limits nothing.
+	Limiter *quota.Limiter
 }
 
 // API is the control-plane HTTP handler.
@@ -74,11 +79,11 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks, subtitles: d.Subtitles}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks, subtitles: d.Subtitles, quota: d.Quota}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})
-	guard := guarded{ServerInterface: strict, a: &authn{verifier: d.Verifier, log: d.Log}}
+	guard := guarded{ServerInterface: strict, a: &authn{verifier: d.Verifier, log: d.Log, limiter: d.Limiter}}
 	gen.HandlerWithOptions(guard, gen.StdHTTPServerOptions{
 		BaseRouter:       router,
 		ErrorHandlerFunc: httpx.RequestErrorHandler,

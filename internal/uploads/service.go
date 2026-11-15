@@ -14,6 +14,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/retention"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
@@ -182,6 +183,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 	}
 	var asset db.Asset
 	err = db.Tx(ctx, s.pool, func(r *db.Repos) error {
+		// The declared size counts from here on (the asset's row is part of the usage), so two
+		// creations racing for the last room cannot both pass: the check holds the tenant's lock.
+		if err := quota.CheckStorage(ctx, r, in.TenantID, in.Actor.ClientID, in.SizeBytes, id.AssetID{}); err != nil {
+			return err
+		}
 		var err error
 		asset, err = r.CreateUploadAsset(ctx, db.NewUploadAsset{
 			ID: assetID, TenantID: in.TenantID, ClientID: in.Actor.ClientID, SizeBytes: in.SizeBytes,
@@ -330,12 +336,19 @@ func (s *Service) Commit(ctx context.Context, tenantID id.TenantID, actor Actor,
 	if err := s.limits.CheckSize(a.SizeBytes); err != nil {
 		return db.Asset{}, err
 	}
-	if err := s.completeSource(ctx, a); err != nil {
+	actual, err := s.completeSource(ctx, a)
+	if err != nil {
 		return db.Asset{}, err
 	}
 
 	var committed db.Asset
 	err = s.inTx(ctx, func(tx pgx.Tx, r *db.Repos) error {
+		// The size was declared at creation and may have been counted then, but the quota is
+		// checked again with the verified size, under the tenant's lock, because room used since
+		// (by other assets' output, or a limit lowered meanwhile) is not reserved.
+		if err := quota.CheckStorage(ctx, r, tenantID, a.CreatedByClientID, actual, assetID); err != nil {
+			return err
+		}
 		var err error
 		committed, err = r.TransitionAsset(ctx, tenantID, assetID, db.Transition{
 			From: db.AssetUploading, To: db.AssetCommitted, At: s.now().UTC(),
@@ -379,32 +392,32 @@ func (s *Service) Commit(ctx context.Context, tenantID id.TenantID, actor Actor,
 // completeSource makes sure the source object exists with the declared size, completing a
 // multipart upload first when needed. A retry after a failed commit finds the object already
 // assembled and skips the completion.
-func (s *Service) completeSource(ctx context.Context, a db.Asset) error {
+func (s *Service) completeSource(ctx context.Context, a db.Asset) (int64, error) {
 	info, err := s.source.Head(ctx, a.SourceKey)
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return storage.ToAppError(err)
+		return 0, storage.ToAppError(err)
 	}
 	if err != nil { // no object yet
 		if a.UploadMethod != db.UploadMultipart {
-			return errs.New(errs.Conflict, "The upload is not complete.")
+			return 0, errs.New(errs.Conflict, "The upload is not complete.")
 		}
 		if err := s.completeMultipart(ctx, a); err != nil {
-			return err
+			return 0, err
 		}
 		if info, err = s.source.Head(ctx, a.SourceKey); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
-				return errs.New(errs.Conflict, "The upload is not complete.")
+				return 0, errs.New(errs.Conflict, "The upload is not complete.")
 			}
-			return storage.ToAppError(err)
+			return 0, storage.ToAppError(err)
 		}
 	}
 	if info.Size > s.limits.MaxSourceBytes {
-		return errs.New(errs.PayloadTooLarge, "The uploaded object exceeds the maximum source size.")
+		return 0, errs.New(errs.PayloadTooLarge, "The uploaded object exceeds the maximum source size.")
 	}
 	if info.Size != a.SizeBytes {
-		return errs.New(errs.Conflict, "The uploaded object does not have the declared size.")
+		return 0, errs.New(errs.Conflict, "The uploaded object does not have the declared size.")
 	}
-	return nil
+	return info.Size, nil
 }
 
 func (s *Service) completeMultipart(ctx context.Context, a db.Asset) error {

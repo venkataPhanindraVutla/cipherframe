@@ -31,6 +31,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
@@ -219,6 +220,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Purge:       requester,
 			Webhooks:    webhooks,
 			Subtitles:   subtitleSvc,
+			Quota:       quota.NewService(pool, nil),
+			Limiter:     quota.NewLimiter(repos, log, nil),
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {

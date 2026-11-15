@@ -27,7 +27,7 @@ Last updated: 2026-11-15.
 | Faster face masking (ADR 0037) | Done |
 | Encoder preset and detection stride (ADR 0038) | Done |
 | M6 Deletion and retention | Done ([ADR 0040](adr/0040-retention-and-privacy-defaults.md), [ADR 0042](adr/0042-deletion-and-retention-details.md)) |
-| M7 Subtitles, thumbnails, branding, webhooks, quotas | In progress (M7-1 and M7-5 done; P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md)) |
+| M7 Subtitles, thumbnails, branding, webhooks, quotas | In progress (M7-1, M7-5 and M7-6 done; P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md), [ADR 0047](adr/0047-quotas-and-per-client-limits.md)) |
 | M8 CLI (Go) and reference player (TypeScript) | Not started (gate P13) |
 | M9 Operations and release | Not started (gate P14) |
 | M10 v1 extras (may slip to v1.1) | Not started (gates P16 to P18) |
@@ -89,7 +89,9 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 - [x] M7-5 Webhooks (`asset.ready`, `asset.failed`, `asset.deleted`, `session.revoked`,
   `session.anomaly`, `retention.expired`): outbox written by triggers, Standard Webhooks signing,
   retries over about a day, dead-letter list and replay API ([ADR 0045](adr/0045-webhooks.md))
-- [ ] M7-6 Quotas and per-client limits
+- [x] M7-6 Quotas and per-client limits: storage bytes, monthly transcode minutes, concurrent sessions
+  and request rates per tenant with lower per-client overrides, an admin API and a usage endpoint
+  ([ADR 0047](adr/0047-quotas-and-per-client-limits.md))
 
 ### M8 CLI and reference player
 
@@ -142,11 +144,18 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0037](adr/0037-faster-face-masking.md) Faster face masking: `asset.mask` runs beside `asset.process`; configurable ladder
 - [ADR 0038](adr/0038-encoder-preset-and-detection-stride.md) Encoder preset (`CIPHERFRAME_WORKER_X264_PRESET`) and detection stride (`CIPHERFRAME_ML_DETECT_EVERY`)
 - [ADR 0042](adr/0042-deletion-and-retention-details.md) Deletion and retention details: the `deleting` state, tombstone reads, purge order, `not_deleted`, time-to-live rules
+- [ADR 0047](adr/0047-quotas-and-per-client-limits.md) Quotas and per-client limits: unlimited by default, where each limit is enforced, the per-instance request rate limit
 
 ## Follow-ups
 
 Smaller items found while building, not yet scheduled:
 
+- Expose quota usage, refusals (`quota_exceeded`, `rate_limited`) and limits as metrics once the
+  observability stack exists (gate P14, M9): the plan says quotas are "exposed via API and metrics" and
+  M7-6 delivered the API ([ADR 0047](adr/0047-quotas-and-per-client-limits.md)). Decide the tenant label
+  cardinality there.
+- Share the request rate limit across api instances if a per-instance limit proves too loose
+  ([ADR 0047](adr/0047-quotas-and-per-client-limits.md)).
 - Allowlist the public test IVs in the golden playlists for the secret scanner.
 - Give `audit_events` and `playback_sessions` a retention window (not covered by ADR 0040; see ADR 0042).
 - Have the retention sweep also create the access-log partitions, so a deployment without the edge role

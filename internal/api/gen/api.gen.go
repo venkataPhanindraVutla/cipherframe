@@ -408,6 +408,7 @@ const (
 	ProblemCodeNotDeleted            ProblemCode = "not_deleted"
 	ProblemCodeNotFound              ProblemCode = "not_found"
 	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
+	ProblemCodeQuotaExceeded         ProblemCode = "quota_exceeded"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
 	ProblemCodeSessionLimit          ProblemCode = "session_limit"
 	ProblemCodeTimeout               ProblemCode = "timeout"
@@ -442,6 +443,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeNotFound:
 		return true
 	case ProblemCodePayloadTooLarge:
+		return true
+	case ProblemCodeQuotaExceeded:
 		return true
 	case ProblemCodeRateLimited:
 		return true
@@ -910,7 +913,8 @@ type Asset struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	FailedAt  *time.Time `json:"failed_at,omitempty"`
 
-	// FailureCode Why the asset failed, for example `upload_aborted`. A stable lower_snake_case code.
+	// FailureCode Why the asset failed, for example `upload_aborted` or `quota_transcode_minutes` (the
+	// month's transcode minutes were used up). A stable lower_snake_case code.
 	FailureCode *string      `json:"failure_code,omitempty"`
 	Id          AssetIdValue `json:"id"`
 
@@ -969,6 +973,19 @@ type ClientList struct {
 
 	// NextCursor Present when more items follow; pass it as `cursor`.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ClientQuotas The lower limits of one client (ADR 0047). A limit that is absent means no override: the
+// tenant's limit applies.
+type ClientQuotas struct {
+	ClientId                 ClientId `json:"client_id"`
+	ConcurrentSessions       *int     `json:"concurrent_sessions,omitempty"`
+	RequestsPerMinute        *int     `json:"requests_per_minute,omitempty"`
+	StorageBytes             *int64   `json:"storage_bytes,omitempty"`
+	TranscodeMinutesPerMonth *int     `json:"transcode_minutes_per_month,omitempty"`
+
+	// UpdatedAt When the overrides were last replaced. Absent while none were ever set.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // CreateAssetRequest defines model for CreateAssetRequest.
@@ -1578,11 +1595,16 @@ type Problem struct {
 
 	// Errors Present on some `invalid_request` responses: one entry per invalid field. Messages are
 	// fixed text and never quote the submitted value.
-	Errors    *[]FieldError `json:"errors,omitempty"`
-	RequestId string        `json:"request_id"`
-	Retryable bool          `json:"retryable"`
-	Status    int           `json:"status"`
-	Title     string        `json:"title"`
+	Errors *[]FieldError `json:"errors,omitempty"`
+
+	// Limit Present on `quota_exceeded`: the quota that would have been passed (`storage_bytes`,
+	// `transcode_minutes_per_month`, `concurrent_sessions` or `requests_per_minute`). A
+	// fixed name; never a usage figure.
+	Limit     *string `json:"limit,omitempty"`
+	RequestId string  `json:"request_id"`
+	Retryable bool    `json:"retryable"`
+	Status    int     `json:"status"`
+	Title     string  `json:"title"`
 
 	// Type `urn:cipherframe:error:<code>`.
 	Type string `json:"type"`
@@ -1642,6 +1664,29 @@ type PublishedSigningKeyAlg string
 
 // PublishedSigningKeyStatus defines model for PublishedSigningKey.Status.
 type PublishedSigningKeyStatus string
+
+// Quotas The limits of a tenant (ADR 0047). A limit that is absent is unlimited. `storage_bytes` is
+// source plus delivery bytes of the assets that are not deleted; `transcode_minutes_per_month`
+// is minutes of source processed per calendar month (UTC); `concurrent_sessions` is active
+// playback sessions, on top of the per-viewer limit; `requests_per_minute` is control-plane
+// requests per API key, per api process instance.
+type Quotas struct {
+	ConcurrentSessions       *int   `json:"concurrent_sessions,omitempty"`
+	RequestsPerMinute        *int   `json:"requests_per_minute,omitempty"`
+	StorageBytes             *int64 `json:"storage_bytes,omitempty"`
+	TranscodeMinutesPerMonth *int   `json:"transcode_minutes_per_month,omitempty"`
+
+	// UpdatedAt When the limits were last replaced. Absent while none were ever set.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// QuotasInput Every limit to set. A field left out is unlimited (or, for a client, no override).
+type QuotasInput struct {
+	ConcurrentSessions       *int   `json:"concurrent_sessions,omitempty"`
+	RequestsPerMinute        *int   `json:"requests_per_minute,omitempty"`
+	StorageBytes             *int64 `json:"storage_bytes,omitempty"`
+	TranscodeMinutesPerMonth *int   `json:"transcode_minutes_per_month,omitempty"`
+}
 
 // ReadyCheck defines model for ReadyCheck.
 type ReadyCheck struct {
@@ -1832,6 +1877,35 @@ type UploadInstructions struct {
 // UploadMethod defines model for UploadMethod.
 type UploadMethod string
 
+// Usage Current usage against the limits in force (ADR 0047). For a client, `limit` is the lower of
+// its override and the tenant's limit.
+type Usage struct {
+	ClientId *ClientId `json:"client_id,omitempty"`
+
+	// ConcurrentSessions One usage figure and the limit in force for it. `limit` is absent when unlimited.
+	ConcurrentSessions UsageCounter `json:"concurrent_sessions"`
+
+	// MonthStart The start (UTC) of the calendar month `transcode_milliseconds` counts.
+	MonthStart time.Time `json:"month_start"`
+
+	// RequestsPerMinute The per-key request limit in force, absent when unlimited. Request counts are kept in
+	// memory per api instance and are not reported.
+	RequestsPerMinute *int `json:"requests_per_minute,omitempty"`
+
+	// StorageBytes One usage figure and the limit in force for it. `limit` is absent when unlimited.
+	StorageBytes UsageCounter `json:"storage_bytes"`
+
+	// TranscodeMilliseconds Milliseconds of source processed this month. The limit is `transcode_minutes_per_month`
+	// converted to milliseconds.
+	TranscodeMilliseconds UsageCounter `json:"transcode_milliseconds"`
+}
+
+// UsageCounter One usage figure and the limit in force for it. `limit` is absent when unlimited.
+type UsageCounter struct {
+	Limit *int64 `json:"limit,omitempty"`
+	Used  int64  `json:"used"`
+}
+
 // Variant A rendering of an asset (ADR 0036). `original` is the uploaded video. `masked` has faces
 // blurred and exists only for an asset created with `mask_faces`. Each variant has its own
 // content key.
@@ -2013,6 +2087,9 @@ type AccessLogTo = time.Time
 // AssetId defines model for AssetId.
 type AssetId = string
 
+// ClientIdPath defines model for ClientIdPath.
+type ClientIdPath = string
+
 // Cursor defines model for Cursor.
 type Cursor = string
 
@@ -2076,6 +2153,9 @@ type WebhookDeliveryStatusFilter = WebhookDeliveryStatus
 
 // WebhookEndpointIdPath defines model for WebhookEndpointIdPath.
 type WebhookEndpointIdPath = string
+
+// RateLimited RFC 9457 problem details with Cipherframe extensions (ADR 0012).
+type RateLimited = Problem
 
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
@@ -2195,6 +2275,12 @@ type GetPlaybackSessionAccessLogParams struct {
 	Cursor *AccessLogCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetUsageParams defines parameters for GetUsage.
+type GetUsageParams struct {
+	// ClientId Report this client's usage instead of the tenant's.
+	ClientId *string `form:"client_id,omitempty" json:"client_id,omitempty"`
+}
+
 // ListWebhookDeliveriesParams defines parameters for ListWebhookDeliveries.
 type ListWebhookDeliveriesParams struct {
 	// EndpointId Only deliveries to this endpoint (`whe_` followed by 26 characters).
@@ -2225,6 +2311,9 @@ type ImportAssetTranscriptJSONRequestBody = ImportTranscriptRequest
 // CreateClientJSONRequestBody defines body for CreateClient for application/json ContentType.
 type CreateClientJSONRequestBody = CreateClientRequest
 
+// UpdateClientQuotasJSONRequestBody defines body for UpdateClientQuotas for application/json ContentType.
+type UpdateClientQuotasJSONRequestBody = QuotasInput
+
 // CreateKeyJSONRequestBody defines body for CreateKey for application/json ContentType.
 type CreateKeyJSONRequestBody = CreateKeyRequest
 
@@ -2251,6 +2340,9 @@ type UpdatePlaybackSettingsJSONRequestBody = PlaybackSettingsInput
 
 // UpdatePrivacySettingsJSONRequestBody defines body for UpdatePrivacySettings for application/json ContentType.
 type UpdatePrivacySettingsJSONRequestBody = PrivacySettingsInput
+
+// UpdateQuotasJSONRequestBody defines body for UpdateQuotas for application/json ContentType.
+type UpdateQuotasJSONRequestBody = QuotasInput
 
 // VerifyArtifactJSONRequestBody defines body for VerifyArtifact for application/json ContentType.
 type VerifyArtifactJSONRequestBody = VerifyRequest
@@ -2513,6 +2605,12 @@ type ServerInterface interface {
 	// CreateClient Create a client
 	// (POST /v1/clients)
 	CreateClient(w http.ResponseWriter, r *http.Request)
+	// GetClientQuotas Get a client's quota overrides
+	// (GET /v1/clients/{client_id}/quotas)
+	GetClientQuotas(w http.ResponseWriter, r *http.Request, clientId ClientIdPath)
+	// UpdateClientQuotas Replace a client's quota overrides
+	// (PUT /v1/clients/{client_id}/quotas)
+	UpdateClientQuotas(w http.ResponseWriter, r *http.Request, clientId ClientIdPath)
 	// ListKeys List API keys
 	// (GET /v1/keys)
 	ListKeys(w http.ResponseWriter, r *http.Request, params ListKeysParams)
@@ -2570,6 +2668,12 @@ type ServerInterface interface {
 	// UpdatePrivacySettings Replace the privacy settings
 	// (PUT /v1/privacy-settings)
 	UpdatePrivacySettings(w http.ResponseWriter, r *http.Request)
+	// GetQuotas Get the tenant's quotas
+	// (GET /v1/quotas)
+	GetQuotas(w http.ResponseWriter, r *http.Request)
+	// UpdateQuotas Replace the tenant's quotas
+	// (PUT /v1/quotas)
+	UpdateQuotas(w http.ResponseWriter, r *http.Request)
 	// ListSigningKeys List the integrity signing keys
 	// (GET /v1/signing-keys)
 	ListSigningKeys(w http.ResponseWriter, r *http.Request)
@@ -2579,6 +2683,9 @@ type ServerInterface interface {
 	// RetireSigningKey Retire a signing key
 	// (POST /v1/signing-keys/{key_id}/retire)
 	RetireSigningKey(w http.ResponseWriter, r *http.Request, keyId SigningKeyIdPath)
+	// GetUsage Get current usage against the quotas
+	// (GET /v1/usage)
+	GetUsage(w http.ResponseWriter, r *http.Request, params GetUsageParams)
 	// VerifyArtifact Is this file ours?
 	// (POST /v1/verify)
 	VerifyArtifact(w http.ResponseWriter, r *http.Request)
@@ -3293,6 +3400,58 @@ func (siw *ServerInterfaceWrapper) CreateClient(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetClientQuotas operation middleware
+func (siw *ServerInterfaceWrapper) GetClientQuotas(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_id" -------------
+	var clientId ClientIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_id", r.PathValue("client_id"), &clientId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetClientQuotas(w, r, clientId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateClientQuotas operation middleware
+func (siw *ServerInterfaceWrapper) UpdateClientQuotas(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_id" -------------
+	var clientId ClientIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_id", r.PathValue("client_id"), &clientId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateClientQuotas(w, r, clientId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListKeys operation middleware
 func (siw *ServerInterfaceWrapper) ListKeys(w http.ResponseWriter, r *http.Request) {
 
@@ -3840,6 +3999,34 @@ func (siw *ServerInterfaceWrapper) UpdatePrivacySettings(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// GetQuotas operation middleware
+func (siw *ServerInterfaceWrapper) GetQuotas(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetQuotas(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateQuotas operation middleware
+func (siw *ServerInterfaceWrapper) UpdateQuotas(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateQuotas(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSigningKeys operation middleware
 func (siw *ServerInterfaceWrapper) ListSigningKeys(w http.ResponseWriter, r *http.Request) {
 
@@ -3885,6 +4072,39 @@ func (siw *ServerInterfaceWrapper) RetireSigningKey(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RetireSigningKey(w, r, keyId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUsageParams
+
+	// ------------- Optional query parameter "client_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "client_id", r.URL.Query(), &params.ClientId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "client_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUsage(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4361,6 +4581,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-settings", wrapper.UpdatePlaybackSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/privacy-settings", wrapper.GetPrivacySettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/privacy-settings", wrapper.UpdatePrivacySettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/quotas", wrapper.GetQuotas)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/quotas", wrapper.UpdateQuotas)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/clients/{client_id}/quotas", wrapper.GetClientQuotas)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/clients/{client_id}/quotas", wrapper.UpdateClientQuotas)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/usage", wrapper.GetUsage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-auth", wrapper.GetPlaybackAuth)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-auth", wrapper.UpdatePlaybackAuth)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/playback-auth/jwt-keys/{kid}", wrapper.DeletePlaybackJwtKey)
@@ -4391,6 +4616,16 @@ type ProblemApplicationProblemPlusJSONResponse struct {
 	Body Problem
 
 	Headers ProblemResponseHeaders
+}
+
+type RateLimitedResponseHeaders struct {
+	RetryAfter int
+	XRequestId string
+}
+type RateLimitedApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers RateLimitedResponseHeaders
 }
 
 type UnauthenticatedResponseHeaders struct {
@@ -7149,6 +7384,307 @@ func (response CreateClientdefaultApplicationProblemPlusJSONResponse) VisitCreat
 	return err
 }
 
+type GetClientQuotasRequestObject struct {
+	ClientId ClientIdPath `json:"client_id"`
+}
+
+type GetClientQuotasResponseObject interface {
+	VisitGetClientQuotasResponse(w http.ResponseWriter) error
+}
+
+type GetClientQuotas200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetClientQuotas200JSONResponse struct {
+	Body    ClientQuotas
+	Headers GetClientQuotas200ResponseHeaders
+}
+
+func (response GetClientQuotas200JSONResponse) VisitGetClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientQuotas400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetClientQuotas400ApplicationProblemPlusJSONResponse) VisitGetClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientQuotas401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetClientQuotas401ApplicationProblemPlusJSONResponse) VisitGetClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientQuotas403ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetClientQuotas403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetClientQuotas403ResponseHeaders
+}
+
+func (response GetClientQuotas403ApplicationProblemPlusJSONResponse) VisitGetClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientQuotas404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetClientQuotas404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetClientQuotas404ResponseHeaders
+}
+
+func (response GetClientQuotas404ApplicationProblemPlusJSONResponse) VisitGetClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientQuotas429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response GetClientQuotas429ApplicationProblemPlusJSONResponse) VisitGetClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientQuotasdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetClientQuotasdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetClientQuotasdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetClientQuotasdefaultApplicationProblemPlusJSONResponse) VisitGetClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateClientQuotasRequestObject struct {
+	ClientId ClientIdPath `json:"client_id"`
+	Body     *UpdateClientQuotasJSONRequestBody
+}
+
+type UpdateClientQuotasResponseObject interface {
+	VisitUpdateClientQuotasResponse(w http.ResponseWriter) error
+}
+
+type UpdateClientQuotas200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateClientQuotas200JSONResponse struct {
+	Body    ClientQuotas
+	Headers UpdateClientQuotas200ResponseHeaders
+}
+
+func (response UpdateClientQuotas200JSONResponse) VisitUpdateClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateClientQuotas400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateClientQuotas400ApplicationProblemPlusJSONResponse) VisitUpdateClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateClientQuotas401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateClientQuotas401ApplicationProblemPlusJSONResponse) VisitUpdateClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateClientQuotas403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateClientQuotas403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateClientQuotas403ResponseHeaders
+}
+
+func (response UpdateClientQuotas403ApplicationProblemPlusJSONResponse) VisitUpdateClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateClientQuotas404ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateClientQuotas404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateClientQuotas404ResponseHeaders
+}
+
+func (response UpdateClientQuotas404ApplicationProblemPlusJSONResponse) VisitUpdateClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateClientQuotas429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateClientQuotas429ApplicationProblemPlusJSONResponse) VisitUpdateClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateClientQuotasdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateClientQuotasdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdateClientQuotasdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdateClientQuotasdefaultApplicationProblemPlusJSONResponse) VisitUpdateClientQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListKeysRequestObject struct {
 	Params ListKeysParams
 }
@@ -9287,6 +9823,239 @@ func (response UpdatePrivacySettingsdefaultApplicationProblemPlusJSONResponse) V
 	return err
 }
 
+type GetQuotasRequestObject struct {
+}
+
+type GetQuotasResponseObject interface {
+	VisitGetQuotasResponse(w http.ResponseWriter) error
+}
+
+type GetQuotas200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetQuotas200JSONResponse struct {
+	Body    Quotas
+	Headers GetQuotas200ResponseHeaders
+}
+
+func (response GetQuotas200JSONResponse) VisitGetQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetQuotas401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetQuotas401ApplicationProblemPlusJSONResponse) VisitGetQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetQuotas403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetQuotas403ApplicationProblemPlusJSONResponse) VisitGetQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetQuotas429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response GetQuotas429ApplicationProblemPlusJSONResponse) VisitGetQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetQuotasdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetQuotasdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetQuotasdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetQuotasdefaultApplicationProblemPlusJSONResponse) VisitGetQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuotasRequestObject struct {
+	Body *UpdateQuotasJSONRequestBody
+}
+
+type UpdateQuotasResponseObject interface {
+	VisitUpdateQuotasResponse(w http.ResponseWriter) error
+}
+
+type UpdateQuotas200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateQuotas200JSONResponse struct {
+	Body    Quotas
+	Headers UpdateQuotas200ResponseHeaders
+}
+
+func (response UpdateQuotas200JSONResponse) VisitUpdateQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuotas400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateQuotas400ApplicationProblemPlusJSONResponse) VisitUpdateQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuotas401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateQuotas401ApplicationProblemPlusJSONResponse) VisitUpdateQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuotas403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateQuotas403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateQuotas403ResponseHeaders
+}
+
+func (response UpdateQuotas403ApplicationProblemPlusJSONResponse) VisitUpdateQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuotas429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateQuotas429ApplicationProblemPlusJSONResponse) VisitUpdateQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateQuotasdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateQuotasdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdateQuotasdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdateQuotasdefaultApplicationProblemPlusJSONResponse) VisitUpdateQuotasResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListSigningKeysRequestObject struct {
 }
 
@@ -9647,6 +10416,156 @@ type RetireSigningKeydefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response RetireSigningKeydefaultApplicationProblemPlusJSONResponse) VisitRetireSigningKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUsageRequestObject struct {
+	Params GetUsageParams
+}
+
+type GetUsageResponseObject interface {
+	VisitGetUsageResponse(w http.ResponseWriter) error
+}
+
+type GetUsage200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetUsage200JSONResponse struct {
+	Body    Usage
+	Headers GetUsage200ResponseHeaders
+}
+
+func (response GetUsage200JSONResponse) VisitGetUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUsage400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetUsage400ApplicationProblemPlusJSONResponse) VisitGetUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUsage401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetUsage401ApplicationProblemPlusJSONResponse) VisitGetUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUsage403ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetUsage403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetUsage403ResponseHeaders
+}
+
+func (response GetUsage403ApplicationProblemPlusJSONResponse) VisitGetUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUsage404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetUsage404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetUsage404ResponseHeaders
+}
+
+func (response GetUsage404ApplicationProblemPlusJSONResponse) VisitGetUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUsage429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response GetUsage429ApplicationProblemPlusJSONResponse) VisitGetUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUsagedefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetUsagedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetUsagedefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetUsagedefaultApplicationProblemPlusJSONResponse) VisitGetUsageResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -11131,6 +12050,12 @@ type StrictServerInterface interface {
 	// CreateClient Create a client
 	// (POST /v1/clients)
 	CreateClient(ctx context.Context, request CreateClientRequestObject) (CreateClientResponseObject, error)
+	// GetClientQuotas Get a client's quota overrides
+	// (GET /v1/clients/{client_id}/quotas)
+	GetClientQuotas(ctx context.Context, request GetClientQuotasRequestObject) (GetClientQuotasResponseObject, error)
+	// UpdateClientQuotas Replace a client's quota overrides
+	// (PUT /v1/clients/{client_id}/quotas)
+	UpdateClientQuotas(ctx context.Context, request UpdateClientQuotasRequestObject) (UpdateClientQuotasResponseObject, error)
 	// ListKeys List API keys
 	// (GET /v1/keys)
 	ListKeys(ctx context.Context, request ListKeysRequestObject) (ListKeysResponseObject, error)
@@ -11188,6 +12113,12 @@ type StrictServerInterface interface {
 	// UpdatePrivacySettings Replace the privacy settings
 	// (PUT /v1/privacy-settings)
 	UpdatePrivacySettings(ctx context.Context, request UpdatePrivacySettingsRequestObject) (UpdatePrivacySettingsResponseObject, error)
+	// GetQuotas Get the tenant's quotas
+	// (GET /v1/quotas)
+	GetQuotas(ctx context.Context, request GetQuotasRequestObject) (GetQuotasResponseObject, error)
+	// UpdateQuotas Replace the tenant's quotas
+	// (PUT /v1/quotas)
+	UpdateQuotas(ctx context.Context, request UpdateQuotasRequestObject) (UpdateQuotasResponseObject, error)
 	// ListSigningKeys List the integrity signing keys
 	// (GET /v1/signing-keys)
 	ListSigningKeys(ctx context.Context, request ListSigningKeysRequestObject) (ListSigningKeysResponseObject, error)
@@ -11197,6 +12128,9 @@ type StrictServerInterface interface {
 	// RetireSigningKey Retire a signing key
 	// (POST /v1/signing-keys/{key_id}/retire)
 	RetireSigningKey(ctx context.Context, request RetireSigningKeyRequestObject) (RetireSigningKeyResponseObject, error)
+	// GetUsage Get current usage against the quotas
+	// (GET /v1/usage)
+	GetUsage(ctx context.Context, request GetUsageRequestObject) (GetUsageResponseObject, error)
 	// VerifyArtifact Is this file ours?
 	// (POST /v1/verify)
 	VerifyArtifact(ctx context.Context, request VerifyArtifactRequestObject) (VerifyArtifactResponseObject, error)
@@ -11875,6 +12809,65 @@ func (sh *strictHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetClientQuotas operation middleware
+func (sh *strictHandler) GetClientQuotas(w http.ResponseWriter, r *http.Request, clientId ClientIdPath) {
+	var request GetClientQuotasRequestObject
+
+	request.ClientId = clientId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClientQuotas(ctx, request.(GetClientQuotasRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClientQuotas")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetClientQuotasResponseObject); ok {
+		if err := validResponse.VisitGetClientQuotasResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateClientQuotas operation middleware
+func (sh *strictHandler) UpdateClientQuotas(w http.ResponseWriter, r *http.Request, clientId ClientIdPath) {
+	var request UpdateClientQuotasRequestObject
+
+	request.ClientId = clientId
+
+	var body UpdateClientQuotasJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateClientQuotas(ctx, request.(UpdateClientQuotasRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateClientQuotas")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateClientQuotasResponseObject); ok {
+		if err := validResponse.VisitUpdateClientQuotasResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListKeys operation middleware
 func (sh *strictHandler) ListKeys(w http.ResponseWriter, r *http.Request, params ListKeysParams) {
 	var request ListKeysRequestObject
@@ -12419,6 +13412,61 @@ func (sh *strictHandler) UpdatePrivacySettings(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// GetQuotas operation middleware
+func (sh *strictHandler) GetQuotas(w http.ResponseWriter, r *http.Request) {
+	var request GetQuotasRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetQuotas(ctx, request.(GetQuotasRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetQuotas")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetQuotasResponseObject); ok {
+		if err := validResponse.VisitGetQuotasResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateQuotas operation middleware
+func (sh *strictHandler) UpdateQuotas(w http.ResponseWriter, r *http.Request) {
+	var request UpdateQuotasRequestObject
+
+	var body UpdateQuotasJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateQuotas(ctx, request.(UpdateQuotasRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateQuotas")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateQuotasResponseObject); ok {
+		if err := validResponse.VisitUpdateQuotasResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListSigningKeys operation middleware
 func (sh *strictHandler) ListSigningKeys(w http.ResponseWriter, r *http.Request) {
 	var request ListSigningKeysRequestObject
@@ -12486,6 +13534,32 @@ func (sh *strictHandler) RetireSigningKey(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RetireSigningKeyResponseObject); ok {
 		if err := validResponse.VisitRetireSigningKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUsage operation middleware
+func (sh *strictHandler) GetUsage(w http.ResponseWriter, r *http.Request, params GetUsageParams) {
+	var request GetUsageRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUsage(ctx, request.(GetUsageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUsage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUsageResponseObject); ok {
+		if err := validResponse.VisitGetUsageResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

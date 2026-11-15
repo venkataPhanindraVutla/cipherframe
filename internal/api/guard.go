@@ -4,13 +4,16 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 )
 
 // operationScopes lists the scopes each authenticated operation requires, keyed by operationId.
@@ -70,6 +73,12 @@ var operationScopes = map[string][]db.Scope{
 	"RotateSigningKey": {db.ScopeAdmin},
 	"RetireSigningKey": {db.ScopeAdmin},
 
+	"GetQuotas":          {db.ScopeAdmin},
+	"UpdateQuotas":       {db.ScopeAdmin},
+	"GetClientQuotas":    {db.ScopeAdmin},
+	"UpdateClientQuotas": {db.ScopeAdmin},
+	"GetUsage":           {db.ScopeAdmin},
+
 	"CreateWebhookEndpoint":       {db.ScopeWebhooksManage},
 	"ListWebhookEndpoints":        {db.ScopeWebhooksManage},
 	"GetWebhookEndpoint":          {db.ScopeWebhooksManage},
@@ -114,6 +123,8 @@ func PublicOperations() []string {
 type authn struct {
 	verifier *auth.Verifier
 	log      *slog.Logger
+	// limiter rate limits each API key (ADR 0047); nil limits nothing.
+	limiter *quota.Limiter
 }
 
 // run authenticates r for operation op and, on success, calls next with a request whose context
@@ -127,6 +138,15 @@ func (a *authn) run(op string, w http.ResponseWriter, r *http.Request, next func
 		}
 		httpx.ResponseErrorHandler(w, r, err)
 		return
+	}
+	// The rate limit comes right after authentication, before scopes and body decoding, so a key
+	// probing operations it may not call is limited too. An unauthenticated request is never counted.
+	if a.limiter != nil {
+		if ok, wait := a.limiter.Allow(r.Context(), p); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(max(int((wait+time.Second-1)/time.Second), 1)))
+			httpx.ResponseErrorHandler(w, r, errs.New(errs.RateLimited, "Too many requests; retry after the time in Retry-After."))
+			return
+		}
 	}
 	need, known := operationScopes[op]
 	if !known { // fail closed: a guarded method with no table entry is a programming error
@@ -377,4 +397,24 @@ func (g guarded) GetAssetSubtitle(w http.ResponseWriter, r *http.Request, assetI
 
 func (g guarded) DeleteAssetSubtitle(w http.ResponseWriter, r *http.Request, assetID gen.AssetId, subtitleID gen.SubtitleIdPath) {
 	g.a.run("DeleteAssetSubtitle", w, r, func(r *http.Request) { g.ServerInterface.DeleteAssetSubtitle(w, r, assetID, subtitleID) })
+}
+
+func (g guarded) GetQuotas(w http.ResponseWriter, r *http.Request) {
+	g.a.run("GetQuotas", w, r, func(r *http.Request) { g.ServerInterface.GetQuotas(w, r) })
+}
+
+func (g guarded) UpdateQuotas(w http.ResponseWriter, r *http.Request) {
+	g.a.run("UpdateQuotas", w, r, func(r *http.Request) { g.ServerInterface.UpdateQuotas(w, r) })
+}
+
+func (g guarded) GetClientQuotas(w http.ResponseWriter, r *http.Request, clientID gen.ClientIdPath) {
+	g.a.run("GetClientQuotas", w, r, func(r *http.Request) { g.ServerInterface.GetClientQuotas(w, r, clientID) })
+}
+
+func (g guarded) UpdateClientQuotas(w http.ResponseWriter, r *http.Request, clientID gen.ClientIdPath) {
+	g.a.run("UpdateClientQuotas", w, r, func(r *http.Request) { g.ServerInterface.UpdateClientQuotas(w, r, clientID) })
+}
+
+func (g guarded) GetUsage(w http.ResponseWriter, r *http.Request, params gen.GetUsageParams) {
+	g.a.run("GetUsage", w, r, func(r *http.Request) { g.ServerInterface.GetUsage(w, r, params) })
 }

@@ -26,6 +26,8 @@ type Problem struct {
 	RequestID string `json:"request_id"`
 	// Errors lists the invalid fields of an invalid_request response. Absent otherwise.
 	Errors []FieldError `json:"errors,omitempty"`
+	// Limit names the quota of a quota_exceeded response. Absent otherwise.
+	Limit string `json:"limit,omitempty"`
 }
 
 // ToProblem converts err to a Problem. It finds an *Error with errors.As. A nil error, a
@@ -34,6 +36,7 @@ type Problem struct {
 func ToProblem(err error, requestID string) Problem {
 	code, detail := InternalError, genericDetail
 	var fields []FieldError
+	var limit string
 	var e *Error
 	if errors.As(err, &e) && e != nil {
 		if _, ok := registry[e.Code]; ok {
@@ -41,11 +44,15 @@ func ToProblem(err error, requestID string) Problem {
 			if code == InvalidRequest {
 				fields = e.Fields
 			}
+			if code == QuotaExceeded {
+				limit = e.Limit
+			}
 		}
 	}
 	info := registry[code]
 	return Problem{
 		Errors:    fields,
+		Limit:     limit,
 		Type:      TypePrefix + string(code),
 		Title:     info.Title,
 		Status:    info.Status,

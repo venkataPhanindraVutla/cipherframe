@@ -27,6 +27,9 @@ const (
 	// SessionLimit is a 409 for a viewer that already has the tenant's maximum number of active
 	// playback sessions (ADR 0028). Existing sessions are left alone.
 	SessionLimit Code = "session_limit"
+	// QuotaExceeded is a 409 for a request that would take the tenant (or the client) over one of
+	// its quotas (ADR 0047). The problem names the limit in its `limit` member.
+	QuotaExceeded Code = "quota_exceeded"
 	// VariantUnavailable is a 409 for a playback session that asks for a variant the asset does
 	// not have: "masked" on an asset created without mask_faces (ADR 0036).
 	VariantUnavailable Code = "variant_unavailable"
@@ -64,6 +67,7 @@ var registry = map[Code]Info{
 	Timeout:               {Status: 504, Title: "Timeout", Retryable: true},
 	AssetNotReady:         {Status: 409, Title: "Asset not ready"},
 	SessionLimit:          {Status: 409, Title: "Session limit reached"},
+	QuotaExceeded:         {Status: 409, Title: "Quota exceeded"},
 	VariantUnavailable:    {Status: 409, Title: "Variant unavailable"},
 	VariantNotReady:       {Status: 409, Title: "Variant not ready"},
 	ArtifactNotFound:      {Status: 404, Title: "Artifact not found"},

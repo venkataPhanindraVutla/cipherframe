@@ -145,7 +145,7 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 				continue
 			}
 			p := strings.NewReplacer("{key_id}", keyID, "{session_id}", sessionID, "{asset_id}", assetID, "{kid}", "key-1",
-				"{endpoint_id}", endpointID, "{delivery_id}", deliveryID, "{subtitle_id}", "sub_"+strings.Repeat("0", 26)).Replace(path)
+				"{endpoint_id}", endpointID, "{delivery_id}", deliveryID, "{subtitle_id}", "sub_"+strings.Repeat("0", 26), "{client_id}", "cli_"+strings.Repeat("0", 26)).Replace(path)
 			var body []byte
 			contentType := ""
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
@@ -162,6 +162,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte("--x\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nWEBVTT\r\n--x\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nen\r\n--x\r\nContent-Disposition: form-data; name=\"label\"\r\n\r\nEnglish\r\n--x--\r\n")
 				case "importAssetTranscript":
 					body = []byte(`{"language":"en","label":"English","cues":[]}`)
+				case "updateQuotas", "updateClientQuotas":
+					body = []byte(`{"concurrent_sessions":5}`)
 				case "updatePlaybackSettings":
 					body = []byte(`{}`)
 				case "updatePrivacySettings":
@@ -207,8 +209,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 53 {
-		t.Fatalf("exercised %d secured operations, want 53", n)
+	if n != 58 {
+		t.Fatalf("exercised %d secured operations, want 58", n)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 )
 
 // mediaCheckTimeout bounds the whole FFmpeg capability check at startup.
@@ -70,6 +71,7 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Q
 		Keys:     pipeline.ContentKeys{Pool: pool, Manager: contentKeys},
 		Tools:    mediaTools(cfg),
 		Signer:   proc.Signer,
+		Quota:    quota.NewService(pool, nil),
 		Limits: media.Limits{
 			MaxDuration: cfg.Media.MaxSourceDuration, MaxWidth: cfg.Media.MaxSourceWidth, MaxHeight: cfg.Media.MaxSourceHeight,
 		},
