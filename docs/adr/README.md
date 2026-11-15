@@ -48,8 +48,9 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0040](0040-retention-and-privacy-defaults.md) | Retention and privacy defaults | P11 | Accepted | 2026-11-14 |
 | [0041](0041-rfc-3161-anchoring-of-manifests.md) | RFC 3161 anchoring of manifests | D7 | Accepted (flagged for owner review) | 2026-11-14 |
 | [0042](0042-deletion-and-retention-details.md) | Deletion and retention details | none (details under P11) | Accepted (flagged for owner review) | 2026-11-14 |
+| [0043](0043-subtitle-and-watermark-parameters.md) | Subtitle and watermark parameters | P12 | Accepted | 2026-11-15 |
 
 ## Open gates
 
-P12 to P14, P16 to P20, P21 (worker). See the build plan's
+P13, P14, P16 to P20, P21 (worker). See the build plan's
 decision register.
