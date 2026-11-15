@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/png"
 	"io"
@@ -70,29 +72,10 @@ func withText(chunk []byte) func([]byte) []byte {
 // textChunk is a tEXt chunk with a valid CRC.
 func textChunk(text string) []byte {
 	data := []byte("Comment\x00" + text)
-	var b bytes.Buffer
-	n := uint32(len(data)) //nolint:gosec // small test data
-	b.Write([]byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)})
 	body := append([]byte("tEXt"), data...)
-	b.Write(body)
-	crc := crc32IEEE(body)
-	b.Write([]byte{byte(crc >> 24), byte(crc >> 16), byte(crc >> 8), byte(crc)})
-	return b.Bytes()
-}
-
-func crc32IEEE(b []byte) uint32 {
-	crc := ^uint32(0)
-	for _, c := range b {
-		crc ^= uint32(c)
-		for range 8 {
-			if crc&1 == 1 {
-				crc = crc>>1 ^ 0xedb88320
-			} else {
-				crc >>= 1
-			}
-		}
-	}
-	return ^crc
+	out := binary.BigEndian.AppendUint32(nil, uint32(len(data))) //nolint:gosec // small test data
+	out = append(out, body...)
+	return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(body))
 }
 
 // put sends the multipart form of PUT /v1/brand/logo.

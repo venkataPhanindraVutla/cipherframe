@@ -65,14 +65,6 @@ func claimedSize(w, h uint32) []byte {
 	return append(out, chunk("IEND", nil)...)
 }
 
-func wantField(t *testing.T, err error, what string) {
-	t.Helper()
-	var e *errs.Error
-	if !errors.As(err, &e) || e.Code != errs.InvalidRequest {
-		t.Fatalf("%s: error = %v, want invalid_request", what, err)
-	}
-}
-
 func TestNormalizeAcceptsAGoodLogoAndWritesItAgain(t *testing.T) {
 	in := encode(t, solid(200, 100, color.NRGBA{R: 10, G: 200, B: 30, A: 255}))
 	got, err := Normalize(in)

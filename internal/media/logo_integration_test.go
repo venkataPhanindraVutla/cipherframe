@@ -101,7 +101,7 @@ func (b burned) frame(t *testing.T, r media.Rendition) image.Image {
 	}
 	work := t.TempDir()
 	frag := filepath.Join(work, "frag.mp4")
-	if err := os.WriteFile(frag, append(init, seg...), 0o600); err != nil {
+	if err := os.WriteFile(frag, append(init, seg...), 0o600); err != nil { //nolint:gosec // test writes its own temp dir
 		t.Fatal(err)
 	}
 	jpg := filepath.Join(work, "frame.jpg")
