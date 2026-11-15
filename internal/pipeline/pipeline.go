@@ -58,6 +58,9 @@ const (
 	FailureSourceMismatch = "source_mismatch"
 	// FailureProcessing: a transient failure (storage, database, ...) outlasted every retry.
 	FailureProcessing = "processing_failed"
+	// FailureQuotaTranscode: the tenant's or the client's transcode minutes for the month were used
+	// up, so the source was not processed (ADR 0047).
+	FailureQuotaTranscode = "quota_transcode_minutes"
 )
 
 // jobOverhead is added to the transcode timeout to get the job's own limit: it covers the download,
@@ -73,6 +76,9 @@ type Deps struct {
 	Tools    Toolchain
 	// Signer signs the integrity manifest with the current key (M5-1). It is required.
 	Signer signing.Signer
+	// Quota charges the source's duration against the month's transcode minutes once it is known
+	// (ADR 0047). Nil charges nothing.
+	Quota  TranscodeCharger
 	Limits media.Limits
 	// WorkDir is the base directory for per-job directories (CIPHERFRAME_WORK_DIR).
 	WorkDir string
@@ -270,6 +276,8 @@ func (e *permanentError) errsCode() errs.Code {
 		return errs.Timeout
 	case FailureSourceMismatch:
 		return errs.Conflict
+	case FailureQuotaTranscode:
+		return errs.QuotaExceeded
 	}
 	return errs.InternalError
 }

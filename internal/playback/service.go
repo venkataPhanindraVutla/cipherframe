@@ -24,6 +24,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
@@ -171,13 +172,14 @@ func ResolveVariant(a db.Asset, requested keys.Variant) (keys.Variant, error) {
 //
 // It checks the asset, then, in one transaction holding an advisory lock on the (tenant, viewer)
 // pair, ends that viewer's idle or expired sessions, counts the active ones against the tenant's
-// limit, and inserts the new session. The lock makes the limit exact under concurrency. The token
+// per-viewer limit, then (under the tenant's quota lock, when a limit is set) against the tenant's
+// and the client's concurrent-session quotas, and inserts the new session. The lock makes the limit exact under concurrency. The token
 // is signed before the transaction so a signing failure leaves no row behind.
 func (s *Service) CreateSession(ctx context.Context, in CreateInput) (Created, error) {
 	c, rapid, err := s.createSession(ctx, in)
 	if err != nil {
 		var e *errs.Error
-		if errors.As(err, &e) && (e.Code == errs.SessionLimit || e.Code == errs.AssetNotReady ||
+		if errors.As(err, &e) && (e.Code == errs.SessionLimit || e.Code == errs.QuotaExceeded || e.Code == errs.AssetNotReady ||
 			e.Code == errs.VariantUnavailable || e.Code == errs.VariantNotReady) {
 			s.access.RecordSessionDenied(s.accessEvent(ctx, in, nil, db.AccessSessionDenied))
 		}
@@ -284,6 +286,11 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 			if n >= set.MaxSessionsPerViewer {
 				return errs.New(errs.SessionLimit, "The viewer already has the maximum number of active playback sessions.")
 			}
+		}
+		// The tenant's and the client's concurrent-session limits (ADR 0047). Every creation path
+		// ends here: the API key, the browser JWT and the signed callback.
+		if err := quota.CheckSessions(ctx, tx, in.TenantID, in.ClientID, now, idle); err != nil {
+			return err
 		}
 		_, err := tx.InsertPlaybackSession(ctx, db.NewPlaybackSession{
 			ID: sid, TenantID: in.TenantID, ClientID: in.ClientID, AuthMethod: in.AuthMethod, AssetID: asset.ID,

@@ -75,6 +75,9 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	if len(renditions) == 0 {
 		return permanent(FailureInvalidMedia, errors.New("no renditions can be made from the file"))
 	}
+	if err := p.chargeQuota(ctx, asset, info.Duration); err != nil {
+		return err
+	}
 
 	// 3. The content key: created once, here, before any rendition exists, and reused by a retry.
 	ck, err := p.Keys.Ensure(ctx, asset.TenantID, asset.ID, keys.Original)
