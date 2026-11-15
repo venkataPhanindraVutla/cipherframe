@@ -378,11 +378,29 @@ computed from the merged durations.
 
 **Failure handling.** A file that cannot be processed fails the asset with a stable code in
 `failure_code` (`invalid_media`, `transcode_failed`, `transcode_timeout`, `source_mismatch`,
-`source_missing`) and the job is cancelled (not retried); partial output is removed. A storage,
+`source_missing`, `quota_transcode_minutes`) and the job is cancelled (not retried); partial output is removed. A storage,
 database or key-provider outage is retried with the job's backoff; if the last attempt also fails the
 asset becomes `failed` with `processing_failed`. Shutdown or the job's own deadline interrupts the job
 without failing the asset; the next attempt starts clean. If the asset leaves `processing` while the
 job runs (it was deleted), the job removes what it uploaded and ends.
+
+### Quotas (ADR 0047)
+
+Limits live in `tenant_quotas` and `client_quotas` (a `NULL` column or no row is unlimited) and are
+enforced by package `quota`, called from the code that already owns each decision:
+
+- **Storage:** `uploads.Service` calls `quota.CheckStorage` inside the transaction that inserts the asset
+  (declared size) and the one that commits it (verified size). Usage is read from `assets.size_bytes` and
+  `asset_artifacts`, so deleting an asset stops counting it when the purge sets `deleted`.
+- **Sessions:** `playback.Service.CreateSession`, the one creation path for API keys, JWT and callback,
+  calls `quota.CheckSessions` in the session's transaction, after the viewer lock.
+- **Transcode minutes:** the pipeline calls `quota.Service.ChargeTranscode` once the source is probed and
+  validated. A refusal is a permanent failure (`quota_transcode_minutes`); `transcode_charges` holds one
+  row per asset so a retry charges nothing more.
+- **Races:** each check holds a per-tenant advisory lock (`LockQuota`) from the usage read to the write, in
+  one transaction, and only when a limit applies.
+- **Request rate:** `quota.Limiter`, a per-API-key token bucket in memory called by the API guard right after
+  authentication. It is per process instance and reads limits through a 15-second cache.
 
 ### What the processing pipeline does not protect against
 

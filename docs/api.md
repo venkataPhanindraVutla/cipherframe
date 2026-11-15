@@ -433,6 +433,7 @@ the session itself. The session ends after 4 hours at most, or after 5 minutes w
 | `409` | `variant_unavailable` | `variant` is `masked` but the asset was created without `mask_faces`. |
 | `409` | `variant_not_ready` | The masked variant is requested (or is the default) and is not `ready` (`pending` or `failed`). |
 | `409` | `session_limit` | The viewer already has the maximum number of active sessions. |
+| `409` | `quota_exceeded` | The tenant or the client is at its `concurrent_sessions` quota ([Quotas and usage](#quotas-and-usage-adr-0047)). |
 
 **Viewer IDs and privacy.** `viewer_id` (1 to 128 printable characters, no control characters) is
 stored with the session and is the key of the concurrency limit. Use a **pseudonymous** identifier
@@ -1190,6 +1191,62 @@ window (`CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS`, default 90 days), so a dead del
 for that long. An endpoint receives only events that happen after it was registered. The CLI wrapper of
 this API comes in M8.
 
+## Quotas and usage (ADR 0047)
+
+A tenant, and optionally each of its clients, can be given limits. **Nothing is limited until a limit is
+set**: a tenant that never calls these endpoints has no quota, and a limit that is absent is unlimited.
+All five operations need the `admin` scope.
+
+| Method and path | What it does |
+|---|---|
+| `GET /v1/quotas` | The tenant's limits (`{}` while none were set; `updated_at` appears with the first replacement). |
+| `PUT /v1/quotas` | Replaces every limit. A field left out is unlimited. |
+| `GET /v1/clients/{client_id}/quotas` | One client's overrides (a client of another tenant is `404 not_found`). |
+| `PUT /v1/clients/{client_id}/quotas` | Replaces every override. One above the tenant's limit for the same quota is `400 invalid_request` with an `errors` entry for it. |
+| `GET /v1/usage` | The tenant's usage next to the limit in force for each quota. With `?client_id=cli_...`, that client's own usage against the lower of its override and the tenant's limit. |
+
+The limits (each at least 1):
+
+| Field | Limits | Counted over | Refused with |
+|---|---|---|---|
+| `storage_bytes` | Source plus delivery bytes. | The asset registry (`size_bytes`) and the artifact registry, not a listing of storage. A deleted asset stops counting when its purge completes; an aborted upload stops counting at once. For a client: the assets it created. | `409 quota_exceeded`, `limit: storage_bytes`, at `POST /v1/assets` (declared size) and again at `POST /v1/assets/{id}/commit` (verified size; the asset stays `uploading` and can be committed again after room was made). |
+| `transcode_minutes_per_month` | Minutes of source processed per calendar month (UTC). | One charge per asset, written when processing starts and the duration is known. | The asset fails with `failure_code` `quota_transcode_minutes` (see below); `commit` itself is not refused. |
+| `concurrent_sessions` | Active playback sessions, on top of `max_sessions_per_viewer`. | Sessions that are active, not expired and not idle past the idle timeout. A client's override counts the sessions its own keys made; sessions the viewer's browser started (JWT, callback) count toward the tenant's limit only. | `409 quota_exceeded`, `limit: concurrent_sessions`, at `POST /v1/playback-sessions` and `POST /v1/play/tenants/{tenant_id}/sessions`. |
+| `requests_per_minute` | Requests per minute per API key on the api listener. | A token bucket per key, in memory: a minute's worth can be used at once. | `429 rate_limited` with `Retry-After` (whole seconds, at least 1). |
+
+Notes:
+
+- **Replacing, not patching.** Send every limit you want; the rest become unlimited (or, for a client, no
+  override). A lower limit never deletes assets or ends sessions: it refuses what comes next, and a tenant
+  can be over a limit it just lowered.
+- **The lower limit wins.** A client is held to the lower of its override and the tenant's limit, so lowering
+  the tenant's limit later applies to every client.
+- **Over-quota transcoding fails the asset.** The duration is only known after the worker has probed the
+  source, so a month with no minutes left shows up after the upload: the asset becomes `failed` with
+  `failure_code` `quota_transcode_minutes` (and an `asset.failed` webhook), nothing is processed, and the
+  upload has to be repeated as a new asset after the month turns or the limit is raised. A retry of an
+  asset that was already charged is free. Read `GET /v1/usage` first to know how much is left.
+- **Storage can overshoot slightly.** Delivery bytes appear while an asset is processed and are not checked
+  there, so the tenant can pass its limit by the output of the assets then in flight; the next creation or
+  commit sees it.
+- **The request rate limit is per api process instance**, so N instances allow a key up to N times the limit.
+  A key reads its limit at most every 15 seconds, so a change reaches a running instance within that time.
+  A request that does not authenticate is `401` and is never counted.
+- **Usage response.** `storage_bytes`, `transcode_milliseconds` (this month, UTC, from `month_start`; its
+  limit is `transcode_minutes_per_month` converted to milliseconds) and `concurrent_sessions` each hold
+  `used` and, when limited, `limit`. `requests_per_minute` is the limit in force; request counts are not
+  reported.
+- Changes are audited (`quotas.update`, `client_quotas.update`) with the caller and no values. Metrics
+  for usage and refusals wait for the observability stack ([roadmap](roadmap.md)).
+
+### What the quota endpoints do not protect against
+
+- **A tenant's own keys.** Limits are per tenant and per client; a client with a `sessions:write` key can use
+  the tenant's whole session allowance unless its override says otherwise.
+- **Abuse of unauthenticated endpoints.** The request rate limit starts after authentication and covers the
+  api listener only; the edge has its own per-session limits ([playback](#playback-sessions-and-settings-adr-0028-0030)).
+- **A burst across instances.** See the per-instance note above.
+
 ## Integrity signing keys (ADR 0033)
 
 Manifests and deletion records are signed with Ed25519 keys that belong to the deployment, not to a
@@ -1402,12 +1459,13 @@ server-side only.
 | `payload_too_large` | 413 | no | The request body exceeds the allowed size. |
 | `asset_not_ready` | 409 | no | The operation needs a `ready` asset and this one is not (yet). |
 | `session_limit` | 409 | no | The viewer already has the tenant's maximum number of active playback sessions. |
+| `quota_exceeded` | 409 | no | The request would pass a tenant or client quota; the `limit` member names it (see [Quotas and usage](#quotas-and-usage-adr-0047)). |
 | `variant_unavailable` | 409 | no | A session or proof asked for the masked variant of an asset created without `mask_faces`. |
 | `variant_not_ready` | 409 | no | A session or proof asked for the masked variant (or it is the default) and it is not `ready`. |
 | `artifact_not_found` | 404 | no | A proof was requested for a path that is not an artifact of the asset's signed manifest. |
 | `not_anchored` | 404 | no | The manifest has no RFC 3161 timestamp token (anchoring is off, or the token is still pending). |
 | `not_deleted` | 404 | no | A deletion record was requested for an asset that has not been deleted (yet). |
-| `rate_limited` | 429 | yes | Too many requests; retry later. |
+| `rate_limited` | 429 | yes | Too many requests; retry after the `Retry-After` seconds. |
 | `internal_error` | 500 | no | An unexpected server error. |
 | `dependency_unavailable` | 503 | yes | A backing service (storage, database, key service) is unavailable. |
 | `timeout` | 504 | yes | The operation did not finish in time. |
@@ -1415,6 +1473,10 @@ server-side only.
 Some `invalid_request` answers also carry an `errors` array with one `{"field", "message"}` entry per
 invalid field (for example `{"field": "allowed_origins[1]", "message": "must be an origin such as
 https://example.com"}`). Messages are fixed text and never quote what was submitted.
+
+A `quota_exceeded` answer carries a `limit` member: `storage_bytes`, `transcode_minutes_per_month`,
+`concurrent_sessions` or `requests_per_minute`. It is a fixed name; the problem never holds a usage figure,
+a limit value or anything about another client or tenant.
 
 Adding a code is compatible; renaming or removing one is breaking. The registry is published as an
 enum in the OpenAPI spec.

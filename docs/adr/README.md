@@ -51,6 +51,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0043](0043-subtitle-and-watermark-parameters.md) | Subtitle and watermark parameters | P12 | Accepted | 2026-11-15 |
 | [0044](0044-subtitle-tracks.md) | Subtitle tracks | none (details under P12) | Accepted (flagged for owner review) | 2026-11-15 |
 | [0045](0045-webhooks.md) | Webhooks: outbox, signing, retries and replay | none (M7-5) | Accepted (flagged for owner review) | 2026-11-15 |
+| [0047](0047-quotas-and-per-client-limits.md) | Quotas and per-client limits | none (M7-6) | Accepted (flagged for owner review) | 2026-11-15 |
 
 ## Open gates
 
