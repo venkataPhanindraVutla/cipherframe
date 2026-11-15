@@ -139,6 +139,54 @@ func (e AssetState) Valid() bool {
 	}
 }
 
+// Defines values for BrandLogoCorner.
+const (
+	BrandLogoCornerBottomLeft  BrandLogoCorner = "bottom_left"
+	BrandLogoCornerBottomRight BrandLogoCorner = "bottom_right"
+	BrandLogoCornerTopLeft     BrandLogoCorner = "top_left"
+	BrandLogoCornerTopRight    BrandLogoCorner = "top_right"
+)
+
+// Valid indicates whether the value is a known member of the BrandLogoCorner enum.
+func (e BrandLogoCorner) Valid() bool {
+	switch e {
+	case BrandLogoCornerBottomLeft:
+		return true
+	case BrandLogoCornerBottomRight:
+		return true
+	case BrandLogoCornerTopLeft:
+		return true
+	case BrandLogoCornerTopRight:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BrandLogoPlacementCorner.
+const (
+	BrandLogoPlacementCornerBottomLeft  BrandLogoPlacementCorner = "bottom_left"
+	BrandLogoPlacementCornerBottomRight BrandLogoPlacementCorner = "bottom_right"
+	BrandLogoPlacementCornerTopLeft     BrandLogoPlacementCorner = "top_left"
+	BrandLogoPlacementCornerTopRight    BrandLogoPlacementCorner = "top_right"
+)
+
+// Valid indicates whether the value is a known member of the BrandLogoPlacementCorner enum.
+func (e BrandLogoPlacementCorner) Valid() bool {
+	switch e {
+	case BrandLogoPlacementCornerBottomLeft:
+		return true
+	case BrandLogoPlacementCornerBottomRight:
+		return true
+	case BrandLogoPlacementCornerTopLeft:
+		return true
+	case BrandLogoPlacementCornerTopRight:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreatedPlaybackSessionTokenTransport.
 const (
 	Header CreatedPlaybackSessionTokenTransport = "header"
@@ -816,16 +864,58 @@ func (e WebhookEventKind) Valid() bool {
 
 // Defines values for CreateAssetSubtitleMultipartBodyDefault.
 const (
-	False CreateAssetSubtitleMultipartBodyDefault = "false"
-	True  CreateAssetSubtitleMultipartBodyDefault = "true"
+	CreateAssetSubtitleMultipartBodyDefaultFalse CreateAssetSubtitleMultipartBodyDefault = "false"
+	CreateAssetSubtitleMultipartBodyDefaultTrue  CreateAssetSubtitleMultipartBodyDefault = "true"
 )
 
 // Valid indicates whether the value is a known member of the CreateAssetSubtitleMultipartBodyDefault enum.
 func (e CreateAssetSubtitleMultipartBodyDefault) Valid() bool {
 	switch e {
-	case False:
+	case CreateAssetSubtitleMultipartBodyDefaultFalse:
 		return true
-	case True:
+	case CreateAssetSubtitleMultipartBodyDefaultTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PutBrandLogoMultipartBodyCorner.
+const (
+	PutBrandLogoMultipartBodyCornerBottomLeft  PutBrandLogoMultipartBodyCorner = "bottom_left"
+	PutBrandLogoMultipartBodyCornerBottomRight PutBrandLogoMultipartBodyCorner = "bottom_right"
+	PutBrandLogoMultipartBodyCornerTopLeft     PutBrandLogoMultipartBodyCorner = "top_left"
+	PutBrandLogoMultipartBodyCornerTopRight    PutBrandLogoMultipartBodyCorner = "top_right"
+)
+
+// Valid indicates whether the value is a known member of the PutBrandLogoMultipartBodyCorner enum.
+func (e PutBrandLogoMultipartBodyCorner) Valid() bool {
+	switch e {
+	case PutBrandLogoMultipartBodyCornerBottomLeft:
+		return true
+	case PutBrandLogoMultipartBodyCornerBottomRight:
+		return true
+	case PutBrandLogoMultipartBodyCornerTopLeft:
+		return true
+	case PutBrandLogoMultipartBodyCornerTopRight:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PutBrandLogoMultipartBodyEnabled.
+const (
+	PutBrandLogoMultipartBodyEnabledFalse PutBrandLogoMultipartBodyEnabled = "false"
+	PutBrandLogoMultipartBodyEnabledTrue  PutBrandLogoMultipartBodyEnabled = "true"
+)
+
+// Valid indicates whether the value is a known member of the PutBrandLogoMultipartBodyEnabled enum.
+func (e PutBrandLogoMultipartBodyEnabled) Valid() bool {
+	switch e {
+	case PutBrandLogoMultipartBodyEnabledFalse:
+		return true
+	case PutBrandLogoMultipartBodyEnabledTrue:
 		return true
 	default:
 		return false
@@ -1008,6 +1098,45 @@ type AssetList struct {
 // then `deleting` while the purge runs and `deleted` for the tombstone that stays afterwards.
 // Lists leave deleted assets out.
 type AssetState string
+
+// BrandLogo A tenant's current brand logo (ADR 0049): the stored image's identity and how it is placed.
+// `version`, `sha256` and the placement are what the signed manifest of an asset made with
+// this logo records.
+type BrandLogo struct {
+	Corner BrandLogoCorner `json:"corner"`
+
+	// CreatedAt When this version was uploaded.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Enabled Whether assets processed from now on get the logo.
+	Enabled        bool `json:"enabled"`
+	Height         int  `json:"height"`
+	OpacityPercent int  `json:"opacity_percent"`
+
+	// Sha256 Hex SHA-256 of the stored PNG, the one the server wrote.
+	Sha256    string `json:"sha256"`
+	SizeBytes int    `json:"size_bytes"`
+
+	// UpdatedAt When the logo or its placement last changed.
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Version The ID of the stored version.
+	Version string `json:"version"`
+	Width   int    `json:"width"`
+}
+
+// BrandLogoCorner defines model for BrandLogo.Corner.
+type BrandLogoCorner string
+
+// BrandLogoPlacement Fields to change; a field left out keeps its value.
+type BrandLogoPlacement struct {
+	Corner         *BrandLogoPlacementCorner `json:"corner,omitempty"`
+	Enabled        *bool                     `json:"enabled,omitempty"`
+	OpacityPercent *int                      `json:"opacity_percent,omitempty"`
+}
+
+// BrandLogoPlacementCorner defines model for BrandLogoPlacement.Corner.
+type BrandLogoPlacementCorner string
 
 // Client defines model for Client.
 type Client struct {
@@ -2376,6 +2505,27 @@ type CreateAssetSubtitleMultipartBody struct {
 // CreateAssetSubtitleMultipartBodyDefault defines parameters for CreateAssetSubtitle.
 type CreateAssetSubtitleMultipartBodyDefault string
 
+// PutBrandLogoMultipartBody defines parameters for PutBrandLogo.
+type PutBrandLogoMultipartBody struct {
+	// Corner Default `bottom_right`.
+	Corner *PutBrandLogoMultipartBodyCorner `json:"corner,omitempty"`
+
+	// Enabled Whether assets processed from now on get the logo. Default `true`.
+	Enabled *PutBrandLogoMultipartBodyEnabled `json:"enabled,omitempty"`
+
+	// File The PNG, at most 256 KB and 1024 pixels on the longer side.
+	File openapi_types.File `json:"file"`
+
+	// Opacity A whole number from 10 to 100 (percent). Default 100.
+	Opacity *string `json:"opacity,omitempty"`
+}
+
+// PutBrandLogoMultipartBodyCorner defines parameters for PutBrandLogo.
+type PutBrandLogoMultipartBodyCorner string
+
+// PutBrandLogoMultipartBodyEnabled defines parameters for PutBrandLogo.
+type PutBrandLogoMultipartBodyEnabled string
+
 // ListClientsParams defines parameters for ListClients.
 type ListClientsParams struct {
 	// Limit Page size, 1 to 100 (default 50).
@@ -2468,6 +2618,12 @@ type CreateAssetSubtitleMultipartRequestBody CreateAssetSubtitleMultipartBody
 
 // ImportAssetTranscriptJSONRequestBody defines body for ImportAssetTranscript for application/json ContentType.
 type ImportAssetTranscriptJSONRequestBody = ImportTranscriptRequest
+
+// UpdateBrandLogoJSONRequestBody defines body for UpdateBrandLogo for application/json ContentType.
+type UpdateBrandLogoJSONRequestBody = BrandLogoPlacement
+
+// PutBrandLogoMultipartRequestBody defines body for PutBrandLogo for multipart/form-data ContentType.
+type PutBrandLogoMultipartRequestBody PutBrandLogoMultipartBody
 
 // CreateClientJSONRequestBody defines body for CreateClient for application/json ContentType.
 type CreateClientJSONRequestBody = CreateClientRequest
@@ -2763,6 +2919,18 @@ type ServerInterface interface {
 	// ImportAssetTranscript Import a transcript as a subtitle track
 	// (POST /v1/assets/{asset_id}/transcripts)
 	ImportAssetTranscript(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// DeleteBrandLogo Remove the tenant's brand logo
+	// (DELETE /v1/brand/logo)
+	DeleteBrandLogo(w http.ResponseWriter, r *http.Request)
+	// GetBrandLogo Get the tenant's brand logo
+	// (GET /v1/brand/logo)
+	GetBrandLogo(w http.ResponseWriter, r *http.Request)
+	// UpdateBrandLogo Change the brand logo's placement
+	// (PATCH /v1/brand/logo)
+	UpdateBrandLogo(w http.ResponseWriter, r *http.Request)
+	// PutBrandLogo Upload the tenant's brand logo
+	// (PUT /v1/brand/logo)
+	PutBrandLogo(w http.ResponseWriter, r *http.Request)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(w http.ResponseWriter, r *http.Request, params ListClientsParams)
@@ -3504,6 +3672,62 @@ func (siw *ServerInterfaceWrapper) ImportAssetTranscript(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ImportAssetTranscript(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBrandLogo operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBrandLogo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBrandLogo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBrandLogo operation middleware
+func (siw *ServerInterfaceWrapper) GetBrandLogo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrandLogo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateBrandLogo operation middleware
+func (siw *ServerInterfaceWrapper) UpdateBrandLogo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateBrandLogo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutBrandLogo operation middleware
+func (siw *ServerInterfaceWrapper) PutBrandLogo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutBrandLogo(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4811,6 +5035,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/overlay-codes/{code}", wrapper.LookupOverlayCode)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/privacy-settings", wrapper.GetPrivacySettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/privacy-settings", wrapper.UpdatePrivacySettings)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/brand/logo", wrapper.DeleteBrandLogo)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/brand/logo", wrapper.GetBrandLogo)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/brand/logo", wrapper.UpdateBrandLogo)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/brand/logo", wrapper.PutBrandLogo)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/quotas", wrapper.GetQuotas)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/quotas", wrapper.UpdateQuotas)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/clients/{client_id}/quotas", wrapper.GetClientQuotas)
@@ -7426,6 +7654,640 @@ type ImportAssetTranscriptdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response ImportAssetTranscriptdefaultApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBrandLogoRequestObject struct {
+}
+
+type DeleteBrandLogoResponseObject interface {
+	VisitDeleteBrandLogoResponse(w http.ResponseWriter) error
+}
+
+type DeleteBrandLogo204ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteBrandLogo204Response struct {
+	Headers DeleteBrandLogo204ResponseHeaders
+}
+
+func (response DeleteBrandLogo204Response) VisitDeleteBrandLogoResponse(w http.ResponseWriter) error {
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteBrandLogo401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteBrandLogo401ApplicationProblemPlusJSONResponse) VisitDeleteBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBrandLogo403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteBrandLogo403ApplicationProblemPlusJSONResponse) VisitDeleteBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBrandLogo404ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteBrandLogo404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers DeleteBrandLogo404ResponseHeaders
+}
+
+func (response DeleteBrandLogo404ApplicationProblemPlusJSONResponse) VisitDeleteBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBrandLogo429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteBrandLogo429ApplicationProblemPlusJSONResponse) VisitDeleteBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBrandLogo503ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteBrandLogo503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers DeleteBrandLogo503ResponseHeaders
+}
+
+func (response DeleteBrandLogo503ApplicationProblemPlusJSONResponse) VisitDeleteBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBrandLogodefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteBrandLogodefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    DeleteBrandLogodefaultResponseHeaders
+	StatusCode int
+}
+
+func (response DeleteBrandLogodefaultApplicationProblemPlusJSONResponse) VisitDeleteBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBrandLogoRequestObject struct {
+}
+
+type GetBrandLogoResponseObject interface {
+	VisitGetBrandLogoResponse(w http.ResponseWriter) error
+}
+
+type GetBrandLogo200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetBrandLogo200JSONResponse struct {
+	Body    BrandLogo
+	Headers GetBrandLogo200ResponseHeaders
+}
+
+func (response GetBrandLogo200JSONResponse) VisitGetBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBrandLogo401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetBrandLogo401ApplicationProblemPlusJSONResponse) VisitGetBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBrandLogo403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetBrandLogo403ApplicationProblemPlusJSONResponse) VisitGetBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBrandLogo404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetBrandLogo404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetBrandLogo404ResponseHeaders
+}
+
+func (response GetBrandLogo404ApplicationProblemPlusJSONResponse) VisitGetBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBrandLogo429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response GetBrandLogo429ApplicationProblemPlusJSONResponse) VisitGetBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBrandLogo503ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetBrandLogo503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetBrandLogo503ResponseHeaders
+}
+
+func (response GetBrandLogo503ApplicationProblemPlusJSONResponse) VisitGetBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBrandLogodefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetBrandLogodefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetBrandLogodefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetBrandLogodefaultApplicationProblemPlusJSONResponse) VisitGetBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogoRequestObject struct {
+	Body *UpdateBrandLogoJSONRequestBody
+}
+
+type UpdateBrandLogoResponseObject interface {
+	VisitUpdateBrandLogoResponse(w http.ResponseWriter) error
+}
+
+type UpdateBrandLogo200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateBrandLogo200JSONResponse struct {
+	Body    BrandLogo
+	Headers UpdateBrandLogo200ResponseHeaders
+}
+
+func (response UpdateBrandLogo200JSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogo400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateBrandLogo400ApplicationProblemPlusJSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogo401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateBrandLogo401ApplicationProblemPlusJSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogo403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateBrandLogo403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateBrandLogo403ResponseHeaders
+}
+
+func (response UpdateBrandLogo403ApplicationProblemPlusJSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogo404ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateBrandLogo404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateBrandLogo404ResponseHeaders
+}
+
+func (response UpdateBrandLogo404ApplicationProblemPlusJSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogo429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateBrandLogo429ApplicationProblemPlusJSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogo503ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateBrandLogo503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateBrandLogo503ResponseHeaders
+}
+
+func (response UpdateBrandLogo503ApplicationProblemPlusJSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateBrandLogodefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateBrandLogodefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdateBrandLogodefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdateBrandLogodefaultApplicationProblemPlusJSONResponse) VisitUpdateBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogoRequestObject struct {
+	Body *multipart.Reader
+}
+
+type PutBrandLogoResponseObject interface {
+	VisitPutBrandLogoResponse(w http.ResponseWriter) error
+}
+
+type PutBrandLogo200ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutBrandLogo200JSONResponse struct {
+	Body    BrandLogo
+	Headers PutBrandLogo200ResponseHeaders
+}
+
+func (response PutBrandLogo200JSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogo400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response PutBrandLogo400ApplicationProblemPlusJSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogo401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response PutBrandLogo401ApplicationProblemPlusJSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogo403ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutBrandLogo403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutBrandLogo403ResponseHeaders
+}
+
+func (response PutBrandLogo403ApplicationProblemPlusJSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogo413ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutBrandLogo413ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutBrandLogo413ResponseHeaders
+}
+
+func (response PutBrandLogo413ApplicationProblemPlusJSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogo429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response PutBrandLogo429ApplicationProblemPlusJSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogo503ResponseHeaders struct {
+	XRequestId string
+}
+
+type PutBrandLogo503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers PutBrandLogo503ResponseHeaders
+}
+
+func (response PutBrandLogo503ApplicationProblemPlusJSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBrandLogodefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type PutBrandLogodefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    PutBrandLogodefaultResponseHeaders
+	StatusCode int
+}
+
+func (response PutBrandLogodefaultApplicationProblemPlusJSONResponse) VisitPutBrandLogoResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -12583,6 +13445,18 @@ type StrictServerInterface interface {
 	// ImportAssetTranscript Import a transcript as a subtitle track
 	// (POST /v1/assets/{asset_id}/transcripts)
 	ImportAssetTranscript(ctx context.Context, request ImportAssetTranscriptRequestObject) (ImportAssetTranscriptResponseObject, error)
+	// DeleteBrandLogo Remove the tenant's brand logo
+	// (DELETE /v1/brand/logo)
+	DeleteBrandLogo(ctx context.Context, request DeleteBrandLogoRequestObject) (DeleteBrandLogoResponseObject, error)
+	// GetBrandLogo Get the tenant's brand logo
+	// (GET /v1/brand/logo)
+	GetBrandLogo(ctx context.Context, request GetBrandLogoRequestObject) (GetBrandLogoResponseObject, error)
+	// UpdateBrandLogo Change the brand logo's placement
+	// (PATCH /v1/brand/logo)
+	UpdateBrandLogo(ctx context.Context, request UpdateBrandLogoRequestObject) (UpdateBrandLogoResponseObject, error)
+	// PutBrandLogo Upload the tenant's brand logo
+	// (PUT /v1/brand/logo)
+	PutBrandLogo(ctx context.Context, request PutBrandLogoRequestObject) (PutBrandLogoResponseObject, error)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(ctx context.Context, request ListClientsRequestObject) (ListClientsResponseObject, error)
@@ -13293,6 +14167,116 @@ func (sh *strictHandler) ImportAssetTranscript(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ImportAssetTranscriptResponseObject); ok {
 		if err := validResponse.VisitImportAssetTranscriptResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteBrandLogo operation middleware
+func (sh *strictHandler) DeleteBrandLogo(w http.ResponseWriter, r *http.Request) {
+	var request DeleteBrandLogoRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteBrandLogo(ctx, request.(DeleteBrandLogoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteBrandLogo")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteBrandLogoResponseObject); ok {
+		if err := validResponse.VisitDeleteBrandLogoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBrandLogo operation middleware
+func (sh *strictHandler) GetBrandLogo(w http.ResponseWriter, r *http.Request) {
+	var request GetBrandLogoRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBrandLogo(ctx, request.(GetBrandLogoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBrandLogo")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBrandLogoResponseObject); ok {
+		if err := validResponse.VisitGetBrandLogoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateBrandLogo operation middleware
+func (sh *strictHandler) UpdateBrandLogo(w http.ResponseWriter, r *http.Request) {
+	var request UpdateBrandLogoRequestObject
+
+	var body UpdateBrandLogoJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateBrandLogo(ctx, request.(UpdateBrandLogoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateBrandLogo")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateBrandLogoResponseObject); ok {
+		if err := validResponse.VisitUpdateBrandLogoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutBrandLogo operation middleware
+func (sh *strictHandler) PutBrandLogo(w http.ResponseWriter, r *http.Request) {
+	var request PutBrandLogoRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutBrandLogo(ctx, request.(PutBrandLogoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutBrandLogo")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutBrandLogoResponseObject); ok {
+		if err := validResponse.VisitPutBrandLogoResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

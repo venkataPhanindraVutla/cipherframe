@@ -11,6 +11,7 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/branding"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
@@ -61,6 +62,8 @@ type Deps struct {
 	Subtitles *subtitles.Service
 	// Quota serves the quota and usage endpoints (M7-6). Without it they answer 503.
 	Quota *quota.Service
+	// Branding serves the brand logo endpoints (M7-4). Without it they answer 503.
+	Branding *branding.Service
 	// Limiter rate limits requests per API key (M7-6). Nil limits nothing.
 	Limiter *quota.Limiter
 }
@@ -79,7 +82,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks, subtitles: d.Subtitles, quota: d.Quota}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks, subtitles: d.Subtitles, quota: d.Quota, branding: d.Branding}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})

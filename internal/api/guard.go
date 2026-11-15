@@ -76,6 +76,11 @@ var operationScopes = map[string][]db.Scope{
 	"RotateSigningKey": {db.ScopeAdmin},
 	"RetireSigningKey": {db.ScopeAdmin},
 
+	"GetBrandLogo":    {db.ScopeAdmin},
+	"PutBrandLogo":    {db.ScopeAdmin},
+	"UpdateBrandLogo": {db.ScopeAdmin},
+	"DeleteBrandLogo": {db.ScopeAdmin},
+
 	"GetQuotas":          {db.ScopeAdmin},
 	"UpdateQuotas":       {db.ScopeAdmin},
 	"GetClientQuotas":    {db.ScopeAdmin},
@@ -428,6 +433,22 @@ func (g guarded) GetClientQuotas(w http.ResponseWriter, r *http.Request, clientI
 
 func (g guarded) UpdateClientQuotas(w http.ResponseWriter, r *http.Request, clientID gen.ClientIdPath) {
 	g.a.run("UpdateClientQuotas", w, r, func(r *http.Request) { g.ServerInterface.UpdateClientQuotas(w, r, clientID) })
+}
+
+func (g guarded) GetBrandLogo(w http.ResponseWriter, r *http.Request) {
+	g.a.run("GetBrandLogo", w, r, func(r *http.Request) { g.ServerInterface.GetBrandLogo(w, r) })
+}
+
+func (g guarded) PutBrandLogo(w http.ResponseWriter, r *http.Request) {
+	g.a.run("PutBrandLogo", w, r, func(r *http.Request) { g.ServerInterface.PutBrandLogo(w, r) })
+}
+
+func (g guarded) UpdateBrandLogo(w http.ResponseWriter, r *http.Request) {
+	g.a.run("UpdateBrandLogo", w, r, func(r *http.Request) { g.ServerInterface.UpdateBrandLogo(w, r) })
+}
+
+func (g guarded) DeleteBrandLogo(w http.ResponseWriter, r *http.Request) {
+	g.a.run("DeleteBrandLogo", w, r, func(r *http.Request) { g.ServerInterface.DeleteBrandLogo(w, r) })
 }
 
 func (g guarded) GetUsage(w http.ResponseWriter, r *http.Request, params gen.GetUsageParams) {

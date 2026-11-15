@@ -17,6 +17,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/branding"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -205,6 +206,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
+		brandingSvc, err := branding.New(branding.Deps{Pool: pool, Delivery: buckets.Delivery, Log: log})
+		if err != nil {
+			cleanup()
+			return err
+		}
 		handler := api.New(api.Deps{
 			Log:      log,
 			Ready:    ready,
@@ -221,6 +227,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Webhooks:    webhooks,
 			Subtitles:   subtitleSvc,
 			Quota:       quota.NewService(pool, nil),
+			Branding:    brandingSvc,
 			Limiter:     quota.NewLimiter(repos, log, nil),
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)

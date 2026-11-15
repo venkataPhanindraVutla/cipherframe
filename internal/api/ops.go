@@ -5,6 +5,7 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/branding"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
@@ -37,6 +38,8 @@ type server struct {
 	subtitles *subtitles.Service
 	// quota serves the quota and usage endpoints (M7-6).
 	quota *quota.Service
+	// branding serves the brand logo endpoints (M7-4).
+	branding *branding.Service
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

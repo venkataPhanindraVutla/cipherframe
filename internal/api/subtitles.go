@@ -47,11 +47,17 @@ func subtitleOut(t db.Subtitle) gen.SubtitleTrack {
 }
 
 // bodyLimit is the body cap of the control plane: small for everything except the two routes that
-// carry a subtitle track, which may carry up to subtitles.MaxRequestBytes.
+// carry a subtitle track, which may carry up to subtitles.MaxRequestBytes, and the logo upload,
+// which may carry a logo of branding.MaxBytes.
 func bodyLimit(next http.Handler) http.Handler {
 	small := httpx.LimitBody(maxBodyBytes)(next)
 	large := httpx.LimitBody(subtitles.MaxRequestBytes)(next)
+	logo := httpx.LimitBody(maxLogoRequestBytes)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/brand/logo" {
+			logo.ServeHTTP(w, r)
+			return
+		}
 		if r.Method == http.MethodPost && carriesSubtitles(r.URL.Path) {
 			large.ServeHTTP(w, r)
 			return
