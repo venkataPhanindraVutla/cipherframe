@@ -96,7 +96,10 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	if err := os.Mkdir(outDir, 0o700); err != nil {
 		return fmt.Errorf("pipeline: create the output directory: %w", err)
 	}
-	spec := media.TranscodeSpec{Source: srcPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset}
+	spec := media.TranscodeSpec{
+		Source: srcPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset,
+		Thumbs: thumbnailSpec(dir, info, renditions),
+	}
 	if err := p.transcode(ctx, asset, spec, true, log); err != nil {
 		return err
 	}
@@ -118,7 +121,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	if err := p.ensureLive(ctx, asset); err != nil {
 		return err
 	}
-	pub, err := p.publish(ctx, asset, keys.Original, key, outs, info, log)
+	pub, err := p.publish(ctx, asset, keys.Original, key, outs, readThumbnails(spec, log), info, log)
 	if err != nil {
 		return err
 	}

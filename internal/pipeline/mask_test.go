@@ -141,10 +141,16 @@ func TestMaskHappyPath(t *testing.T) {
 		t.Fatalf("asset after masking: %+v", a)
 	}
 	masked := m.maskedKeys()
-	if len(masked) != 4*(1+1+3)+1 {
+	if len(masked) != 4*(1+1+3)+1+3 {
 		t.Fatalf("%d masked objects", len(masked))
 	}
 	m.originalUntouched()
+	// The masked variant's images came from the masked file, in the masked job's own directory, and
+	// are stored under the masked prefix only (ADR 0046).
+	if th := m.tools.lastSpec.Thumbs; th == nil || !strings.Contains(th.Dir, "job-mask-") {
+		t.Errorf("the masked transcode was not asked for thumbnails in the masking job's directory: %+v", th)
+	}
+	m.checkThumbnails(keys.Masked)
 	if len(m.delivery.keys()) != len(m.original)+len(masked) {
 		t.Error("objects outside both variants' prefixes appeared")
 	}

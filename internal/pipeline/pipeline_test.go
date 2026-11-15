@@ -25,6 +25,8 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/hls"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/jobs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
@@ -155,7 +157,7 @@ func TestProcessHappyPath(t *testing.T) {
 
 	// Every delivery object is registered, with the hash of the stored bytes, and the other way round.
 	stored := h.delivery.keys()
-	if len(stored) != len(h.repo.artifacts) || len(stored) != 4*(1+1+3)+1 {
+	if len(stored) != len(h.repo.artifacts) || len(stored) != 4*(1+1+3)+1+3 { // renditions, the master, the poster, the sprite sheet and the track
 		t.Fatalf("%d objects, %d artifacts", len(stored), len(h.repo.artifacts))
 	}
 	for _, k := range stored {
@@ -211,6 +213,10 @@ func TestProcessHappyPath(t *testing.T) {
 		t.Errorf("unexpected master playlist:\n%s", master)
 	}
 
+	// The poster, the sprite sheet and the track are stored under the variant, registered, and in the
+	// signed manifest by hash (ADR 0046).
+	h.checkThumbnails(keys.Original)
+
 	// The init segment is stored as FFmpeg wrote it (documented), everything else is ciphertext.
 	if !bytes.Equal(h.delivery.object(keys.InitSegment(tenant, asset, name)), fakeInit(true)) {
 		t.Error("init segment was altered")
@@ -225,6 +231,77 @@ func TestProcessHappyPath(t *testing.T) {
 	// Progress only moved forward.
 	if !slices.IsSorted(h.repo.progress) {
 		t.Errorf("progress went backwards: %v", h.repo.progress)
+	}
+}
+
+// checkThumbnails asserts that variant has a poster, a sprite sheet and a track in the delivery
+// bucket, registered with that variant and the hash of the stored bytes, that the track is the one
+// the plan makes, and that the stored manifest lists the three.
+func (h *harness) checkThumbnails(variant keys.Variant) {
+	h.t.Helper()
+	tenant, asset := h.args.TenantID, h.args.AssetID
+	prefix := keys.VariantHLSPrefix(tenant, asset, variant)
+	var listed []manifest.Artifact
+	m, err := DecodeManifest(h.repo.manifest.Envelope)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	listed = m.VariantThumbnails(variant == keys.Masked)
+	want := []struct {
+		kind db.ArtifactKind
+		key  string
+		mk   string
+		typ  string
+	}{
+		{db.ArtifactPoster, keys.VariantPoster(tenant, asset, variant), manifest.KindPoster, "image/jpeg"},
+		{db.ArtifactSprite, keys.VariantSprite(tenant, asset, variant), manifest.KindSprite, "image/jpeg"},
+		{db.ArtifactThumbnails, keys.VariantThumbnails(tenant, asset, variant), manifest.KindThumbnails, "text/vtt"},
+	}
+	if len(listed) != len(want) {
+		h.t.Fatalf("manifest lists %d thumbnail objects, want 3: %+v", len(listed), listed)
+	}
+	for i, w := range want {
+		body := h.delivery.object(w.key)
+		art, ok := h.repo.artifacts["delivery/"+w.key]
+		sum := sha256.Sum256(body)
+		if len(body) == 0 || !ok || art.Kind != w.kind || art.Variant != variant.String() || !bytes.Equal(art.SHA256, sum[:]) {
+			h.t.Errorf("%s: stored %d bytes, registered %+v", w.key, len(body), art)
+		}
+		if h.delivery.types[w.key] != w.typ {
+			h.t.Errorf("%s has content type %q, want %q", w.key, h.delivery.types[w.key], w.typ)
+		}
+		if listed[i].Kind != w.mk || listed[i].Path != strings.TrimPrefix(w.key, prefix) || listed[i].SHA256 != hex.EncodeToString(sum[:]) || listed[i].Size != int64(len(body)) {
+			h.t.Errorf("manifest entry %d = %+v", i, listed[i])
+		}
+	}
+	vtt := string(h.delivery.object(keys.VariantThumbnails(tenant, asset, variant)))
+	if !strings.HasPrefix(vtt, "WEBVTT\n") || !strings.Contains(vtt, "00:00:10.000 --> 00:00:14.000\nsprite.jpg#xywh=160,0,160,90\n") {
+		h.t.Errorf("thumbnail track:\n%s", vtt)
+	}
+}
+
+func TestThumbnailsAreOptional(t *testing.T) {
+	h := newHarness(t)
+	h.tools.skipThumbs = true
+	if err := h.run(1, 5); err != nil {
+		t.Fatal(err)
+	}
+	if a := h.repo.snapshot(); a.State != db.AssetReady {
+		t.Fatalf("state = %s: a missing poster must not fail the asset", a.State)
+	}
+	if n := len(h.delivery.keys()); n != 4*(1+1+3)+1 {
+		t.Errorf("%d objects, want the renditions and the master only", n)
+	}
+	if !strings.Contains(h.logs.String(), "thumbnails skipped") {
+		t.Error("the skipped thumbnails were not logged")
+	}
+	// A manifest without thumbnails has no member for them: it is what it was before M7-2.
+	env, err := dsse.Decode(h.repo.manifest.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(env.Payload, []byte("thumbnails")) {
+		t.Errorf("the manifest mentions thumbnails: %s", env.Payload)
 	}
 }
 
@@ -257,7 +334,7 @@ func TestRetryStartsCleanAndReusesTheKey(t *testing.T) {
 	}
 	// The delivery bucket holds exactly the registered artifacts: nothing stale, nothing missing.
 	stored := h.delivery.keys()
-	if len(stored) != len(h.repo.artifacts) || len(stored) != 21 {
+	if len(stored) != len(h.repo.artifacts) || len(stored) != 24 {
 		t.Fatalf("%d objects vs %d artifacts", len(stored), len(h.repo.artifacts))
 	}
 	for _, k := range stored {

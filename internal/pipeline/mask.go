@@ -170,7 +170,12 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	if err := os.Mkdir(outDir, 0o700); err != nil {
 		return fmt.Errorf("pipeline: create the output directory: %w", err)
 	}
-	spec := media.TranscodeSpec{Source: maskedPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset}
+	// The masked variant's poster and sprite come from the masked file, in this same run: no image of
+	// the original is ever stored under the masked variant (ADR 0046).
+	spec := media.TranscodeSpec{
+		Source: maskedPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset,
+		Thumbs: thumbnailSpec(dir, info, renditions),
+	}
 	if err := p.transcode(ctx, asset, spec, false, log); err != nil {
 		return err
 	}
@@ -195,7 +200,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	if src.Size != ready.SourceSizeBytes || !bytes.Equal(src.SHA256[:], ready.SourceSHA256) {
 		return permanent(FailureSourceMismatch, errors.New("the stored source is not the one that was processed"))
 	}
-	pub, err := p.publish(ctx, asset, keys.Masked, key, outs, info, log)
+	pub, err := p.publish(ctx, asset, keys.Masked, key, outs, readThumbnails(spec, log), info, log)
 	if err != nil {
 		return err
 	}

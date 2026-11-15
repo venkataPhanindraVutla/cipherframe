@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
@@ -38,15 +40,18 @@ type memStore struct {
 
 	mu      sync.Mutex
 	objects map[string][]byte
+	types   map[string]string // content type of each stored object
 	// putFailAfter, when >= 0, makes every Put after that many successful ones fail once.
 	putFailAfter int
 	puts         int
 	putFailed    bool
 }
 
-func newMemStore() *memStore { return &memStore{objects: map[string][]byte{}, putFailAfter: -1} }
+func newMemStore() *memStore {
+	return &memStore{objects: map[string][]byte{}, types: map[string]string{}, putFailAfter: -1}
+}
 
-func (m *memStore) Put(_ context.Context, key string, body io.Reader, size int64, _ string) error {
+func (m *memStore) Put(_ context.Context, key string, body io.Reader, size int64, contentType string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.putFailAfter >= 0 && m.puts >= m.putFailAfter && !m.putFailed {
@@ -61,6 +66,7 @@ func (m *memStore) Put(_ context.Context, key string, body io.Reader, size int64
 		return errors.New("memStore: size mismatch")
 	}
 	m.objects[key] = b
+	m.types[key] = contentType
 	m.puts++
 	return nil
 }
@@ -347,6 +353,8 @@ type fakeTools struct {
 	// block, when set, makes Transcode wait for ctx to end; started is closed when it begins.
 	block   bool
 	started chan struct{}
+	// skipThumbs makes Transcode leave the poster and sprite sheet unwritten.
+	skipThumbs bool
 
 	probes, transcodes int
 	versionCalls       int
@@ -419,7 +427,26 @@ func (f *fakeTools) Transcode(ctx context.Context, spec media.TranscodeSpec, pro
 			return err
 		}
 	}
+	if spec.Thumbs != nil && !f.skipThumbs {
+		p := spec.Thumbs.Plan
+		if err := os.MkdirAll(spec.Thumbs.Dir, 0o700); err != nil {
+			return err
+		}
+		if err := writeFakeJPEG(filepath.Join(spec.Thumbs.Dir, media.PosterFile), p.PosterWidth, p.PosterHeight); err != nil {
+			return err
+		}
+		return writeFakeJPEG(filepath.Join(spec.Thumbs.Dir, media.SpriteFile), p.Columns*p.TileWidth, p.Rows*p.TileHeight)
+	}
 	return nil
+}
+
+// writeFakeJPEG writes a real JPEG of the given size: the pipeline checks the size it asked for.
+func writeFakeJPEG(path string, w, h int) error {
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, image.NewGray(image.Rect(0, 0, w, h)), nil); err != nil {
+		return err
+	}
+	return os.WriteFile(path, b.Bytes(), 0o600)
 }
 
 func box(typ string, payload ...[]byte) []byte {

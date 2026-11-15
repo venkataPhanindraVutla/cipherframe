@@ -23,6 +23,8 @@ const (
 	typeSegment  = "application/octet-stream"
 	typeInit     = "video/mp4"
 	typePlaylist = "application/vnd.apple.mpegurl"
+	typeImage    = "image/jpeg"
+	typeVTT      = "text/vtt"
 )
 
 // bandwidthMinSegment: segments shorter than this are left out of the peak bandwidth when longer
@@ -53,7 +55,10 @@ type published struct {
 // publish encrypts each rendition's media segments, uploads them with the init segments, then
 // writes and uploads the canonical playlists, under the variant's own prefix. Each object's SHA-256
 // is computed over the bytes as stored, and each is returned as an artifact for the registry.
-func (p *Processor) publish(ctx context.Context, asset db.Asset, variant keys.Variant, key []byte, outs []media.RenditionOutput, info media.Info, log *slog.Logger) (published, error) {
+//
+// thumbs, when not nil, are the variant's poster, sprite sheet and thumbnail track (ADR 0046); they
+// are stored and registered under the same variant.
+func (p *Processor) publish(ctx context.Context, asset db.Asset, variant keys.Variant, key []byte, outs []media.RenditionOutput, thumbs *media.ThumbnailOutput, info media.Info, log *slog.Logger) (published, error) {
 	t0 := p.Now()
 	rate := media.OutputFrameRate(info.Video.FrameRate)
 	var pub published
@@ -161,6 +166,29 @@ func (p *Processor) publish(ctx context.Context, asset db.Asset, variant keys.Va
 	}
 	if err := put(db.ArtifactMaster, "", keys.VariantMaster(asset.TenantID, asset.ID, variant), typePlaylist, []byte(master)); err != nil {
 		return pub, err
+	}
+	if thumbs != nil {
+		poster, err := os.ReadFile(thumbs.Poster) //nolint:gosec // a file FFmpeg wrote in the job's private directory
+		if err != nil {
+			return pub, fmt.Errorf("pipeline: read poster: %w", err)
+		}
+		sprite, err := os.ReadFile(thumbs.Sprite) //nolint:gosec // as above
+		if err != nil {
+			return pub, fmt.Errorf("pipeline: read sprite: %w", err)
+		}
+		for _, o := range []struct {
+			kind     db.ArtifactKind
+			key, typ string
+			body     []byte
+		}{
+			{db.ArtifactPoster, keys.VariantPoster(asset.TenantID, asset.ID, variant), typeImage, poster},
+			{db.ArtifactSprite, keys.VariantSprite(asset.TenantID, asset.ID, variant), typeImage, sprite},
+			{db.ArtifactThumbnails, keys.VariantThumbnails(asset.TenantID, asset.ID, variant), typeVTT, thumbs.Track},
+		} {
+			if err := put(o.kind, "", o.key, o.typ, o.body); err != nil {
+				return pub, err
+			}
+		}
 	}
 	log.InfoContext(ctx, "output published", slog.String("variant", variant.String()), slog.Int("objects", len(pub.artifacts)), slog.Duration("elapsed", p.Now().Sub(t0)))
 	return pub, nil
