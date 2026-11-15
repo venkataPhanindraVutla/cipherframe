@@ -27,7 +27,7 @@ func (q *Queries) DeleteAssetArtifacts(ctx context.Context, assetID pgtype.UUID)
 const deleteAssetHLSArtifacts = `-- name: DeleteAssetHLSArtifacts :execrows
 DELETE FROM asset_artifacts
 WHERE asset_id = $1::uuid AND variant = $2::text
-  AND kind IN ('master', 'playlist', 'init', 'segment')
+  AND kind IN ('master', 'playlist', 'init', 'segment', 'poster', 'sprite', 'thumbnails')
 `
 
 type DeleteAssetHLSArtifactsParams struct {
@@ -35,9 +35,9 @@ type DeleteAssetHLSArtifactsParams struct {
 	Variant string
 }
 
-// The playlists, init segments and media segments of one variant of an asset (everything the
-// processing job, or the masking job for the masked variant, makes again on a retry). A poster is
-// not one of them.
+// Everything under one variant's HLS prefix (what the processing job, or the masking job for the
+// masked variant, makes again on a retry): the playlists, init segments and media segments, and the
+// variant's poster, sprite sheet and thumbnail track (ADR 0046). A subtitle track is not one of them.
 func (q *Queries) DeleteAssetHLSArtifacts(ctx context.Context, arg DeleteAssetHLSArtifactsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteAssetHLSArtifacts, arg.AssetID, arg.Variant)
 	if err != nil {

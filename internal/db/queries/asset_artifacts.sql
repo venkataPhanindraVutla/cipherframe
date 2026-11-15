@@ -15,12 +15,12 @@ WHERE asset_artifacts.asset_id = EXCLUDED.asset_id;
 SELECT * FROM asset_artifacts WHERE asset_id = $1 ORDER BY bucket, object_key;
 
 -- name: DeleteAssetHLSArtifacts :execrows
--- The playlists, init segments and media segments of one variant of an asset (everything the
--- processing job, or the masking job for the masked variant, makes again on a retry). A poster is
--- not one of them.
+-- Everything under one variant's HLS prefix (what the processing job, or the masking job for the
+-- masked variant, makes again on a retry): the playlists, init segments and media segments, and the
+-- variant's poster, sprite sheet and thumbnail track (ADR 0046). A subtitle track is not one of them.
 DELETE FROM asset_artifacts
 WHERE asset_id = sqlc.arg(asset_id)::uuid AND variant = sqlc.arg(variant)::text
-  AND kind IN ('master', 'playlist', 'init', 'segment');
+  AND kind IN ('master', 'playlist', 'init', 'segment', 'poster', 'sprite', 'thumbnails');
 
 -- name: FindTenantArtifactsBySHA256 :many
 -- The HLS objects of the tenant's ready assets whose stored bytes hash to sha256 (the lookup behind

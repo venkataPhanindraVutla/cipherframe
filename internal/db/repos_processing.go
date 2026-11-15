@@ -22,7 +22,11 @@ const (
 	ArtifactPlaylist ArtifactKind = "playlist"
 	ArtifactInit     ArtifactKind = "init"
 	ArtifactSegment  ArtifactKind = "segment"
-	ArtifactPoster   ArtifactKind = "poster"
+	// ArtifactPoster, ArtifactSprite and ArtifactThumbnails are a variant's poster image, sprite
+	// sheet and WebVTT thumbnail track (ADR 0046).
+	ArtifactPoster     ArtifactKind = "poster"
+	ArtifactSprite     ArtifactKind = "sprite"
+	ArtifactThumbnails ArtifactKind = "thumbnails"
 	// ArtifactSubtitle is a subtitle track (ADR 0044).
 	ArtifactSubtitle ArtifactKind = "subtitle"
 )
@@ -30,7 +34,7 @@ const (
 // Valid reports whether k is a known kind.
 func (k ArtifactKind) Valid() bool {
 	switch k {
-	case ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster, ArtifactSubtitle:
+	case ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster, ArtifactSubtitle, ArtifactSprite, ArtifactThumbnails:
 		return true
 	}
 	return false
@@ -196,8 +200,8 @@ func (r *Repos) ListArtifacts(ctx context.Context, assetID id.AssetID) ([]Artifa
 }
 
 // DeleteHLSArtifacts removes the playlist, init segment and media segment rows of one variant of the
-// asset (what the processing job, or the masking job for "masked", produces again on a retry; a
-// poster is kept) and returns how many there were. The objects themselves are the caller's to delete.
+// asset (what the processing job, or the masking job for "masked", produces again on a retry; that
+// includes the variant's poster, sprite and thumbnail track, ADR 0046) and returns how many there were. The objects themselves are the caller's to delete.
 func (r *Repos) DeleteHLSArtifacts(ctx context.Context, assetID id.AssetID, variant string) (int64, error) {
 	aid, err := requirePG(assetID)
 	if err != nil {
@@ -251,5 +255,5 @@ func (r *Repos) SetAssetMasking(ctx context.Context, tenantID id.TenantID, asset
 // ArtifactKinds returns every kind asset_artifacts can hold. The purge registry (package purge)
 // must register each of them.
 func ArtifactKinds() []ArtifactKind {
-	return []ArtifactKind{ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster, ArtifactSubtitle}
+	return []ArtifactKind{ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster, ArtifactSubtitle, ArtifactSprite, ArtifactThumbnails}
 }
