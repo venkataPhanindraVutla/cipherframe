@@ -93,6 +93,7 @@ func TestStorageQuotaClientOverrideAndRace(t *testing.T) {
 	smallKey := small["key"].(string)
 
 	e.call(admin, "PUT", "/v1/quotas", map[string]any{"storage_bytes": 10000}, 200)
+	e.call(admin, "GET", "/v1/quotas", nil, 200)
 	over, _ := e.call(admin, "PUT", "/v1/clients/"+cli["id"].(string)+"/quotas", map[string]any{"storage_bytes": 20000}, 400)
 	if over["code"] != "invalid_request" {
 		t.Fatalf("override above the tenant: %v", over)
@@ -144,6 +145,12 @@ func TestStorageQuotaClientOverrideAndRace(t *testing.T) {
 	wg.Wait()
 	if ok.Load() != 3 || refused.Load() != 9 {
 		t.Fatalf("%d creations passed and %d refused, want 3 and 9", ok.Load(), refused.Load())
+	}
+	// Every quota operation answered 2xx and matched the spec.
+	for _, op := range []string{"getQuotas", "updateQuotas", "getClientQuotas", "updateClientQuotas", "getUsage"} {
+		if !e.covered[op] {
+			t.Errorf("%s was not exercised with a 2xx response", op)
+		}
 	}
 }
 

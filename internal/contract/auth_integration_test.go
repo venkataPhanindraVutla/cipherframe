@@ -142,6 +142,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 			if strings.HasPrefix(path, "/v1/play/") {
 				continue // exercised by TestEdgePlaybackOperationsMatchSpec
 			}
+			if path == "/v1/quotas" || path == "/v1/usage" || strings.HasSuffix(path, "/quotas") {
+				continue // exercised by TestStorageQuotaClientOverrideAndRace
+			}
 			if op.Security != nil && len(*op.Security) > 0 && !covered[op.OperationID] {
 				t.Errorf("%s %s (%s) was not exercised with a 2xx response", method, path, op.OperationID)
 			}
