@@ -82,10 +82,12 @@ type ThumbnailSpec struct {
 
 // graph returns the filter chains of the poster and the sprite sheet, reading the labelled
 // streams in and sheetIn (both already at the output frame rate).
+// round=up makes the sheet hold ceil(duration/interval) frames, one per cue: the default rounds to
+// nearest and gives no frame at all for a video shorter than half an interval.
 func (s ThumbnailSpec) graph(posterIn, sheetIn string) string {
 	p := s.Plan
 	return fmt.Sprintf("[%s]trim=start=%s,setpts=PTS-STARTPTS,scale=%d:%d:flags=bicubic,setsar=1,format=yuvj420p[poster];"+
-		"[%s]fps=1/%d,scale=%d:%d:flags=bicubic,setsar=1,format=yuvj420p,tile=%dx%d[sheet]",
+		"[%s]fps=fps=1/%d:round=up,scale=%d:%d:flags=bicubic,setsar=1,format=yuvj420p,tile=%dx%d[sheet]",
 		posterIn, strconv.FormatFloat(p.PosterAt.Seconds(), 'f', 3, 64), p.PosterWidth, p.PosterHeight,
 		sheetIn, int(p.Interval.Seconds()), p.TileWidth, p.TileHeight, p.Columns, p.Rows)
 }

@@ -468,6 +468,20 @@ type GetPlaybackMasterParams struct {
 	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
 }
 
+// GetPlaybackPosterParams defines parameters for GetPlaybackPoster.
+type GetPlaybackPosterParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
+// GetPlaybackSpriteParams defines parameters for GetPlaybackSprite.
+type GetPlaybackSpriteParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
 // GetPlaybackSubtitleMediaParams defines parameters for GetPlaybackSubtitleMedia.
 type GetPlaybackSubtitleMediaParams struct {
 	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
@@ -477,6 +491,13 @@ type GetPlaybackSubtitleMediaParams struct {
 
 // GetPlaybackSubtitleFileParams defines parameters for GetPlaybackSubtitleFile.
 type GetPlaybackSubtitleFileParams struct {
+	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
+	// sent together with `Authorization`.
+	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
+}
+
+// GetPlaybackThumbnailsParams defines parameters for GetPlaybackThumbnails.
+type GetPlaybackThumbnailsParams struct {
 	// T The playback token, accepted only when the tenant has `token_in_url` on (ADR 0030). Never
 	// sent together with `Authorization`.
 	T *PlayTokenQuery `form:"t,omitempty" json:"t,omitempty"`
@@ -525,12 +546,21 @@ type ServerInterface interface {
 	// GetPlaybackMaster Session master playlist
 	// (GET /v1/play/{session_id}/master.m3u8)
 	GetPlaybackMaster(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackMasterParams)
+	// GetPlaybackPoster Session poster image
+	// (GET /v1/play/{session_id}/poster.jpg)
+	GetPlaybackPoster(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackPosterParams)
+	// GetPlaybackSprite Session thumbnail sprite sheet
+	// (GET /v1/play/{session_id}/sprite.jpg)
+	GetPlaybackSprite(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackSpriteParams)
 	// GetPlaybackSubtitleMedia Session subtitle playlist
 	// (GET /v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8)
 	GetPlaybackSubtitleMedia(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, subtitleId PlaySubtitleId, params GetPlaybackSubtitleMediaParams)
 	// GetPlaybackSubtitleFile Session subtitle file
 	// (GET /v1/play/{session_id}/subtitles/{subtitle_id}/track.vtt)
 	GetPlaybackSubtitleFile(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, subtitleId PlaySubtitleId, params GetPlaybackSubtitleFileParams)
+	// GetPlaybackThumbnails Session thumbnail track
+	// (GET /v1/play/{session_id}/thumbnails.vtt)
+	GetPlaybackThumbnails(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackThumbnailsParams)
 	// GetPlaybackMedia Session media playlist
 	// (GET /v1/play/{session_id}/{rendition}/media.m3u8)
 	GetPlaybackMedia(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, rendition PlayRendition, params GetPlaybackMediaParams)
@@ -790,6 +820,90 @@ func (siw *ServerInterfaceWrapper) GetPlaybackMaster(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetPlaybackPoster operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackPoster(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackPosterParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackPoster(w, r, sessionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlaybackSprite operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackSprite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackSpriteParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackSprite(w, r, sessionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetPlaybackSubtitleMedia operation middleware
 func (siw *ServerInterfaceWrapper) GetPlaybackSubtitleMedia(w http.ResponseWriter, r *http.Request) {
 
@@ -883,6 +997,48 @@ func (siw *ServerInterfaceWrapper) GetPlaybackSubtitleFile(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPlaybackSubtitleFile(w, r, sessionId, subtitleId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlaybackThumbnails operation middleware
+func (siw *ServerInterfaceWrapper) GetPlaybackThumbnails(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PlaySessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlaybackThumbnailsParams
+
+	// ------------- Optional query parameter "t" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "t", r.URL.Query(), &params.T, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "t"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "t", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlaybackThumbnails(w, r, sessionId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1193,6 +1349,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/{rendition}/{file}", wrapper.GetPlaybackSegment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8", wrapper.GetPlaybackSubtitleMedia)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/subtitles/{subtitle_id}/track.vtt", wrapper.GetPlaybackSubtitleFile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/poster.jpg", wrapper.GetPlaybackPoster)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/sprite.jpg", wrapper.GetPlaybackSprite)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/thumbnails.vtt", wrapper.GetPlaybackThumbnails)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/play/{session_id}/key", wrapper.GetPlaybackKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/play/{session_id}/heartbeat", wrapper.HeartbeatPlayback)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/play/{session_id}/end", wrapper.EndPlayback)
@@ -2185,6 +2344,244 @@ func (response GetPlaybackMasterdefaultApplicationProblemPlusJSONResponse) Visit
 	return err
 }
 
+type GetPlaybackPosterRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Params    GetPlaybackPosterParams
+}
+
+type GetPlaybackPosterResponseObject interface {
+	VisitGetPlaybackPosterResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackPoster200ResponseHeaders struct {
+	CacheControl   string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type GetPlaybackPoster200ImagejpegResponse struct {
+	Body          io.Reader
+	Headers       GetPlaybackPoster200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackPoster200ImagejpegResponse) VisitGetPlaybackPosterResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackPoster400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackPoster400ApplicationProblemPlusJSONResponse) VisitGetPlaybackPosterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackPoster401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackPoster401ApplicationProblemPlusJSONResponse) VisitGetPlaybackPosterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackPoster404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackPoster404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackPoster404ResponseHeaders
+}
+
+func (response GetPlaybackPoster404ApplicationProblemPlusJSONResponse) VisitGetPlaybackPosterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackPosterdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackPosterdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackPosterdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackPosterdefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackPosterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSpriteRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Params    GetPlaybackSpriteParams
+}
+
+type GetPlaybackSpriteResponseObject interface {
+	VisitGetPlaybackSpriteResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackSprite200ResponseHeaders struct {
+	CacheControl   string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type GetPlaybackSprite200ImagejpegResponse struct {
+	Body          io.Reader
+	Headers       GetPlaybackSprite200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackSprite200ImagejpegResponse) VisitGetPlaybackSpriteResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackSprite400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSprite400ApplicationProblemPlusJSONResponse) VisitGetPlaybackSpriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSprite401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackSprite401ApplicationProblemPlusJSONResponse) VisitGetPlaybackSpriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSprite404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSprite404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackSprite404ResponseHeaders
+}
+
+func (response GetPlaybackSprite404ApplicationProblemPlusJSONResponse) VisitGetPlaybackSpriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackSpritedefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackSpritedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackSpritedefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackSpritedefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackSpriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetPlaybackSubtitleMediaRequestObject struct {
 	SessionId  PlaySessionId  `json:"session_id"`
 	SubtitleId PlaySubtitleId `json:"subtitle_id"`
@@ -2413,6 +2810,125 @@ type GetPlaybackSubtitleFiledefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetPlaybackSubtitleFiledefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackSubtitleFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackThumbnailsRequestObject struct {
+	SessionId PlaySessionId `json:"session_id"`
+	Params    GetPlaybackThumbnailsParams
+}
+
+type GetPlaybackThumbnailsResponseObject interface {
+	VisitGetPlaybackThumbnailsResponse(w http.ResponseWriter) error
+}
+
+type GetPlaybackThumbnails200ResponseHeaders struct {
+	CacheControl   string
+	ReferrerPolicy string
+	XRequestId     string
+}
+
+type GetPlaybackThumbnails200TextvttResponse struct {
+	Body          io.Reader
+	Headers       GetPlaybackThumbnails200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlaybackThumbnails200TextvttResponse) VisitGetPlaybackThumbnailsResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/vtt")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Referrer-Policy", fmt.Sprint(response.Headers.ReferrerPolicy))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlaybackThumbnails400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackThumbnails400ApplicationProblemPlusJSONResponse) VisitGetPlaybackThumbnailsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackThumbnails401ApplicationProblemPlusJSONResponse struct {
+	PlaybackUnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlaybackThumbnails401ApplicationProblemPlusJSONResponse) VisitGetPlaybackThumbnailsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackThumbnails404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackThumbnails404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetPlaybackThumbnails404ResponseHeaders
+}
+
+func (response GetPlaybackThumbnails404ApplicationProblemPlusJSONResponse) VisitGetPlaybackThumbnailsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlaybackThumbnailsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetPlaybackThumbnailsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetPlaybackThumbnailsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetPlaybackThumbnailsdefaultApplicationProblemPlusJSONResponse) VisitGetPlaybackThumbnailsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -2982,12 +3498,21 @@ type StrictServerInterface interface {
 	// GetPlaybackMaster Session master playlist
 	// (GET /v1/play/{session_id}/master.m3u8)
 	GetPlaybackMaster(ctx context.Context, request GetPlaybackMasterRequestObject) (GetPlaybackMasterResponseObject, error)
+	// GetPlaybackPoster Session poster image
+	// (GET /v1/play/{session_id}/poster.jpg)
+	GetPlaybackPoster(ctx context.Context, request GetPlaybackPosterRequestObject) (GetPlaybackPosterResponseObject, error)
+	// GetPlaybackSprite Session thumbnail sprite sheet
+	// (GET /v1/play/{session_id}/sprite.jpg)
+	GetPlaybackSprite(ctx context.Context, request GetPlaybackSpriteRequestObject) (GetPlaybackSpriteResponseObject, error)
 	// GetPlaybackSubtitleMedia Session subtitle playlist
 	// (GET /v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8)
 	GetPlaybackSubtitleMedia(ctx context.Context, request GetPlaybackSubtitleMediaRequestObject) (GetPlaybackSubtitleMediaResponseObject, error)
 	// GetPlaybackSubtitleFile Session subtitle file
 	// (GET /v1/play/{session_id}/subtitles/{subtitle_id}/track.vtt)
 	GetPlaybackSubtitleFile(ctx context.Context, request GetPlaybackSubtitleFileRequestObject) (GetPlaybackSubtitleFileResponseObject, error)
+	// GetPlaybackThumbnails Session thumbnail track
+	// (GET /v1/play/{session_id}/thumbnails.vtt)
+	GetPlaybackThumbnails(ctx context.Context, request GetPlaybackThumbnailsRequestObject) (GetPlaybackThumbnailsResponseObject, error)
 	// GetPlaybackMedia Session media playlist
 	// (GET /v1/play/{session_id}/{rendition}/media.m3u8)
 	GetPlaybackMedia(ctx context.Context, request GetPlaybackMediaRequestObject) (GetPlaybackMediaResponseObject, error)
@@ -3254,6 +3779,60 @@ func (sh *strictHandler) GetPlaybackMaster(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// GetPlaybackPoster operation middleware
+func (sh *strictHandler) GetPlaybackPoster(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackPosterParams) {
+	var request GetPlaybackPosterRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackPoster(ctx, request.(GetPlaybackPosterRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackPoster")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackPosterResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackPosterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackSprite operation middleware
+func (sh *strictHandler) GetPlaybackSprite(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackSpriteParams) {
+	var request GetPlaybackSpriteRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackSprite(ctx, request.(GetPlaybackSpriteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackSprite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackSpriteResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackSpriteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetPlaybackSubtitleMedia operation middleware
 func (sh *strictHandler) GetPlaybackSubtitleMedia(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, subtitleId PlaySubtitleId, params GetPlaybackSubtitleMediaParams) {
 	var request GetPlaybackSubtitleMediaRequestObject
@@ -3303,6 +3882,33 @@ func (sh *strictHandler) GetPlaybackSubtitleFile(w http.ResponseWriter, r *http.
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetPlaybackSubtitleFileResponseObject); ok {
 		if err := validResponse.VisitGetPlaybackSubtitleFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlaybackThumbnails operation middleware
+func (sh *strictHandler) GetPlaybackThumbnails(w http.ResponseWriter, r *http.Request, sessionId PlaySessionId, params GetPlaybackThumbnailsParams) {
+	var request GetPlaybackThumbnailsRequestObject
+
+	request.SessionId = sessionId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlaybackThumbnails(ctx, request.(GetPlaybackThumbnailsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlaybackThumbnails")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlaybackThumbnailsResponseObject); ok {
+		if err := validResponse.VisitGetPlaybackThumbnailsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

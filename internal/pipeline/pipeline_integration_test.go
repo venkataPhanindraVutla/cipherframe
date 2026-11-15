@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/jpeg"
 	"log/slog"
 	"math"
 	"os"
@@ -395,7 +397,7 @@ func TestPipelineEndToEnd(t *testing.T) {
 		}
 		listed[o.Key] = o
 	}
-	if len(arts) != len(listed) || len(arts) != 4*(1+1+4)+1 {
+	if len(arts) != len(listed) || len(arts) != 4*(1+1+4)+1+3 { // renditions, the master, the poster, the sprite sheet and the track
 		t.Fatalf("%d artifacts, %d delivery objects", len(arts), len(listed))
 	}
 	for _, art := range arts {
@@ -521,6 +523,23 @@ func checkManifest(t *testing.T, r *rig, a db.Asset, sourceSum [sha256.Size]byte
 	}
 	if n != 4*4 || len(doc.Artifacts) != 5 {
 		t.Errorf("manifest lists %d segments and %d playlists", n, len(doc.Artifacts))
+	}
+	// The poster, the sprite sheet and the thumbnail track are in the signed manifest, by hash, and
+	// are real images of the size the plan asked for (ADR 0046).
+	if len(doc.Thumbnails) != 3 {
+		t.Fatalf("manifest lists %d thumbnail objects, want 3", len(doc.Thumbnails))
+	}
+	for _, art := range doc.Thumbnails {
+		check(art.Path, art.SHA256)
+	}
+	for path, wantW := range map[string]int{"poster.jpg": 640, "sprite.jpg": 2 * 160} {
+		cfg, format, err := image.DecodeConfig(bytes.NewReader(r.get(r.buckets.Delivery, prefix+path)))
+		if err != nil || format != "jpeg" || cfg.Width != wantW {
+			t.Errorf("%s: %v, %v, width %d, want a JPEG %d wide", path, format, err, cfg.Width, wantW)
+		}
+	}
+	if vtt := string(r.get(r.buckets.Delivery, prefix+"thumbnails.vtt")); strings.Count(vtt, "-->") != 2 || !strings.Contains(vtt, "sprite.jpg#xywh=160,0,160,90") {
+		t.Errorf("thumbnail track:\n%s", vtt)
 	}
 }
 

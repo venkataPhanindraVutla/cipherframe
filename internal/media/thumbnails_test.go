@@ -79,7 +79,7 @@ func TestTranscodeArgsWithThumbnails(t *testing.T) {
 	joined := strings.Join(args, " ")
 	n := len(spec.Renditions)
 	if !strings.Contains(joined, "split="+strconv.Itoa(n+2)) || !strings.Contains(joined, "[s"+strconv.Itoa(n)+"]trim=start=6.000") ||
-		!strings.Contains(joined, "[s"+strconv.Itoa(n+1)+"]fps=1/10") || !strings.Contains(joined, "tile=6x1") {
+		!strings.Contains(joined, "[s"+strconv.Itoa(n+1)+"]fps=fps=1/10:round=up") || !strings.Contains(joined, "tile=6x1") {
 		t.Errorf("filter graph lacks the thumbnail branches: %s", joined)
 	}
 	for _, w := range []string{"file:/work/job/thumbs/poster.jpg", "file:/work/job/thumbs/sprite.jpg", "mjpeg"} {
