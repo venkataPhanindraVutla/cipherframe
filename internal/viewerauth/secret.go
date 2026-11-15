@@ -53,8 +53,8 @@ func NewSecretBox(reg *kms.Registry) *SecretBox { return &SecretBox{reg: reg} }
 // secretAAD is the associated data of a wrapped secret: the envelope version as one byte, then the
 // purpose, tenant ID, secret version, provider, KEK id and KEK version, each as a 4-byte
 // big-endian length followed by its bytes. Length prefixes make the encoding unambiguous.
-func secretAAD(tenant id.TenantID, version int, provider, kekID, kekVersion string) []byte {
-	fields := []string{secretPurpose, tenant.String(), strconv.Itoa(version), provider, kekID, kekVersion}
+func secretAAD(purpose string, tenant id.TenantID, version int, provider, kekID, kekVersion string) []byte {
+	fields := []string{purpose, tenant.String(), strconv.Itoa(version), provider, kekID, kekVersion}
 	out := []byte{envelopeVersion}
 	for _, f := range fields {
 		out = binary.BigEndian.AppendUint32(out, uint32(len(f))) //nolint:gosec // field lengths are tiny
@@ -69,7 +69,14 @@ func secretAAD(tenant id.TenantID, version int, provider, kekID, kekVersion stri
 // the version, so an envelope copied to another tenant, or to another version's column, does not
 // open.
 func (b *SecretBox) Seal(ctx context.Context, tenant id.TenantID, version int, secret []byte) ([]byte, error) {
-	if tenant.IsZero() || version < 1 || len(secret) != SecretBytes {
+	return b.SealFor(ctx, secretPurpose, tenant, version, secret)
+}
+
+// SealFor is Seal with an explicit purpose, for a secret that is not the tenant's callback secret
+// (a webhook endpoint's, whose purpose names the endpoint). The same purpose must be given to
+// OpenFor.
+func (b *SecretBox) SealFor(ctx context.Context, purpose string, tenant id.TenantID, version int, secret []byte) ([]byte, error) {
+	if purpose == "" || tenant.IsZero() || version < 1 || len(secret) != SecretBytes {
 		return nil, errors.New("viewerauth: invalid secret to seal")
 	}
 	p := b.reg.Current()
@@ -80,7 +87,7 @@ func (b *SecretBox) Seal(ctx context.Context, tenant id.TenantID, version int, s
 		if err != nil {
 			return nil, err
 		}
-		w, err := p.Wrap(ctx, secret, secretAAD(tenant, version, p.Name(), ref.KeyID, ref.Version))
+		w, err := p.Wrap(ctx, secret, secretAAD(purpose, tenant, version, p.Name(), ref.KeyID, ref.Version))
 		if err != nil {
 			return nil, err
 		}
@@ -95,11 +102,16 @@ func (b *SecretBox) Seal(ctx context.Context, tenant id.TenantID, version int, s
 // result when finished. Any failure (an outage, a missing provider, a damaged or swapped envelope)
 // is an error and never a secret.
 func (b *SecretBox) Open(ctx context.Context, tenant id.TenantID, version int, envelope []byte) ([]byte, error) {
+	return b.OpenFor(ctx, secretPurpose, tenant, version, envelope)
+}
+
+// OpenFor is Open for an envelope made by SealFor with the same purpose.
+func (b *SecretBox) OpenFor(ctx context.Context, purpose string, tenant id.TenantID, version int, envelope []byte) ([]byte, error) {
 	w, err := decodeEnvelope(envelope)
 	if err != nil {
 		return nil, err
 	}
-	plain, err := b.reg.Unwrap(ctx, w, secretAAD(tenant, version, w.Provider, w.KeyID, w.Version))
+	plain, err := b.reg.Unwrap(ctx, w, secretAAD(purpose, tenant, version, w.Provider, w.KeyID, w.Version))
 	if err != nil {
 		return nil, err
 	}
