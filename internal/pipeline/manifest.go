@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/version"
 )
@@ -69,7 +71,13 @@ func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src source
 
 // signManifest signs the canonical manifest as a DSSE envelope and returns the row to store.
 func (p *Processor) signManifest(ctx context.Context, asset db.Asset, built *manifest.Built, at time.Time) (*db.AssetManifest, error) {
-	keyID, sig, err := p.Signer.Sign(ctx, dsse.PAE(manifest.PayloadType, built.Canonical))
+	return SignManifest(ctx, p.Signer, asset.TenantID, asset.ID, built, at)
+}
+
+// SignManifest signs a built manifest as a DSSE envelope with the current key and returns the row
+// to store. The subtitle service uses it too, to re-sign after a track changes (ADR 0044).
+func SignManifest(ctx context.Context, signer signing.Signer, tenant id.TenantID, asset id.AssetID, built *manifest.Built, at time.Time) (*db.AssetManifest, error) {
+	keyID, sig, err := signer.Sign(ctx, dsse.PAE(manifest.PayloadType, built.Canonical))
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: sign the manifest: %w", err)
 	}
@@ -87,23 +95,33 @@ func (p *Processor) signManifest(ctx context.Context, asset db.Asset, built *man
 	}
 	payloadSum := sha256.Sum256(built.Canonical)
 	return &db.AssetManifest{
-		AssetID: asset.ID, TenantID: asset.TenantID, KeyID: keyID,
+		AssetID: asset, TenantID: tenant, KeyID: keyID,
 		PayloadSHA256: payloadSum[:], TopRoot: built.TopRoot[:], Envelope: encoded, CreatedAt: at,
 	}, nil
+}
+
+// DecodeManifest reads the manifest a stored envelope carries (the signature is not checked: the
+// row is the service's own).
+func DecodeManifest(envelope []byte) (manifest.Manifest, error) {
+	var m manifest.Manifest
+	env, err := dsse.Decode(envelope)
+	if err != nil {
+		return m, fmt.Errorf("pipeline: read the stored manifest: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(env.Payload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return m, errors.New("pipeline: the stored manifest does not decode")
+	}
+	return m, nil
 }
 
 // sealMasked adds the masked variant to the asset's stored manifest and signs it again. The stored
 // manifest's own members are carried over as signed; only the masked section is new.
 func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.AssetManifest, ladder []media.Rendition, pub published, faces, frames int, at time.Time) (*db.AssetManifest, error) {
-	env, err := dsse.Decode(current.Envelope)
+	m, err := DecodeManifest(current.Envelope)
 	if err != nil {
-		return nil, fmt.Errorf("pipeline: read the stored manifest: %w", err)
-	}
-	var m manifest.Manifest
-	dec := json.NewDecoder(bytes.NewReader(env.Payload))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&m); err != nil {
-		return nil, errors.New("pipeline: the stored manifest does not decode")
+		return nil, err
 	}
 	renditions, master, err := renditionInputs(keys.VariantHLSPrefix(asset.TenantID, asset.ID, keys.Masked), pub)
 	if err != nil {

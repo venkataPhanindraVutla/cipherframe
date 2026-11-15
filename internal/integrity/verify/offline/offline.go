@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
@@ -169,6 +170,9 @@ func (s *Signed) Paths(variant string) []string {
 		rends, arts = s.Manifest.Masked.Renditions, s.Manifest.Masked.Artifacts
 	}
 	var out []string
+	for _, t := range s.Manifest.Subtitles {
+		out = append(out, t.Path)
+	}
 	for _, r := range rends {
 		out = append(out, r.Init.Path)
 		for _, o := range r.Segments {
@@ -182,8 +186,13 @@ func (s *Signed) Paths(variant string) []string {
 	return out
 }
 
-// Artifact checks the file at path (relative to the variant's HLS prefix) with SHA-256 sum.
+// Artifact checks the file at path (relative to the variant's HLS prefix) with SHA-256 sum. A
+// subtitle track is named by its path under the asset ("subtitles/<id>.vtt") and is shared by the
+// variants, so variant does not matter for it (ADR 0044).
 func (s *Signed) Artifact(path string, sum [sha256.Size]byte, variant string) Result {
+	if i := slices.IndexFunc(s.Manifest.Subtitles, func(t manifest.Subtitle) bool { return t.Path == path }); i >= 0 {
+		return compare(s.Manifest.Subtitles[i].SHA256, sum)
+	}
 	want, err := proof.Build(s.Manifest, variant, path)
 	switch {
 	case errors.Is(err, proof.ErrNotFound):
