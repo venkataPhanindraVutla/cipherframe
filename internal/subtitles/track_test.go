@@ -160,8 +160,8 @@ func TestSanitizeMarkup(t *testing.T) {
 		{"<b>open", "<b>open</b>"},
 		{"a --> b", "a --&gt; b"},
 		{"tab\there", "tab here"},
-		{"bell\x07 and‮flip ", "bell andflip"},
-		{"zero​width", "zero​width"},
+		{"bell\x07 and\u202eflip\u2028", "bell andflip"},
+		{"zero\u200bwidth", "zero\u200bwidth"},
 	} {
 		if got := sanitizeMarkup(c.in); got != c.want {
 			t.Errorf("sanitizeMarkup(%q) = %q, want %q", c.in, got, c.want)
@@ -263,7 +263,7 @@ func TestCleanLabel(t *testing.T) {
 	if got, err := CleanLabel("  English (CC) "); err != nil || got != "English (CC)" {
 		t.Errorf("CleanLabel = %q, %v", got, err)
 	}
-	for _, in := range []string{"", "   ", strings.Repeat("x", MaxLabelRunes+1), "a\nb", "a\"b\r", "a‮b", "a\x00b", "\xff"} {
+	for _, in := range []string{"", "   ", strings.Repeat("x", MaxLabelRunes+1), "a\nb", "a\"b\r", "a\u202eb", "a\x00b", "\xff"} {
 		if got, err := CleanLabel(in); err == nil && (strings.ContainsAny(got, "\n\r\x00") || in == "" || in == "   ") {
 			t.Errorf("CleanLabel(%q) = %q, want an error", in, got)
 		}
