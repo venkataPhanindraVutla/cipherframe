@@ -53,7 +53,7 @@ names, never user-supplied text:
 | Bucket | Key |
 |---|---|
 | source | `t/<tenant>/a/<asset>/source/<128 random bits, hex>` (stored on the asset row, never derivable from IDs) |
-| delivery | `t/<tenant>/a/<asset>/…` (playlists, init and media segments, poster) |
+| delivery | `t/<tenant>/a/<asset>/…` (playlists, init and media segments, poster, `subtitles/<track>.vtt`) |
 
 `keys.AssetPrefixes` returns the prefix deletion must enumerate in each bucket. It lives beside the
 key builders, and a test checks that every key built for an asset falls under one of them.
@@ -303,7 +303,7 @@ overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder 
    token, a session or a key URL; the edge rewrites the key URI per playback session (see
    [Playback delivery on edge](#playback-delivery-on-edge)).
 9. **Register and finish.** Every object written to the delivery bucket is recorded in
-   `asset_artifacts` (asset, kind `master|playlist|init|segment|poster`, bucket role, object key,
+   `asset_artifacts` (asset, kind `master|playlist|init|segment|poster|subtitle`, bucket role, object key,
    size, SHA-256 of the stored bytes: invariant I6, the start of the derived-artifact registry for
    M6-1) and the asset moves `processing -> ready` with its duration and a JSON summary of the
    renditions, in one transaction. Just before that, the worker builds the integrity manifest from
@@ -433,6 +433,13 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
 - **Rewriting** (`internal/hls/rewrite.go`) is a strict line rewriter, not a general parser: it accepts
   exactly what the pipeline writes and refuses the rest. Stored playlists never change, and everything
   session-specific (the key URI, the optional token) is added on the way out.
+- **Subtitles** (ADR 0044, `internal/edge/play_subtitles.go`, `internal/hls/subtitles.go`): the master
+  handler adds an `EXT-X-MEDIA` group of type `SUBTITLES` for the asset's tracks (read from
+  `asset_subtitles` by the tenant and asset in the token) and `SUBTITLES="subs"` on each variant. A
+  track's media playlist is rendered, not stored, and its file is streamed from the delivery bucket.
+  They go through the same guard as the media playlists, are not encrypted (the session is the only
+  access control) and are `no-store`. Tenant text (the label) is made safe for a quoted attribute
+  where it is written into the playlist.
 - **Segments are streamed**: `storage.Get` returns a reader and the response is an `io.Copy` of it
   with `Content-Length` from the object's size, so memory use does not depend on segment size, and a
   client that hangs up stops the read and closes the object.
