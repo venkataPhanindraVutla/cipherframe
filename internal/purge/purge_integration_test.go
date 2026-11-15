@@ -547,8 +547,8 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 		t.Errorf("state = %s", got.State)
 	}
 	// The retry found only the stuck poster, but the record still counts what the first attempt
-	// deleted: the six registered segments (three per variant), the two subtitle tracks and the
-	// poster.
+	// deleted: the six registered segments (three per variant), the two subtitle tracks and the six
+	// thumbnail objects (three per variant, the stuck poster among them).
 	row, err := r.repos.GetDeletionRecord(ctx, a.TenantID, a.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -571,8 +571,8 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 			delivery += o.Count
 		}
 	}
-	if delivery != 9 {
-		t.Errorf("the record counts %d delivery objects after a retry, want 9", delivery)
+	if delivery != 14 {
+		t.Errorf("the record counts %d delivery objects after a retry, want 14", delivery)
 	}
 }
 

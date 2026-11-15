@@ -120,7 +120,7 @@ func TestCompleteProcessingAndArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := r.ListArtifacts(ctx, a.ID)
-	if err != nil || len(list) != 5 {
+	if err != nil || len(list) != 8 {
 		t.Fatalf("ListArtifacts = %d, %v", len(list), err)
 	}
 	for _, x := range list {
