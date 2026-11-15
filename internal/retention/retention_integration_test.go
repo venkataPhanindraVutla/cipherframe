@@ -215,7 +215,7 @@ func TestPartitionMaintenanceFromALimitedRole(t *testing.T) {
 		fmt.Sprintf(`CREATE ROLE %s LOGIN PASSWORD '%s'`, role, pw),
 		fmt.Sprintf(`GRANT CONNECT ON DATABASE %s TO %s`, dbName, role),
 		fmt.Sprintf(`GRANT USAGE ON SCHEMA public TO %s`, role),
-		fmt.Sprintf(`GRANT SELECT, INSERT, DELETE ON playback_access_log, playback_events TO %s`, role),
+		fmt.Sprintf(`GRANT SELECT, INSERT, DELETE ON playback_access_log, playback_events, webhook_events TO %s`, role),
 		fmt.Sprintf(`GRANT USAGE ON SEQUENCE playback_access_log_id_seq TO %s`, role),
 	} {
 		if _, err := r.pool.Exec(ctx, q); err != nil {
@@ -271,4 +271,40 @@ type trailOnly struct{ *db.Repos }
 
 func (trailOnly) ListExpiredAssets(context.Context, time.Time, int) ([]db.Asset, error) {
 	return nil, nil
+}
+
+// Webhook events follow the same window: past it the event goes with its deliveries and attempts,
+// and nothing newer is touched.
+func TestWebhookEventRetention(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	if _, err := r.pool.Exec(ctx, `INSERT INTO webhook_endpoints (id, tenant_id, url, secret_envelope, secret_version)
+		VALUES (gen_random_uuid(), $1, 'https://hooks.example.com/x', '\x01', 1)`, r.tenant.ID.UUID()); err != nil {
+		t.Fatal(err)
+	}
+	asset := id.New[id.AssetKind]()
+	now := time.Now().UTC()
+	r.event(asset, now)
+	r.event(asset, now)
+	if n := r.count(`SELECT count(*) FROM webhook_deliveries`); n != 2 {
+		t.Fatalf("%d deliveries, want 2 (the anomaly trigger writes the outbox)", n)
+	}
+	if _, err := r.pool.Exec(ctx, `UPDATE webhook_events SET created_at = now() - interval '100 days' WHERE id = (SELECT id FROM webhook_events ORDER BY id LIMIT 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.pool.Exec(ctx, `INSERT INTO webhook_attempts (delivery_id, tenant_id, number, at, duration_ms)
+		SELECT d.id, d.tenant_id, 1, now(), 5 FROM webhook_deliveries d JOIN webhook_events e ON e.id = d.event_id WHERE e.created_at < now() - interval '90 days'`); err != nil {
+		t.Fatal(err)
+	}
+	s := &retention.Sweeper{Store: r.repos, Requester: nopRequester{}, AccessLogDays: 90, Log: slog.New(slog.DiscardHandler)}
+	res, err := s.Sweep(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WebhookRows != 1 {
+		t.Errorf("webhook rows deleted = %d, want 1", res.WebhookRows)
+	}
+	if e, d, a := r.count(`SELECT count(*) FROM webhook_events`), r.count(`SELECT count(*) FROM webhook_deliveries`), r.count(`SELECT count(*) FROM webhook_attempts`); e != 1 || d != 1 || a != 0 {
+		t.Errorf("%d events, %d deliveries and %d attempts left, want 1, 1 and 0", e, d, a)
+	}
 }
