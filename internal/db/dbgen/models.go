@@ -131,6 +131,16 @@ type Client struct {
 	DisabledAt *time.Time
 }
 
+type ClientQuota struct {
+	ClientID                 pgtype.UUID
+	TenantID                 pgtype.UUID
+	StorageBytes             *int64
+	TranscodeMinutesPerMonth *int32
+	ConcurrentSessions       *int32
+	RequestsPerMinute        *int32
+	UpdatedAt                time.Time
+}
+
 type ContentKey struct {
 	ID              pgtype.UUID
 	AssetID         pgtype.UUID
@@ -291,6 +301,23 @@ type Tenant struct {
 	Name       string
 	CreatedAt  time.Time
 	DisabledAt *time.Time
+}
+
+type TenantQuota struct {
+	TenantID                 pgtype.UUID
+	StorageBytes             *int64
+	TranscodeMinutesPerMonth *int32
+	ConcurrentSessions       *int32
+	RequestsPerMinute        *int32
+	UpdatedAt                time.Time
+}
+
+type TranscodeCharge struct {
+	AssetID    pgtype.UUID
+	TenantID   pgtype.UUID
+	ClientID   pgtype.UUID
+	DurationMs int64
+	ChargedAt  time.Time
 }
 
 type UploadPart struct {

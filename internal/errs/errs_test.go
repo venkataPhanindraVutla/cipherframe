@@ -15,7 +15,7 @@ import (
 var declared = []Code{
 	InvalidRequest, Unauthenticated, Forbidden, NotFound, MethodNotAllowed, Conflict,
 	PayloadTooLarge, RateLimited, InternalError, DependencyUnavailable, Timeout,
-	AssetNotReady, SessionLimit, VariantUnavailable, VariantNotReady,
+	AssetNotReady, SessionLimit, QuotaExceeded, VariantUnavailable, VariantNotReady,
 	ArtifactNotFound, NotAnchored, NotDeleted,
 }
 
@@ -42,6 +42,16 @@ func TestDeclaredCodesMatchRegistry(t *testing.T) {
 		if string(c) != strings.ToLower(string(c)) || strings.ContainsAny(string(c), " -") {
 			t.Errorf("code %q is not lower_snake_case", c)
 		}
+	}
+}
+
+func TestQuotaProblemNamesTheLimit(t *testing.T) {
+	p := ToProblem(Quota("storage_bytes", "The storage quota would be exceeded."), "rid")
+	if p.Code != QuotaExceeded || p.Status != 409 || p.Limit != "storage_bytes" || p.Retryable {
+		t.Fatalf("problem = %+v", p)
+	}
+	if got := ToProblem(New(Conflict, "x"), "rid").Limit; got != "" {
+		t.Fatalf("limit on another code = %q", got)
 	}
 }
 

@@ -13,7 +13,10 @@ type Error struct {
 	// Fields lists the invalid request fields of an invalid_request error. Like Detail, it is sent
 	// to clients, so it holds field names and fixed messages only, never submitted values.
 	Fields []FieldError
-	cause  error
+	// Limit names the quota a quota_exceeded error is about (ADR 0047). It is sent to clients: a
+	// fixed limit name, never a usage figure.
+	Limit string
+	cause error
 }
 
 // FieldError says what is wrong with one request field.
@@ -27,6 +30,11 @@ type FieldError struct {
 // Invalid returns an invalid_request error that carries one entry per invalid field.
 func Invalid(detail string, fields []FieldError) *Error {
 	return &Error{Code: InvalidRequest, Detail: detail, Fields: fields}
+}
+
+// Quota returns a quota_exceeded error for the named limit. detail must not hold usage figures.
+func Quota(limit, detail string) *Error {
+	return &Error{Code: QuotaExceeded, Detail: detail, Limit: limit}
 }
 
 // New returns an Error with no cause.
