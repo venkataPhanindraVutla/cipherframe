@@ -33,6 +33,7 @@ func TestPurgeCoversEveryKeyTheSystemWrites(t *testing.T) {
 		{keys.Source, src + ".info", KindTusInfo, ""},
 		{keys.Source, src + ".part", KindTusPart, ""},
 		{keys.Delivery, keys.Poster(tenant, asset), KindPoster, ""},
+		{keys.Delivery, keys.Subtitle(tenant, asset, id.New[id.SubtitleKind]()), KindSubtitle, ""},
 	}
 	for _, v := range []keys.Variant{keys.Original, keys.Masked} {
 		all = append(all,

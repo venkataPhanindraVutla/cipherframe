@@ -60,6 +60,10 @@ type maskOutput struct {
 	Frames        *int `json:"frames"`
 }
 
+// maskSealAttempts is how often the masking job re-signs the manifest when subtitle tracks change
+// it in the meantime.
+const maskSealAttempts = 5
+
 // maskTaskAttempts is how often the masker may try one task (a retryable failure or an expired
 // lease). Masking is slow, so this is lower than the default.
 const maskTaskAttempts = 2
@@ -198,16 +202,23 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 
 	// 4. Re-sign the manifest with the masked variant added, then register everything and mark the
 	// variant ready, atomically.
-	current, err := p.Repo.GetManifest(ctx, asset.ID)
-	if err != nil {
-		return err
+	// A subtitle track may be added or removed while this runs (ADR 0044): the manifest is read
+	// again and re-signed when it changed under us, so the track list is never rolled back.
+	for range maskSealAttempts {
+		var current db.AssetManifest
+		if current, err = p.Repo.GetManifest(ctx, asset.ID); err != nil {
+			return err
+		}
+		at := p.Now().UTC()
+		var sealed *db.AssetManifest
+		if sealed, err = p.sealMasked(ctx, asset, current, renditions, pub, *out.FacesDetected, *out.Frames, at); err != nil {
+			return err
+		}
+		err = p.Repo.CompleteMasking(ctx, asset.TenantID, asset.ID, pub.artifacts, *sealed, current.PayloadSHA256, *out.FacesDetected, at)
+		if !errors.Is(err, db.ErrManifestChanged) {
+			break
+		}
 	}
-	at := p.Now().UTC()
-	sealed, err := p.sealMasked(ctx, asset, current, renditions, pub, *out.FacesDetected, *out.Frames, at)
-	if err != nil {
-		return err
-	}
-	err = p.Repo.CompleteMasking(ctx, asset.TenantID, asset.ID, pub.artifacts, *sealed, *out.FacesDetected, at)
 	if errors.Is(err, db.ErrStateChanged) {
 		// The asset left ready while we worked (deleted, say): do not leave the output behind.
 		log.WarnContext(ctx, "the asset changed state during masking; removing the masked output")

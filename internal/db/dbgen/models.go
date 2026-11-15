@@ -97,6 +97,21 @@ type AssetManifest struct {
 	TsTsaUrl      *string
 }
 
+type AssetSubtitle struct {
+	ID         pgtype.UUID
+	AssetID    pgtype.UUID
+	TenantID   pgtype.UUID
+	Language   string
+	Label      string
+	IsDefault  bool
+	Origin     string
+	CueCount   int32
+	DurationMs int64
+	SizeBytes  int64
+	Sha256     []byte
+	CreatedAt  time.Time
+}
+
 type AuditEvent struct {
 	ID        pgtype.UUID
 	TenantID  pgtype.UUID

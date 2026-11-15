@@ -340,6 +340,9 @@ func (p *Purger) finish(ctx context.Context, asset db.Asset, t *tally, log *slog
 		if _, err := tx.DeleteAssetArtifacts(ctx, asset.ID); err != nil {
 			return err
 		}
+		if _, err := tx.DeleteAssetSubtitles(ctx, asset.ID); err != nil {
+			return err
+		}
 		if _, err := tx.DeleteManifest(ctx, asset.ID); err != nil {
 			return err
 		}

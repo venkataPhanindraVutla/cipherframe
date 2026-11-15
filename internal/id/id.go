@@ -34,6 +34,8 @@ type (
 	SigningKeyKind struct{}
 	// WebhookEndpointKind marks webhook endpoint IDs (ADR 0045).
 	WebhookEndpointKind struct{}
+	// SubtitleKind marks subtitle track IDs (ADR 0044). They are not secret.
+	SubtitleKind struct{}
 )
 
 func (TenantKind) prefix() string          { return "ten" }
@@ -43,6 +45,7 @@ func (AssetKind) prefix() string           { return "ast" }
 func (ContentKeyKind) prefix() string      { return "cky" }
 func (SigningKeyKind) prefix() string      { return "sk" }
 func (WebhookEndpointKind) prefix() string { return "whe" }
+func (SubtitleKind) prefix() string        { return "sub" }
 
 // Aliases for the concrete ID types.
 type (
@@ -56,6 +59,8 @@ type (
 	SigningKeyID = ID[SigningKeyKind]
 	// WebhookEndpointID identifies a webhook endpoint.
 	WebhookEndpointID = ID[WebhookEndpointKind]
+	// SubtitleID identifies a subtitle track of an asset.
+	SubtitleID = ID[SubtitleKind]
 )
 
 const uuidTextLen = 26

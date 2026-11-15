@@ -225,7 +225,7 @@ func (r *fakeRepo) GetManifest(context.Context, id.AssetID) (db.AssetManifest, e
 	return *r.manifest, nil
 }
 
-func (r *fakeRepo) CompleteMasking(_ context.Context, _ id.TenantID, _ id.AssetID, arts []db.Artifact, m db.AssetManifest, faces int, _ time.Time) error {
+func (r *fakeRepo) CompleteMasking(_ context.Context, _ id.TenantID, _ id.AssetID, arts []db.Artifact, m db.AssetManifest, _ []byte, faces int, _ time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.asset.State != db.AssetReady {

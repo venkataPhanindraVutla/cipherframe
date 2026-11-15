@@ -189,6 +189,24 @@ func (r *rig) seed(maskFaces bool) seeded {
 		}
 	}
 	add(keys.Delivery, keys.Poster(r.tenant.ID, aid))
+	// Two subtitle tracks (M7-1): the object, its registry row and its metadata row.
+	for i := range 2 {
+		track := id.New[id.SubtitleKind]()
+		key := keys.Subtitle(r.tenant.ID, aid, track)
+		add(keys.Delivery, key)
+		sum := bytes.Repeat([]byte{byte(0x40 + i)}, 32)
+		if err := r.repos.RecordArtifact(ctx, db.Artifact{
+			AssetID: aid, Kind: db.ArtifactSubtitle, Bucket: "delivery", ObjectKey: key, SizeBytes: int64(len("data-" + key)), SHA256: sum,
+		}); err != nil {
+			r.t.Fatal(err)
+		}
+		if _, err := r.repos.InsertSubtitle(ctx, db.Subtitle{
+			ID: track, AssetID: aid, TenantID: r.tenant.ID, Language: "en", Label: "English", Default: i == 0, Origin: db.SubtitleUpload,
+			CueCount: 1, DurationMS: 1000, SizeBytes: int64(len("data-" + key)), SHA256: sum,
+		}); err != nil {
+			r.t.Fatal(err)
+		}
+	}
 	if maskFaces {
 		if _, err := r.repos.SetAssetMasking(ctx, r.tenant.ID, aid, db.MaskingReady, new(int), time.Now()); err != nil {
 			r.t.Fatal(err)
@@ -299,6 +317,14 @@ func TestPurgeDeletesEverythingOfAReadyAssetWithAMaskedVariant(t *testing.T) {
 	if n := r.count(`SELECT count(*) FROM asset_manifests WHERE asset_id = $1`, a.ID.UUID()); n != 0 {
 		t.Errorf("%d manifests left", n)
 	}
+	// Subtitles (M7 acceptance): the tracks' metadata is gone with their objects, the other
+	// asset keeps its own, and the record below counts the two track files.
+	if n := r.count(`SELECT count(*) FROM asset_subtitles WHERE asset_id = $1`, a.ID.UUID()); n != 0 {
+		t.Errorf("%d subtitle rows left", n)
+	}
+	if n := r.count(`SELECT count(*) FROM asset_subtitles WHERE asset_id = $1`, other.asset.ID.UUID()); n != 2 {
+		t.Errorf("another asset has %d subtitle rows, want 2", n)
+	}
 	if n := r.count(`SELECT count(*) FROM playback_sessions WHERE asset_id = $1 AND state = 'active'`, a.ID.UUID()); n != 0 {
 		t.Errorf("%d active sessions left", n)
 	}
@@ -397,6 +423,18 @@ func (r *rig) checkRecord(a db.Asset, s seeded, reason string, wantKeys []string
 	if total != rec.ObjectsDeleted || total != int64(len(s.objects)) {
 		r.t.Errorf("record says %d objects deleted, the test wrote %d", total, len(s.objects))
 	}
+	var subtitles int64
+	for _, o := range rec.Objects {
+		if o.Kind == string(purge.KindSubtitle) {
+			subtitles += o.Count
+			if o.Variant != "" {
+				r.t.Errorf("the subtitle entry has a variant: %+v", o)
+			}
+		}
+	}
+	if subtitles != 2 {
+		r.t.Errorf("the record counts %d subtitle tracks, want 2", subtitles)
+	}
 	var gotKeys []string
 	for _, k := range rec.ContentKeys.Keys {
 		gotKeys = append(gotKeys, k.ID+"/"+k.Variant)
@@ -472,7 +510,8 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 		t.Errorf("state = %s", got.State)
 	}
 	// The retry found only the stuck poster, but the record still counts what the first attempt
-	// deleted: the six registered segments (three per variant) plus the poster.
+	// deleted: the six registered segments (three per variant), the two subtitle tracks and the
+	// poster.
 	row, err := r.repos.GetDeletionRecord(ctx, a.TenantID, a.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -495,8 +534,8 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 			delivery += o.Count
 		}
 	}
-	if delivery != 7 {
-		t.Errorf("the record counts %d delivery objects after a retry, want 7", delivery)
+	if delivery != 9 {
+		t.Errorf("the record counts %d delivery objects after a retry, want 9", delivery)
 	}
 }
 
