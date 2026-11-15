@@ -160,6 +160,11 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 				case "createAssetSubtitle":
 					contentType = "multipart/form-data; boundary=x"
 					body = []byte("--x\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nWEBVTT\r\n--x\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nen\r\n--x\r\nContent-Disposition: form-data; name=\"label\"\r\n\r\nEnglish\r\n--x--\r\n")
+				case "putBrandLogo":
+					contentType = "multipart/form-data; boundary=x"
+					body = []byte("--x\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nPNG\r\n--x--\r\n")
+				case "updateBrandLogo":
+					body = []byte(`{"enabled":false}`)
 				case "importAssetTranscript":
 					body = []byte(`{"language":"en","label":"English","cues":[]}`)
 				case "updateQuotas", "updateClientQuotas":
@@ -211,8 +216,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 61 {
-		t.Fatalf("exercised %d secured operations, want 61", n)
+	if n != 65 {
+		t.Fatalf("exercised %d secured operations, want 65", n)
 	}
 }
 
