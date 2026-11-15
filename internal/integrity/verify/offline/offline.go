@@ -170,9 +170,6 @@ func (s *Signed) Paths(variant string) []string {
 		rends, arts = s.Manifest.Masked.Renditions, s.Manifest.Masked.Artifacts
 	}
 	var out []string
-	for _, t := range s.Manifest.Subtitles {
-		out = append(out, t.Path)
-	}
 	for _, r := range rends {
 		out = append(out, r.Init.Path)
 		for _, o := range r.Segments {
@@ -181,6 +178,18 @@ func (s *Signed) Paths(variant string) []string {
 	}
 	for _, a := range arts {
 		out = append(out, a.Path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SubtitlePaths lists the path of every subtitle track the manifest records ("subtitles/<id>.vtt",
+// relative to the asset, not to a variant's HLS prefix), sorted. They are not in Paths: a download
+// of one variant's HLS tree does not hold them, so a missing track must not read as a missing file.
+func (s *Signed) SubtitlePaths() []string {
+	var out []string
+	for _, t := range s.Manifest.Subtitles {
+		out = append(out, t.Path)
 	}
 	sort.Strings(out)
 	return out

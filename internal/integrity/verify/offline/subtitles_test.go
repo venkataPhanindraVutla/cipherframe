@@ -45,8 +45,11 @@ func TestSubtitleTracksVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(signed.Paths("original"), path) || !slices.Contains(signed.Paths("masked"), path) {
-		t.Errorf("Paths does not list the track: %v", signed.Paths("original"))
+	if got := signed.SubtitlePaths(); !slices.Equal(got, []string{path}) {
+		t.Errorf("SubtitlePaths = %v", got)
+	}
+	if slices.Contains(signed.Paths("original"), path) {
+		t.Errorf("Paths lists the track, so a download of the HLS tree would miss it: %v", signed.Paths("original"))
 	}
 	// The media files still verify through the same manifest.
 	for _, p := range f.Files["original"] {

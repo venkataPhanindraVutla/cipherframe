@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/proof"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/verify/offline/offlinetest"
 )
@@ -227,5 +229,46 @@ func TestUsageAndHelp(t *testing.T) {
 	}
 	if code, out, _ := do("help"); code != 0 || !strings.Contains(out, "cipherframe verify") {
 		t.Errorf("help: %d %q", code, out)
+	}
+}
+
+// A manifest with subtitle tracks (ADR 0044) still verifies an HLS download that does not hold
+// them: tracks sit beside the HLS tree, so a missing one is not a missing file. A track that is in
+// the directory is checked, and a track changed on disk is modified.
+func TestSubtitleTracksInTheManifest(t *testing.T) {
+	e := setup(t)
+	vtt := []byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n\n")
+	sum := sha256.Sum256(vtt)
+	const track = "subtitles/sub_00000000000000000000000001.vtt"
+	built, err := manifest.WithSubtitles(e.f.Built.Manifest, []manifest.SubtitleInput{{
+		ID: "sub_00000000000000000000000001", Language: "en", Origin: "upload",
+		Object: manifest.StoredObject{Path: track, SHA256: sum, Size: int64(len(vtt))},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := write(t, e.dir, "with-tracks.json", offlinetest.Sign(t, built.Canonical, offlinetest.NewKey("sk_a", "a")))
+
+	code, out, _ := do("verify", "--manifest", m, "--keys", e.keys, e.f.Original)
+	if code != 0 || !strings.Contains(out, "10 ours, 0 modified, 0 cannot say, 0 missing") {
+		t.Fatalf("the HLS tree alone: code %d\n%s", code, out)
+	}
+	if err := os.MkdirAll(filepath.Join(e.f.Original, "subtitles"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(e.f.Original, "subtitles"), "sub_00000000000000000000000001.vtt", vtt)
+	code, out, _ = do("verify", "--manifest", m, "--keys", e.keys, e.f.Original)
+	if code != 0 || !strings.Contains(out, "11 ours") || !strings.Contains(out, "ours        "+track) {
+		t.Fatalf("with the track: code %d\n%s", code, out)
+	}
+	write(t, filepath.Join(e.f.Original, "subtitles"), "sub_00000000000000000000000001.vtt", append(vtt, '!'))
+	code, out, _ = do("verify", "--manifest", m, "--keys", e.keys, e.f.Original)
+	if code != 1 || !strings.Contains(out, "modified    "+track) {
+		t.Fatalf("changed track: code %d\n%s", code, out)
+	}
+	// One file by its manifest path, outside any directory.
+	code, out, _ = do("verify", "--manifest", m, "--keys", e.keys, "--path", track, filepath.Join(e.f.Original, "subtitles", "sub_00000000000000000000000001.vtt"))
+	if code != 1 || !strings.Contains(out, "modified") {
+		t.Fatalf("single file: code %d\n%s", code, out)
 	}
 }
