@@ -45,6 +45,7 @@ is the hash of the ciphertext.
 | `source` | `sha256` and `size` of the uploaded original. |
 | `masked` | Only for an asset with a face-masked variant (ADR 0036); see "The masked variant". |
 | `subtitles` | Only for an asset with subtitle tracks (ADR 0044); see "Subtitle tracks". |
+| `thumbnails` | Only when the original variant has thumbnails (ADR 0046); see "Thumbnails". |
 
 Trees. Rendition `merkle_root`: leaves are the init segment and then the media segments in
 playlist order, each leaf's data being the artifact's 32-byte SHA-256. Top-level `root`: leaves in
@@ -133,6 +134,19 @@ that does not know `subtitles` still checks the signature and the media: the sch
 Tracks are **not** in any Merkle tree: `top_level.root` (and so every proof and timestamp of the media)
 does not change when a track does, and a track has no inclusion proof; the signature covers each hash.
 The label a player shows is not recorded, because the manifest holds no free-text title.
+
+### Thumbnails
+
+An asset processed after M7-2 has, per variant, a poster, a sprite sheet and a thumbnail track
+(ADR 0046). The original's are in a `thumbnails` member at the top level and the masked variant's in
+`masked.thumbnails`, each a list of `kind` (`poster`, `sprite`, `thumbnails`), `path` (`poster.jpg`,
+`sprite.jpg`, `thumbnails.vtt`, relative to the variant's own HLS prefix like every other path),
+`sha256` and `size`. They are signed with the manifest the pipeline already signs (the original's when
+the asset becomes ready, the masked variant's when it is published). Like subtitle tracks they are in no
+Merkle tree, so `top_level.root` and every proof and timestamp of the media do not change, and a
+thumbnail has no inclusion proof; a manifest without thumbnails has no member and is byte for byte what
+it was. A verifier that does not know the member ignores it. The track is stored as written by the
+worker (the sprite reference has no token); the token is added only when a session serves it.
 
 The `asset_manifests` row also records the `key_id` of the signer, the SHA-256 of the payload and
 the top-level root as separate columns, so a lookup does not need to parse the envelope. A signer
@@ -264,7 +278,7 @@ variant, whose paths are relative to the masked prefix and which has its own tre
 equal), `modified` (path in the manifest, hash different) and `cannot_say` (everything else,
 including a stored manifest whose signature does not verify with the published keys, which is also
 logged as an error). A track is checked by its path (`asset_id` and `path` `subtitles/<id>.vtt`): `ours` or `modified`, with no proof
-(tracks are signed by hash, outside the trees); a hash-only lookup does not search tracks. A hash-only lookup finds candidates in the artifact registry
+(tracks are signed by hash, outside the trees); a hash-only lookup does not search tracks. A thumbnail is checked the same way with its path under the variant (`poster.jpg`, `sprite.jpg`, `thumbnails.vtt`, and `variant`): `ours` or `modified`, no proof, and the original's poster is `modified` under `masked`; a hash-only lookup does not search them either. A hash-only lookup finds candidates in the artifact registry
 (`asset_artifacts`, by SHA-256) and confirms each against its signed manifest, so it returns the
 manifest path (the object key minus the variant's HLS prefix) and never a bucket or object key.
 
@@ -311,7 +325,7 @@ numbers, hex hashes, RFC 3339 UTC times with second precision.
 | `requested_at`, `completed_at` | When deletion was requested, and when the purge finished and storage was verified empty. |
 | `reason` | `requested` (an API call) or `retention` (the asset's time-to-live ran out). |
 | `pipeline_version` | The Cipherframe version that ran the purge. |
-| `objects` | One entry per bucket, artifact kind and variant, sorted by those: `bucket` (`source` or `delivery`), `kind` (`source`, `tus_info`, `tus_part`, `master`, `playlist`, `init`, `segment`, `poster`, `subtitle`, or `other` for an object nothing in Cipherframe writes), `variant` (`original` or `masked` for HLS objects, absent otherwise and for `subtitle`), `count`, `bytes`. |
+| `objects` | One entry per bucket, artifact kind and variant, sorted by those: `bucket` (`source` or `delivery`), `kind` (`source`, `tus_info`, `tus_part`, `master`, `playlist`, `init`, `segment`, `poster`, `sprite`, `thumbnails`, `subtitle`, or `other` for an object nothing in Cipherframe writes), `variant` (`original` or `masked` for HLS objects and thumbnails, absent otherwise and for `subtitle`), `count`, `bytes`. |
 | `objects_deleted`, `bytes_deleted` | The totals of `objects`. |
 | `content_keys` | `destroyed` (the count) and `keys`: the `id` and `variant` of each destroyed content key, sorted by id. Never key material. |
 | `manifest_root` | The top-level Merkle root (hex) of the asset's manifest as it stood at deletion (the original variant's, the `top_root` column); absent if the asset never had a manifest. |

@@ -99,6 +99,23 @@ an upload keeps is the content type your application declared when it created th
 uploads with `filename` metadata and scans the database, both buckets (keys and contents), the logs
 and every response for it. Keep the title in your own application, next to the asset ID.
 
+## Thumbnails show faces
+
+The poster and the sprite sheet (M7-2, [ADR 0046](adr/0046-thumbnails.md)) are frames of the video, so
+they show whoever the video shows. They are personal data like the video.
+
+- **The masked variant's images are masked.** For an asset created with `mask_faces`, the masked
+  variant's poster, sprite sheet and thumbnail track are made by the transcode of the masked file, in
+  the masking job, and from nothing else. A session bound to the masked variant is only ever served
+  those; if the masked variant has none it gets `404`, never the original's image.
+- **They are not encrypted.** The session is their only access control: anyone with a valid session can
+  fetch and keep an image, as with subtitle tracks. They are always served by edge, even for tenants
+  whose segments are presigned, so no thumbnail has a storage URL that outlives the session check.
+- **They are deleted with the asset**, both variants', and counted in the signed deletion record by
+  kind (`poster`, `sprite`, `thumbnails`) and variant.
+- The thumbnail track names tiles and times only. A thumbnail fetch is not logged beyond the session
+  checks every playlist request gets.
+
 ## Retention and deletion
 
 - **Assets are kept until deleted.** Cipherframe never deletes an asset on its own unless a

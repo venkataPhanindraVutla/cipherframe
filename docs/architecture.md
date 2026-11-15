@@ -53,7 +53,7 @@ names, never user-supplied text:
 | Bucket | Key |
 |---|---|
 | source | `t/<tenant>/a/<asset>/source/<128 random bits, hex>` (stored on the asset row, never derivable from IDs) |
-| delivery | `t/<tenant>/a/<asset>/…` (playlists, init and media segments, poster, `subtitles/<track>.vtt`) |
+| delivery | `t/<tenant>/a/<asset>/…` (per variant under `hls/` or `masked/hls/`: playlists, init and media segments, `poster.jpg`, `sprite.jpg`, `thumbnails.vtt`; and `subtitles/<track>.vtt`) |
 
 `keys.AssetPrefixes` returns the prefix deletion must enumerate in each bucket. It lives beside the
 key builders, and a test checks that every key built for an asset falls under one of them.
@@ -289,7 +289,11 @@ overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder 
    branch per rendition and encodes them all (below). A decoder failure fails the asset
    (`transcode_failed`), exceeding `CIPHERFRAME_TRANSCODE_TIMEOUT` fails it too (`transcode_timeout`).
    Progress (`out_time_us`) is throttled into the asset's `progress` column (0 to 90 while encoding,
-   99 after the upload, 100 when ready; a hint for clients).
+   99 after the upload, 100 when ready; a hint for clients). Two more branches of the same split write
+   the variant's poster and sprite sheet as JPEGs in the job directory (ADR 0046): no second decode,
+   the same timeout, and the plaintext images go away with the directory. Go writes the WebVTT
+   thumbnail track from the plan. For the masked variant this is the asset.mask job's own transcode,
+   so its images come from the masked file. Missing images do not fail the asset.
 7. **Encrypt and upload.** For each rendition, each media segment is read, encrypted in memory with
    AES-128-CBC under a fresh random IV (package `internal/hls`, [encryption.md](encryption.md)),
    hashed as stored, and uploaded; the plaintext file is deleted as soon as it is read and the
@@ -303,7 +307,7 @@ overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder 
    token, a session or a key URL; the edge rewrites the key URI per playback session (see
    [Playback delivery on edge](#playback-delivery-on-edge)).
 9. **Register and finish.** Every object written to the delivery bucket is recorded in
-   `asset_artifacts` (asset, kind `master|playlist|init|segment|poster|subtitle`, bucket role, object key,
+   `asset_artifacts` (asset, kind `master|playlist|init|segment|poster|sprite|thumbnails|subtitle`, bucket role, object key,
    size, SHA-256 of the stored bytes: invariant I6, the start of the derived-artifact registry for
    M6-1) and the asset moves `processing -> ready` with its duration and a JSON summary of the
    renditions, in one transaction. Just before that, the worker builds the integrity manifest from
@@ -458,6 +462,12 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
   They go through the same guard as the media playlists, are not encrypted (the session is the only
   access control) and are `no-store`. Tenant text (the label) is made safe for a quoted attribute
   where it is written into the playlist.
+- **Thumbnails** (ADR 0046, `internal/edge/play_thumbnails.go`): `poster.jpg`, `sprite.jpg` and
+  `thumbnails.vtt` under the session path, on the media playlists' guard (scope `manifest`, session
+  row). The key is built from the tenant, asset and **variant** of the verified token, so a masked
+  session only reads masked images. They are always streamed through edge, whatever the tenant's
+  delivery mode (nothing presigns them), and the track gets `?t=<token>` on its sprite references
+  when `token_in_url` is on.
 - **Segments are streamed**: `storage.Get` returns a reader and the response is an `io.Copy` of it
   with `Content-Length` from the object's size, so memory use does not depend on segment size, and a
   client that hangs up stops the read and closes the object.
