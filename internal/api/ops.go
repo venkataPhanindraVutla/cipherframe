@@ -9,6 +9,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
@@ -34,6 +35,8 @@ type server struct {
 	webhooks *webhook.Service
 	// subtitles serves the subtitle track endpoints (M7-1).
 	subtitles *subtitles.Service
+	// quota serves the quota and usage endpoints (M7-6).
+	quota *quota.Service
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

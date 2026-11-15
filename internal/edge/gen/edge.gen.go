@@ -83,6 +83,7 @@ const (
 	ProblemCodeNotDeleted            ProblemCode = "not_deleted"
 	ProblemCodeNotFound              ProblemCode = "not_found"
 	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
+	ProblemCodeQuotaExceeded         ProblemCode = "quota_exceeded"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
 	ProblemCodeSessionLimit          ProblemCode = "session_limit"
 	ProblemCodeTimeout               ProblemCode = "timeout"
@@ -117,6 +118,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeNotFound:
 		return true
 	case ProblemCodePayloadTooLarge:
+		return true
+	case ProblemCodeQuotaExceeded:
 		return true
 	case ProblemCodeRateLimited:
 		return true
@@ -322,11 +325,16 @@ type Problem struct {
 
 	// Errors Present on some `invalid_request` responses: one entry per invalid field. Messages are
 	// fixed text and never quote the submitted value.
-	Errors    *[]FieldError `json:"errors,omitempty"`
-	RequestId string        `json:"request_id"`
-	Retryable bool          `json:"retryable"`
-	Status    int           `json:"status"`
-	Title     string        `json:"title"`
+	Errors *[]FieldError `json:"errors,omitempty"`
+
+	// Limit Present on `quota_exceeded`: the quota that would have been passed (`storage_bytes`,
+	// `transcode_minutes_per_month`, `concurrent_sessions` or `requests_per_minute`). A
+	// fixed name; never a usage figure.
+	Limit     *string `json:"limit,omitempty"`
+	RequestId string  `json:"request_id"`
+	Retryable bool    `json:"retryable"`
+	Status    int     `json:"status"`
+	Title     string  `json:"title"`
 
 	// Type `urn:cipherframe:error:<code>`.
 	Type string `json:"type"`
