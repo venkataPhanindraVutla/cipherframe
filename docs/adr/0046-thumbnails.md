@@ -70,7 +70,7 @@ the edge, never through a presigned URL. Everything below is a judgement call th
   them without a new prefix (`keys.VariantPoster`, `VariantSprite`, `VariantThumbnails`). The old
   asset-level `poster.jpg` key (never written) is gone.
 - They are registered in `asset_artifacts` per variant as kinds `poster`, `sprite` and `thumbnails`
-  (migration 00025 widens the kind check; no new table), `DeleteAssetHLSArtifacts` now removes them with
+  (migration 00027 widens the kind check; no new table), `DeleteAssetHLSArtifacts` now removes them with
   the rest of a variant, the purge registry holds all three as per-variant kinds (the "not written yet"
   poster entry is now real) and the classifier maps each to its kind and variant, so the signed deletion
   record counts them separately for each variant.

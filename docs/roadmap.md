@@ -164,6 +164,8 @@ Smaller items found while building, not yet scheduled:
   oldest, so 100 that keep failing would hold back the rest.
 - Retry an `asset.delete` job on storage errors that look final (for example a missing bucket):
   today such an error cancels the job, and the asset stays `deleting` until `DELETE` is repeated.
+- Check the sprite sheet's last tile at interval boundaries: if FFmpeg's frame rounding and the
+  track's tile count disagree by one, the last thumbnail cue can point at a blank padded tile.
 - Rate-limit the viewer-authorization callback and re-wrap its stored secrets on key rotation.
 - Let the published key set mark a key "revoked as compromised", not only "retired"
   ([integrity.md](integrity.md)).
