@@ -19,6 +19,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
 )
 
 // maxBodyBytes caps request bodies on the control plane. Its JSON bodies are a few hundred bytes.
@@ -52,6 +53,8 @@ type Deps struct {
 	Repos *db.Repos
 	// Purge starts asset deletions (M6-2). Without it DELETE /v1/assets/{asset_id} answers 503.
 	Purge *purge.Requester
+	// Webhooks serves the webhook endpoints and deliveries (M7-5). Without it they answer 503.
+	Webhooks *webhook.Service
 }
 
 // API is the control-plane HTTP handler.
@@ -68,7 +71,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})

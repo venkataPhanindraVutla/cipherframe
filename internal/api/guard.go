@@ -63,6 +63,17 @@ var operationScopes = map[string][]db.Scope{
 	"ListSigningKeys":  {db.ScopeAdmin},
 	"RotateSigningKey": {db.ScopeAdmin},
 	"RetireSigningKey": {db.ScopeAdmin},
+
+	"CreateWebhookEndpoint":       {db.ScopeWebhooksManage},
+	"ListWebhookEndpoints":        {db.ScopeWebhooksManage},
+	"GetWebhookEndpoint":          {db.ScopeWebhooksManage},
+	"UpdateWebhookEndpoint":       {db.ScopeWebhooksManage},
+	"DeleteWebhookEndpoint":       {db.ScopeWebhooksManage},
+	"RotateWebhookEndpointSecret": {db.ScopeWebhooksManage},
+	"ReplayDeadWebhookDeliveries": {db.ScopeWebhooksManage},
+	"ListWebhookDeliveries":       {db.ScopeWebhooksManage},
+	"GetWebhookDelivery":          {db.ScopeWebhooksManage},
+	"ReplayWebhookDelivery":       {db.ScopeWebhooksManage},
 }
 
 // publicOperations are served without authentication.
@@ -300,4 +311,44 @@ func (g guarded) GetAssetProof(w http.ResponseWriter, r *http.Request, assetID g
 
 func (g guarded) VerifyArtifact(w http.ResponseWriter, r *http.Request) {
 	g.a.run("VerifyArtifact", w, r, func(r *http.Request) { g.ServerInterface.VerifyArtifact(w, r) })
+}
+
+func (g guarded) CreateWebhookEndpoint(w http.ResponseWriter, r *http.Request) {
+	g.a.run("CreateWebhookEndpoint", w, r, func(r *http.Request) { g.ServerInterface.CreateWebhookEndpoint(w, r) })
+}
+
+func (g guarded) ListWebhookEndpoints(w http.ResponseWriter, r *http.Request) {
+	g.a.run("ListWebhookEndpoints", w, r, func(r *http.Request) { g.ServerInterface.ListWebhookEndpoints(w, r) })
+}
+
+func (g guarded) GetWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointID gen.WebhookEndpointIdPath) {
+	g.a.run("GetWebhookEndpoint", w, r, func(r *http.Request) { g.ServerInterface.GetWebhookEndpoint(w, r, endpointID) })
+}
+
+func (g guarded) UpdateWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointID gen.WebhookEndpointIdPath) {
+	g.a.run("UpdateWebhookEndpoint", w, r, func(r *http.Request) { g.ServerInterface.UpdateWebhookEndpoint(w, r, endpointID) })
+}
+
+func (g guarded) DeleteWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointID gen.WebhookEndpointIdPath) {
+	g.a.run("DeleteWebhookEndpoint", w, r, func(r *http.Request) { g.ServerInterface.DeleteWebhookEndpoint(w, r, endpointID) })
+}
+
+func (g guarded) RotateWebhookEndpointSecret(w http.ResponseWriter, r *http.Request, endpointID gen.WebhookEndpointIdPath) {
+	g.a.run("RotateWebhookEndpointSecret", w, r, func(r *http.Request) { g.ServerInterface.RotateWebhookEndpointSecret(w, r, endpointID) })
+}
+
+func (g guarded) ReplayDeadWebhookDeliveries(w http.ResponseWriter, r *http.Request, endpointID gen.WebhookEndpointIdPath) {
+	g.a.run("ReplayDeadWebhookDeliveries", w, r, func(r *http.Request) { g.ServerInterface.ReplayDeadWebhookDeliveries(w, r, endpointID) })
+}
+
+func (g guarded) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request, params gen.ListWebhookDeliveriesParams) {
+	g.a.run("ListWebhookDeliveries", w, r, func(r *http.Request) { g.ServerInterface.ListWebhookDeliveries(w, r, params) })
+}
+
+func (g guarded) GetWebhookDelivery(w http.ResponseWriter, r *http.Request, deliveryID gen.WebhookDeliveryIdPath) {
+	g.a.run("GetWebhookDelivery", w, r, func(r *http.Request) { g.ServerInterface.GetWebhookDelivery(w, r, deliveryID) })
+}
+
+func (g guarded) ReplayWebhookDelivery(w http.ResponseWriter, r *http.Request, deliveryID gen.WebhookDeliveryIdPath) {
+	g.a.run("ReplayWebhookDelivery", w, r, func(r *http.Request) { g.ServerInterface.ReplayWebhookDelivery(w, r, deliveryID) })
 }

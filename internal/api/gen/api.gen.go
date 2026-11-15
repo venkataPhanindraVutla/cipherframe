@@ -684,6 +684,57 @@ func (e VerifyResultReason) Valid() bool {
 	}
 }
 
+// Defines values for WebhookDeliveryStatus.
+const (
+	WebhookDeliveryStatusDead      WebhookDeliveryStatus = "dead"
+	WebhookDeliveryStatusPending   WebhookDeliveryStatus = "pending"
+	WebhookDeliveryStatusSucceeded WebhookDeliveryStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the WebhookDeliveryStatus enum.
+func (e WebhookDeliveryStatus) Valid() bool {
+	switch e {
+	case WebhookDeliveryStatusDead:
+		return true
+	case WebhookDeliveryStatusPending:
+		return true
+	case WebhookDeliveryStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WebhookEventKind.
+const (
+	AssetDeleted     WebhookEventKind = "asset.deleted"
+	AssetFailed      WebhookEventKind = "asset.failed"
+	AssetReady       WebhookEventKind = "asset.ready"
+	RetentionExpired WebhookEventKind = "retention.expired"
+	SessionAnomaly   WebhookEventKind = "session.anomaly"
+	SessionRevoked   WebhookEventKind = "session.revoked"
+)
+
+// Valid indicates whether the value is a known member of the WebhookEventKind enum.
+func (e WebhookEventKind) Valid() bool {
+	switch e {
+	case AssetDeleted:
+		return true
+	case AssetFailed:
+		return true
+	case AssetReady:
+		return true
+	case RetentionExpired:
+		return true
+	case SessionAnomaly:
+		return true
+	case SessionRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccessLogEntry defines model for AccessLogEntry.
 type AccessLogEntry struct {
 	// AssetId The asset the event concerns.
@@ -938,6 +989,18 @@ type CreatePlaybackSessionRequest struct {
 	// characters. Use an ID only your application can link to a person, never an email
 	// address.
 	ViewerId string `json:"viewer_id"`
+}
+
+// CreateWebhookEndpointRequest defines model for CreateWebhookEndpointRequest.
+type CreateWebhookEndpointRequest struct {
+	// Enabled Default `true`.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Events The kinds to receive. Empty or absent means every kind.
+	Events *[]WebhookEventKind `json:"events,omitempty"`
+
+	// Url An https URL on a public address, without credentials.
+	Url string `json:"url"`
 }
 
 // CreatedApiKey Key metadata plus the full key, returned exactly once.
@@ -1540,6 +1603,11 @@ type ReadyResponse struct {
 // ReadyResponseStatus defines model for ReadyResponse.Status.
 type ReadyResponseStatus string
 
+// ReplayedDeliveries defines model for ReplayedDeliveries.
+type ReplayedDeliveries struct {
+	Replayed int64 `json:"replayed"`
+}
+
 // RevokePlaybackSessionRequest defines model for RevokePlaybackSessionRequest.
 type RevokePlaybackSessionRequest struct {
 	// Reason Why the session was revoked: at most 200 printable characters, no control characters.
@@ -1577,6 +1645,16 @@ type RotatedCallbackSecret struct {
 
 	// Secret The callback secret, `whsec_` followed by the standard base64 of 32 random bytes.
 	// Shown only here; store it now.
+	Secret  string `json:"secret"`
+	Version int    `json:"version"`
+}
+
+// RotatedWebhookSecret defines model for RotatedWebhookSecret.
+type RotatedWebhookSecret struct {
+	// PreviousValidUntil Until when the previous secret also signs.
+	PreviousValidUntil time.Time `json:"previous_valid_until"`
+
+	// Secret The new secret, `whsec_` followed by base64. Shown only here; store it now.
 	Secret  string `json:"secret"`
 	Version int    `json:"version"`
 }
@@ -1632,6 +1710,15 @@ type SigningKeySet struct {
 // `null`) or `ttl_seconds` (an integer or `null`). `null` clears the expiry. The generated
 // server reads the members raw, so that `null` can be told apart from a missing member.
 type UpdateAssetRequest = map[string]rawjson.RawMessage
+
+// UpdateWebhookEndpointRequest defines model for UpdateWebhookEndpointRequest.
+type UpdateWebhookEndpointRequest struct {
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Events Replaces the filter. An empty list means every kind.
+	Events *[]WebhookEventKind `json:"events,omitempty"`
+	Url    *string             `json:"url,omitempty"`
+}
 
 // UploadInstructions defines model for UploadInstructions.
 type UploadInstructions struct {
@@ -1705,6 +1792,113 @@ type VerifyResultOutcome string
 // verified with the published keys or its content could not be read.
 type VerifyResultReason string
 
+// WebhookAttempt defines model for WebhookAttempt.
+type WebhookAttempt struct {
+	At         time.Time `json:"at"`
+	DurationMs int       `json:"duration_ms"`
+
+	// Error Why the attempt failed: `status` (not 2xx), `timeout`, `network`, `redirect`,
+	// `blocked_address` or `bad_url`. Absent on success.
+	Error *string `json:"error,omitempty"`
+
+	// Excerpt The start of the response, reduced to at most 200 printable ASCII characters.
+	Excerpt *string `json:"excerpt,omitempty"`
+	Number  int     `json:"number"`
+
+	// StatusCode Absent when there was no response.
+	StatusCode *int `json:"status_code,omitempty"`
+}
+
+// WebhookDelivery defines model for WebhookDelivery.
+type WebhookDelivery struct {
+	// Attempts Attempts made so far (a delivery is dead after 12).
+	Attempts int `json:"attempts"`
+
+	// CompletedAt When the delivery succeeded or was dead-lettered.
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	EndpointId  string     `json:"endpoint_id"`
+
+	// EventId The event's ID, also the `webhook-id` header and the `id` of the payload.
+	EventId openapi_types.UUID `json:"event_id"`
+	Id      openapi_types.UUID `json:"id"`
+
+	// Kind What happened. `asset.ready` and `asset.failed`: processing ended. `asset.deleted`: the
+	// verified deletion finished (`reason` says whether it was requested or came from retention).
+	// `retention.expired`: the asset's time-to-live ran out and its deletion started.
+	// `session.revoked`: a playback session was revoked (by your call, by an automatic revoke or
+	// because its asset is being deleted). `session.anomaly`: an anomaly event of
+	// `listPlaybackEvents` was raised; the event ID is the same one.
+	Kind          WebhookEventKind `json:"kind"`
+	LastAttemptAt *time.Time       `json:"last_attempt_at,omitempty"`
+
+	// LastStatusCode The HTTP status of the last attempt. Absent when it got no response.
+	LastStatusCode *int `json:"last_status_code,omitempty"`
+
+	// NextAttemptAt When the next attempt is due (meaningful while `pending`).
+	NextAttemptAt time.Time             `json:"next_attempt_at"`
+	Status        WebhookDeliveryStatus `json:"status"`
+}
+
+// WebhookDeliveryDetail defines model for WebhookDeliveryDetail.
+type WebhookDeliveryDetail struct {
+	Attempts []WebhookAttempt `json:"attempts"`
+	Delivery WebhookDelivery  `json:"delivery"`
+}
+
+// WebhookDeliveryList defines model for WebhookDeliveryList.
+type WebhookDeliveryList struct {
+	Items []WebhookDelivery `json:"items"`
+
+	// NextCursor Present when there are older deliveries. Pass it as `cursor`.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// WebhookDeliveryStatus defines model for WebhookDeliveryStatus.
+type WebhookDeliveryStatus string
+
+// WebhookEndpoint defines model for WebhookEndpoint.
+type WebhookEndpoint struct {
+	CreatedAt time.Time `json:"created_at"`
+	Enabled   bool      `json:"enabled"`
+
+	// Events The filter. Empty means every kind.
+	Events []WebhookEventKind `json:"events"`
+
+	// Id The endpoint ID (`whe_` followed by 26 characters).
+	Id string `json:"id"`
+
+	// PreviousSecretValidUntil While the previous secret still signs, until when.
+	PreviousSecretValidUntil *time.Time `json:"previous_secret_valid_until,omitempty"`
+
+	// SecretVersion Starts at 1 and grows with every rotation.
+	SecretVersion int       `json:"secret_version"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	Url           string    `json:"url"`
+}
+
+// WebhookEndpointCreated defines model for WebhookEndpointCreated.
+type WebhookEndpointCreated struct {
+	Endpoint WebhookEndpoint `json:"endpoint"`
+
+	// Secret The signing secret, `whsec_` followed by the standard base64 of 32 random bytes. Shown
+	// only here; store it now.
+	Secret string `json:"secret"`
+}
+
+// WebhookEndpointList defines model for WebhookEndpointList.
+type WebhookEndpointList struct {
+	Items []WebhookEndpoint `json:"items"`
+}
+
+// WebhookEventKind What happened. `asset.ready` and `asset.failed`: processing ended. `asset.deleted`: the
+// verified deletion finished (`reason` says whether it was requested or came from retention).
+// `retention.expired`: the asset's time-to-live ran out and its deletion started.
+// `session.revoked`: a playback session was revoked (by your call, by an automatic revoke or
+// because its asset is being deleted). `session.anomaly`: an anomaly event of
+// `listPlaybackEvents` was raised; the event ID is the same one.
+type WebhookEventKind string
+
 // Whoami defines model for Whoami.
 type Whoami struct {
 	ClientId ClientId `json:"client_id"`
@@ -1776,6 +1970,18 @@ type SessionIdPath = SessionId
 
 // SigningKeyIdPath defines model for SigningKeyIdPath.
 type SigningKeyIdPath = string
+
+// WebhookDeliveryEndpointFilter defines model for WebhookDeliveryEndpointFilter.
+type WebhookDeliveryEndpointFilter = string
+
+// WebhookDeliveryIdPath defines model for WebhookDeliveryIdPath.
+type WebhookDeliveryIdPath = openapi_types.UUID
+
+// WebhookDeliveryStatusFilter defines model for WebhookDeliveryStatusFilter.
+type WebhookDeliveryStatusFilter = WebhookDeliveryStatus
+
+// WebhookEndpointIdPath defines model for WebhookEndpointIdPath.
+type WebhookEndpointIdPath = string
 
 // Unauthenticated RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Unauthenticated = Problem
@@ -1877,6 +2083,21 @@ type GetPlaybackSessionAccessLogParams struct {
 	Cursor *AccessLogCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListWebhookDeliveriesParams defines parameters for ListWebhookDeliveries.
+type ListWebhookDeliveriesParams struct {
+	// EndpointId Only deliveries to this endpoint (`whe_` followed by 26 characters).
+	EndpointId *WebhookDeliveryEndpointFilter `form:"endpoint_id,omitempty" json:"endpoint_id,omitempty"`
+
+	// Status Only deliveries in this state. `dead` is the dead-letter list.
+	Status *WebhookDeliveryStatusFilter `form:"status,omitempty" json:"status,omitempty"`
+
+	// Limit Page size, 1 to 100 (default 50).
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Treat it as opaque.
+	Cursor *AccessLogCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // CreateAssetJSONRequestBody defines body for CreateAsset for application/json ContentType.
 type CreateAssetJSONRequestBody = CreateAssetRequest
 
@@ -1915,6 +2136,12 @@ type UpdatePrivacySettingsJSONRequestBody = PrivacySettingsInput
 
 // VerifyArtifactJSONRequestBody defines body for VerifyArtifact for application/json ContentType.
 type VerifyArtifactJSONRequestBody = VerifyRequest
+
+// CreateWebhookEndpointJSONRequestBody defines body for CreateWebhookEndpoint for application/json ContentType.
+type CreateWebhookEndpointJSONRequestBody = CreateWebhookEndpointRequest
+
+// UpdateWebhookEndpointJSONRequestBody defines body for UpdateWebhookEndpoint for application/json ContentType.
+type UpdateWebhookEndpointJSONRequestBody = UpdateWebhookEndpointRequest
 
 // Getter for additional properties for PublicJwk. Returns the specified
 // element and whether it was found
@@ -2222,6 +2449,36 @@ type ServerInterface interface {
 	// VerifyArtifact Is this file ours?
 	// (POST /v1/verify)
 	VerifyArtifact(w http.ResponseWriter, r *http.Request)
+	// ListWebhookDeliveries List webhook deliveries
+	// (GET /v1/webhook-deliveries)
+	ListWebhookDeliveries(w http.ResponseWriter, r *http.Request, params ListWebhookDeliveriesParams)
+	// GetWebhookDelivery Get a webhook delivery
+	// (GET /v1/webhook-deliveries/{delivery_id})
+	GetWebhookDelivery(w http.ResponseWriter, r *http.Request, deliveryId WebhookDeliveryIdPath)
+	// ReplayWebhookDelivery Replay a webhook delivery
+	// (POST /v1/webhook-deliveries/{delivery_id}/replay)
+	ReplayWebhookDelivery(w http.ResponseWriter, r *http.Request, deliveryId WebhookDeliveryIdPath)
+	// ListWebhookEndpoints List webhook endpoints
+	// (GET /v1/webhook-endpoints)
+	ListWebhookEndpoints(w http.ResponseWriter, r *http.Request)
+	// CreateWebhookEndpoint Register a webhook endpoint
+	// (POST /v1/webhook-endpoints)
+	CreateWebhookEndpoint(w http.ResponseWriter, r *http.Request)
+	// DeleteWebhookEndpoint Delete a webhook endpoint
+	// (DELETE /v1/webhook-endpoints/{endpoint_id})
+	DeleteWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath)
+	// GetWebhookEndpoint Get a webhook endpoint
+	// (GET /v1/webhook-endpoints/{endpoint_id})
+	GetWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath)
+	// UpdateWebhookEndpoint Update a webhook endpoint
+	// (PATCH /v1/webhook-endpoints/{endpoint_id})
+	UpdateWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath)
+	// ReplayDeadWebhookDeliveries Replay an endpoint's dead-lettered deliveries
+	// (POST /v1/webhook-endpoints/{endpoint_id}/replay-dead)
+	ReplayDeadWebhookDeliveries(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath)
+	// RotateWebhookEndpointSecret Rotate a webhook endpoint's secret
+	// (POST /v1/webhook-endpoints/{endpoint_id}/rotate-secret)
+	RotateWebhookEndpointSecret(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(w http.ResponseWriter, r *http.Request)
@@ -3370,6 +3627,288 @@ func (siw *ServerInterfaceWrapper) VerifyArtifact(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ListWebhookDeliveries operation middleware
+func (siw *ServerInterfaceWrapper) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWebhookDeliveriesParams
+
+	// ------------- Optional query parameter "endpoint_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "endpoint_id", r.URL.Query(), &params.EndpointId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "endpoint_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endpoint_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWebhookDeliveries(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWebhookDelivery operation middleware
+func (siw *ServerInterfaceWrapper) GetWebhookDelivery(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "delivery_id" -------------
+	var deliveryId WebhookDeliveryIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "delivery_id", r.PathValue("delivery_id"), &deliveryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "delivery_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWebhookDelivery(w, r, deliveryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReplayWebhookDelivery operation middleware
+func (siw *ServerInterfaceWrapper) ReplayWebhookDelivery(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "delivery_id" -------------
+	var deliveryId WebhookDeliveryIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "delivery_id", r.PathValue("delivery_id"), &deliveryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "delivery_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReplayWebhookDelivery(w, r, deliveryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWebhookEndpoints operation middleware
+func (siw *ServerInterfaceWrapper) ListWebhookEndpoints(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWebhookEndpoints(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateWebhookEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) CreateWebhookEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateWebhookEndpoint(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteWebhookEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) DeleteWebhookEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "endpoint_id" -------------
+	var endpointId WebhookEndpointIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "endpoint_id", r.PathValue("endpoint_id"), &endpointId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endpoint_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteWebhookEndpoint(w, r, endpointId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWebhookEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) GetWebhookEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "endpoint_id" -------------
+	var endpointId WebhookEndpointIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "endpoint_id", r.PathValue("endpoint_id"), &endpointId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endpoint_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWebhookEndpoint(w, r, endpointId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateWebhookEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) UpdateWebhookEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "endpoint_id" -------------
+	var endpointId WebhookEndpointIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "endpoint_id", r.PathValue("endpoint_id"), &endpointId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endpoint_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateWebhookEndpoint(w, r, endpointId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReplayDeadWebhookDeliveries operation middleware
+func (siw *ServerInterfaceWrapper) ReplayDeadWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "endpoint_id" -------------
+	var endpointId WebhookEndpointIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "endpoint_id", r.PathValue("endpoint_id"), &endpointId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endpoint_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReplayDeadWebhookDeliveries(w, r, endpointId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateWebhookEndpointSecret operation middleware
+func (siw *ServerInterfaceWrapper) RotateWebhookEndpointSecret(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "endpoint_id" -------------
+	var endpointId WebhookEndpointIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "endpoint_id", r.PathValue("endpoint_id"), &endpointId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endpoint_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateWebhookEndpointSecret(w, r, endpointId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWhoami operation middleware
 func (siw *ServerInterfaceWrapper) GetWhoami(w http.ResponseWriter, r *http.Request) {
 
@@ -3544,6 +4083,16 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/signing-keys", wrapper.ListSigningKeys)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/signing-keys/rotate", wrapper.RotateSigningKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/signing-keys/{key_id}/retire", wrapper.RetireSigningKey)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-endpoints", wrapper.ListWebhookEndpoints)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/webhook-endpoints", wrapper.CreateWebhookEndpoint)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/webhook-endpoints/{endpoint_id}", wrapper.DeleteWebhookEndpoint)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-endpoints/{endpoint_id}", wrapper.GetWebhookEndpoint)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/webhook-endpoints/{endpoint_id}", wrapper.UpdateWebhookEndpoint)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/webhook-endpoints/{endpoint_id}/rotate-secret", wrapper.RotateWebhookEndpointSecret)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/webhook-endpoints/{endpoint_id}/replay-dead", wrapper.ReplayDeadWebhookDeliveries)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-deliveries", wrapper.ListWebhookDeliveries)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-deliveries/{delivery_id}", wrapper.GetWebhookDelivery)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/webhook-deliveries/{delivery_id}/replay", wrapper.ReplayWebhookDelivery)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/.well-known/cipherframe-keys.json", wrapper.GetSigningKeySet)
 
 	return m
@@ -8146,6 +8695,1212 @@ func (response VerifyArtifactdefaultApplicationProblemPlusJSONResponse) VisitVer
 	return err
 }
 
+type ListWebhookDeliveriesRequestObject struct {
+	Params ListWebhookDeliveriesParams
+}
+
+type ListWebhookDeliveriesResponseObject interface {
+	VisitListWebhookDeliveriesResponse(w http.ResponseWriter) error
+}
+
+type ListWebhookDeliveries200ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListWebhookDeliveries200JSONResponse struct {
+	Body    WebhookDeliveryList
+	Headers ListWebhookDeliveries200ResponseHeaders
+}
+
+func (response ListWebhookDeliveries200JSONResponse) VisitListWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookDeliveries400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListWebhookDeliveries400ApplicationProblemPlusJSONResponse) VisitListWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookDeliveries401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListWebhookDeliveries401ApplicationProblemPlusJSONResponse) VisitListWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookDeliveries403ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListWebhookDeliveries403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ListWebhookDeliveries403ResponseHeaders
+}
+
+func (response ListWebhookDeliveries403ApplicationProblemPlusJSONResponse) VisitListWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookDeliveriesdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListWebhookDeliveriesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListWebhookDeliveriesdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListWebhookDeliveriesdefaultApplicationProblemPlusJSONResponse) VisitListWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookDeliveryRequestObject struct {
+	DeliveryId WebhookDeliveryIdPath `json:"delivery_id"`
+}
+
+type GetWebhookDeliveryResponseObject interface {
+	VisitGetWebhookDeliveryResponse(w http.ResponseWriter) error
+}
+
+type GetWebhookDelivery200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetWebhookDelivery200JSONResponse struct {
+	Body    WebhookDeliveryDetail
+	Headers GetWebhookDelivery200ResponseHeaders
+}
+
+func (response GetWebhookDelivery200JSONResponse) VisitGetWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookDelivery401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetWebhookDelivery401ApplicationProblemPlusJSONResponse) VisitGetWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookDelivery403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetWebhookDelivery403ApplicationProblemPlusJSONResponse) VisitGetWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookDelivery404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetWebhookDelivery404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetWebhookDelivery404ResponseHeaders
+}
+
+func (response GetWebhookDelivery404ApplicationProblemPlusJSONResponse) VisitGetWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookDeliverydefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetWebhookDeliverydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetWebhookDeliverydefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetWebhookDeliverydefaultApplicationProblemPlusJSONResponse) VisitGetWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayWebhookDeliveryRequestObject struct {
+	DeliveryId WebhookDeliveryIdPath `json:"delivery_id"`
+}
+
+type ReplayWebhookDeliveryResponseObject interface {
+	VisitReplayWebhookDeliveryResponse(w http.ResponseWriter) error
+}
+
+type ReplayWebhookDelivery202ResponseHeaders struct {
+	XRequestId string
+}
+
+type ReplayWebhookDelivery202JSONResponse struct {
+	Body    WebhookDelivery
+	Headers ReplayWebhookDelivery202ResponseHeaders
+}
+
+func (response ReplayWebhookDelivery202JSONResponse) VisitReplayWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayWebhookDelivery401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ReplayWebhookDelivery401ApplicationProblemPlusJSONResponse) VisitReplayWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayWebhookDelivery403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ReplayWebhookDelivery403ApplicationProblemPlusJSONResponse) VisitReplayWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayWebhookDelivery404ResponseHeaders struct {
+	XRequestId string
+}
+
+type ReplayWebhookDelivery404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ReplayWebhookDelivery404ResponseHeaders
+}
+
+func (response ReplayWebhookDelivery404ApplicationProblemPlusJSONResponse) VisitReplayWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayWebhookDelivery409ResponseHeaders struct {
+	XRequestId string
+}
+
+type ReplayWebhookDelivery409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ReplayWebhookDelivery409ResponseHeaders
+}
+
+func (response ReplayWebhookDelivery409ApplicationProblemPlusJSONResponse) VisitReplayWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayWebhookDeliverydefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ReplayWebhookDeliverydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ReplayWebhookDeliverydefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ReplayWebhookDeliverydefaultApplicationProblemPlusJSONResponse) VisitReplayWebhookDeliveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookEndpointsRequestObject struct {
+}
+
+type ListWebhookEndpointsResponseObject interface {
+	VisitListWebhookEndpointsResponse(w http.ResponseWriter) error
+}
+
+type ListWebhookEndpoints200ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListWebhookEndpoints200JSONResponse struct {
+	Body    WebhookEndpointList
+	Headers ListWebhookEndpoints200ResponseHeaders
+}
+
+func (response ListWebhookEndpoints200JSONResponse) VisitListWebhookEndpointsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookEndpoints401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListWebhookEndpoints401ApplicationProblemPlusJSONResponse) VisitListWebhookEndpointsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookEndpoints403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListWebhookEndpoints403ApplicationProblemPlusJSONResponse) VisitListWebhookEndpointsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebhookEndpointsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListWebhookEndpointsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListWebhookEndpointsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListWebhookEndpointsdefaultApplicationProblemPlusJSONResponse) VisitListWebhookEndpointsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWebhookEndpointRequestObject struct {
+	Body *CreateWebhookEndpointJSONRequestBody
+}
+
+type CreateWebhookEndpointResponseObject interface {
+	VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error
+}
+
+type CreateWebhookEndpoint201ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type CreateWebhookEndpoint201JSONResponse struct {
+	Body    WebhookEndpointCreated
+	Headers CreateWebhookEndpoint201ResponseHeaders
+}
+
+func (response CreateWebhookEndpoint201JSONResponse) VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWebhookEndpoint400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateWebhookEndpoint400ApplicationProblemPlusJSONResponse) VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWebhookEndpoint401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateWebhookEndpoint401ApplicationProblemPlusJSONResponse) VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWebhookEndpoint403ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateWebhookEndpoint403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateWebhookEndpoint403ResponseHeaders
+}
+
+func (response CreateWebhookEndpoint403ApplicationProblemPlusJSONResponse) VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWebhookEndpoint409ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateWebhookEndpoint409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateWebhookEndpoint409ResponseHeaders
+}
+
+func (response CreateWebhookEndpoint409ApplicationProblemPlusJSONResponse) VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWebhookEndpoint503ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateWebhookEndpoint503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateWebhookEndpoint503ResponseHeaders
+}
+
+func (response CreateWebhookEndpoint503ApplicationProblemPlusJSONResponse) VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWebhookEndpointdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateWebhookEndpointdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    CreateWebhookEndpointdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response CreateWebhookEndpointdefaultApplicationProblemPlusJSONResponse) VisitCreateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteWebhookEndpointRequestObject struct {
+	EndpointId WebhookEndpointIdPath `json:"endpoint_id"`
+}
+
+type DeleteWebhookEndpointResponseObject interface {
+	VisitDeleteWebhookEndpointResponse(w http.ResponseWriter) error
+}
+
+type DeleteWebhookEndpoint204ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteWebhookEndpoint204Response struct {
+	Headers DeleteWebhookEndpoint204ResponseHeaders
+}
+
+func (response DeleteWebhookEndpoint204Response) VisitDeleteWebhookEndpointResponse(w http.ResponseWriter) error {
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteWebhookEndpoint401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteWebhookEndpoint401ApplicationProblemPlusJSONResponse) VisitDeleteWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteWebhookEndpoint403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteWebhookEndpoint403ApplicationProblemPlusJSONResponse) VisitDeleteWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteWebhookEndpoint404ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteWebhookEndpoint404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers DeleteWebhookEndpoint404ResponseHeaders
+}
+
+func (response DeleteWebhookEndpoint404ApplicationProblemPlusJSONResponse) VisitDeleteWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteWebhookEndpointdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteWebhookEndpointdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    DeleteWebhookEndpointdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response DeleteWebhookEndpointdefaultApplicationProblemPlusJSONResponse) VisitDeleteWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookEndpointRequestObject struct {
+	EndpointId WebhookEndpointIdPath `json:"endpoint_id"`
+}
+
+type GetWebhookEndpointResponseObject interface {
+	VisitGetWebhookEndpointResponse(w http.ResponseWriter) error
+}
+
+type GetWebhookEndpoint200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetWebhookEndpoint200JSONResponse struct {
+	Body    WebhookEndpoint
+	Headers GetWebhookEndpoint200ResponseHeaders
+}
+
+func (response GetWebhookEndpoint200JSONResponse) VisitGetWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookEndpoint401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetWebhookEndpoint401ApplicationProblemPlusJSONResponse) VisitGetWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookEndpoint403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetWebhookEndpoint403ApplicationProblemPlusJSONResponse) VisitGetWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookEndpoint404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetWebhookEndpoint404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetWebhookEndpoint404ResponseHeaders
+}
+
+func (response GetWebhookEndpoint404ApplicationProblemPlusJSONResponse) VisitGetWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebhookEndpointdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetWebhookEndpointdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetWebhookEndpointdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetWebhookEndpointdefaultApplicationProblemPlusJSONResponse) VisitGetWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateWebhookEndpointRequestObject struct {
+	EndpointId WebhookEndpointIdPath `json:"endpoint_id"`
+	Body       *UpdateWebhookEndpointJSONRequestBody
+}
+
+type UpdateWebhookEndpointResponseObject interface {
+	VisitUpdateWebhookEndpointResponse(w http.ResponseWriter) error
+}
+
+type UpdateWebhookEndpoint200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateWebhookEndpoint200JSONResponse struct {
+	Body    WebhookEndpoint
+	Headers UpdateWebhookEndpoint200ResponseHeaders
+}
+
+func (response UpdateWebhookEndpoint200JSONResponse) VisitUpdateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateWebhookEndpoint400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateWebhookEndpoint400ApplicationProblemPlusJSONResponse) VisitUpdateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateWebhookEndpoint401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateWebhookEndpoint401ApplicationProblemPlusJSONResponse) VisitUpdateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateWebhookEndpoint403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateWebhookEndpoint403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateWebhookEndpoint403ResponseHeaders
+}
+
+func (response UpdateWebhookEndpoint403ApplicationProblemPlusJSONResponse) VisitUpdateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateWebhookEndpoint404ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateWebhookEndpoint404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateWebhookEndpoint404ResponseHeaders
+}
+
+func (response UpdateWebhookEndpoint404ApplicationProblemPlusJSONResponse) VisitUpdateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateWebhookEndpointdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateWebhookEndpointdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdateWebhookEndpointdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdateWebhookEndpointdefaultApplicationProblemPlusJSONResponse) VisitUpdateWebhookEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayDeadWebhookDeliveriesRequestObject struct {
+	EndpointId WebhookEndpointIdPath `json:"endpoint_id"`
+}
+
+type ReplayDeadWebhookDeliveriesResponseObject interface {
+	VisitReplayDeadWebhookDeliveriesResponse(w http.ResponseWriter) error
+}
+
+type ReplayDeadWebhookDeliveries200ResponseHeaders struct {
+	XRequestId string
+}
+
+type ReplayDeadWebhookDeliveries200JSONResponse struct {
+	Body    ReplayedDeliveries
+	Headers ReplayDeadWebhookDeliveries200ResponseHeaders
+}
+
+func (response ReplayDeadWebhookDeliveries200JSONResponse) VisitReplayDeadWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayDeadWebhookDeliveries401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ReplayDeadWebhookDeliveries401ApplicationProblemPlusJSONResponse) VisitReplayDeadWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayDeadWebhookDeliveries403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ReplayDeadWebhookDeliveries403ApplicationProblemPlusJSONResponse) VisitReplayDeadWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayDeadWebhookDeliveries404ResponseHeaders struct {
+	XRequestId string
+}
+
+type ReplayDeadWebhookDeliveries404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ReplayDeadWebhookDeliveries404ResponseHeaders
+}
+
+func (response ReplayDeadWebhookDeliveries404ApplicationProblemPlusJSONResponse) VisitReplayDeadWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReplayDeadWebhookDeliveriesdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ReplayDeadWebhookDeliveriesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ReplayDeadWebhookDeliveriesdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ReplayDeadWebhookDeliveriesdefaultApplicationProblemPlusJSONResponse) VisitReplayDeadWebhookDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateWebhookEndpointSecretRequestObject struct {
+	EndpointId WebhookEndpointIdPath `json:"endpoint_id"`
+}
+
+type RotateWebhookEndpointSecretResponseObject interface {
+	VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error
+}
+
+type RotateWebhookEndpointSecret200ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type RotateWebhookEndpointSecret200JSONResponse struct {
+	Body    RotatedWebhookSecret
+	Headers RotateWebhookEndpointSecret200ResponseHeaders
+}
+
+func (response RotateWebhookEndpointSecret200JSONResponse) VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateWebhookEndpointSecret401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response RotateWebhookEndpointSecret401ApplicationProblemPlusJSONResponse) VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateWebhookEndpointSecret403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RotateWebhookEndpointSecret403ApplicationProblemPlusJSONResponse) VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateWebhookEndpointSecret404ResponseHeaders struct {
+	XRequestId string
+}
+
+type RotateWebhookEndpointSecret404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RotateWebhookEndpointSecret404ResponseHeaders
+}
+
+func (response RotateWebhookEndpointSecret404ApplicationProblemPlusJSONResponse) VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateWebhookEndpointSecret409ResponseHeaders struct {
+	XRequestId string
+}
+
+type RotateWebhookEndpointSecret409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RotateWebhookEndpointSecret409ResponseHeaders
+}
+
+func (response RotateWebhookEndpointSecret409ApplicationProblemPlusJSONResponse) VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateWebhookEndpointSecret503ResponseHeaders struct {
+	XRequestId string
+}
+
+type RotateWebhookEndpointSecret503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RotateWebhookEndpointSecret503ResponseHeaders
+}
+
+func (response RotateWebhookEndpointSecret503ApplicationProblemPlusJSONResponse) VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateWebhookEndpointSecretdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type RotateWebhookEndpointSecretdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    RotateWebhookEndpointSecretdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response RotateWebhookEndpointSecretdefaultApplicationProblemPlusJSONResponse) VisitRotateWebhookEndpointSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetWhoamiRequestObject struct {
 }
 
@@ -8334,6 +10089,36 @@ type StrictServerInterface interface {
 	// VerifyArtifact Is this file ours?
 	// (POST /v1/verify)
 	VerifyArtifact(ctx context.Context, request VerifyArtifactRequestObject) (VerifyArtifactResponseObject, error)
+	// ListWebhookDeliveries List webhook deliveries
+	// (GET /v1/webhook-deliveries)
+	ListWebhookDeliveries(ctx context.Context, request ListWebhookDeliveriesRequestObject) (ListWebhookDeliveriesResponseObject, error)
+	// GetWebhookDelivery Get a webhook delivery
+	// (GET /v1/webhook-deliveries/{delivery_id})
+	GetWebhookDelivery(ctx context.Context, request GetWebhookDeliveryRequestObject) (GetWebhookDeliveryResponseObject, error)
+	// ReplayWebhookDelivery Replay a webhook delivery
+	// (POST /v1/webhook-deliveries/{delivery_id}/replay)
+	ReplayWebhookDelivery(ctx context.Context, request ReplayWebhookDeliveryRequestObject) (ReplayWebhookDeliveryResponseObject, error)
+	// ListWebhookEndpoints List webhook endpoints
+	// (GET /v1/webhook-endpoints)
+	ListWebhookEndpoints(ctx context.Context, request ListWebhookEndpointsRequestObject) (ListWebhookEndpointsResponseObject, error)
+	// CreateWebhookEndpoint Register a webhook endpoint
+	// (POST /v1/webhook-endpoints)
+	CreateWebhookEndpoint(ctx context.Context, request CreateWebhookEndpointRequestObject) (CreateWebhookEndpointResponseObject, error)
+	// DeleteWebhookEndpoint Delete a webhook endpoint
+	// (DELETE /v1/webhook-endpoints/{endpoint_id})
+	DeleteWebhookEndpoint(ctx context.Context, request DeleteWebhookEndpointRequestObject) (DeleteWebhookEndpointResponseObject, error)
+	// GetWebhookEndpoint Get a webhook endpoint
+	// (GET /v1/webhook-endpoints/{endpoint_id})
+	GetWebhookEndpoint(ctx context.Context, request GetWebhookEndpointRequestObject) (GetWebhookEndpointResponseObject, error)
+	// UpdateWebhookEndpoint Update a webhook endpoint
+	// (PATCH /v1/webhook-endpoints/{endpoint_id})
+	UpdateWebhookEndpoint(ctx context.Context, request UpdateWebhookEndpointRequestObject) (UpdateWebhookEndpointResponseObject, error)
+	// ReplayDeadWebhookDeliveries Replay an endpoint's dead-lettered deliveries
+	// (POST /v1/webhook-endpoints/{endpoint_id}/replay-dead)
+	ReplayDeadWebhookDeliveries(ctx context.Context, request ReplayDeadWebhookDeliveriesRequestObject) (ReplayDeadWebhookDeliveriesResponseObject, error)
+	// RotateWebhookEndpointSecret Rotate a webhook endpoint's secret
+	// (POST /v1/webhook-endpoints/{endpoint_id}/rotate-secret)
+	RotateWebhookEndpointSecret(ctx context.Context, request RotateWebhookEndpointSecretRequestObject) (RotateWebhookEndpointSecretResponseObject, error)
 	// GetWhoami Identify the calling key
 	// (GET /v1/whoami)
 	GetWhoami(ctx context.Context, request GetWhoamiRequestObject) (GetWhoamiResponseObject, error)
@@ -9475,6 +11260,276 @@ func (sh *strictHandler) VerifyArtifact(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(VerifyArtifactResponseObject); ok {
 		if err := validResponse.VisitVerifyArtifactResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListWebhookDeliveries operation middleware
+func (sh *strictHandler) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request, params ListWebhookDeliveriesParams) {
+	var request ListWebhookDeliveriesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListWebhookDeliveries(ctx, request.(ListWebhookDeliveriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListWebhookDeliveries")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListWebhookDeliveriesResponseObject); ok {
+		if err := validResponse.VisitListWebhookDeliveriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetWebhookDelivery operation middleware
+func (sh *strictHandler) GetWebhookDelivery(w http.ResponseWriter, r *http.Request, deliveryId WebhookDeliveryIdPath) {
+	var request GetWebhookDeliveryRequestObject
+
+	request.DeliveryId = deliveryId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetWebhookDelivery(ctx, request.(GetWebhookDeliveryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetWebhookDelivery")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetWebhookDeliveryResponseObject); ok {
+		if err := validResponse.VisitGetWebhookDeliveryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReplayWebhookDelivery operation middleware
+func (sh *strictHandler) ReplayWebhookDelivery(w http.ResponseWriter, r *http.Request, deliveryId WebhookDeliveryIdPath) {
+	var request ReplayWebhookDeliveryRequestObject
+
+	request.DeliveryId = deliveryId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReplayWebhookDelivery(ctx, request.(ReplayWebhookDeliveryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReplayWebhookDelivery")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReplayWebhookDeliveryResponseObject); ok {
+		if err := validResponse.VisitReplayWebhookDeliveryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListWebhookEndpoints operation middleware
+func (sh *strictHandler) ListWebhookEndpoints(w http.ResponseWriter, r *http.Request) {
+	var request ListWebhookEndpointsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListWebhookEndpoints(ctx, request.(ListWebhookEndpointsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListWebhookEndpoints")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListWebhookEndpointsResponseObject); ok {
+		if err := validResponse.VisitListWebhookEndpointsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateWebhookEndpoint operation middleware
+func (sh *strictHandler) CreateWebhookEndpoint(w http.ResponseWriter, r *http.Request) {
+	var request CreateWebhookEndpointRequestObject
+
+	var body CreateWebhookEndpointJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateWebhookEndpoint(ctx, request.(CreateWebhookEndpointRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateWebhookEndpoint")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateWebhookEndpointResponseObject); ok {
+		if err := validResponse.VisitCreateWebhookEndpointResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteWebhookEndpoint operation middleware
+func (sh *strictHandler) DeleteWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath) {
+	var request DeleteWebhookEndpointRequestObject
+
+	request.EndpointId = endpointId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteWebhookEndpoint(ctx, request.(DeleteWebhookEndpointRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteWebhookEndpoint")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteWebhookEndpointResponseObject); ok {
+		if err := validResponse.VisitDeleteWebhookEndpointResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetWebhookEndpoint operation middleware
+func (sh *strictHandler) GetWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath) {
+	var request GetWebhookEndpointRequestObject
+
+	request.EndpointId = endpointId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetWebhookEndpoint(ctx, request.(GetWebhookEndpointRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetWebhookEndpoint")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetWebhookEndpointResponseObject); ok {
+		if err := validResponse.VisitGetWebhookEndpointResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateWebhookEndpoint operation middleware
+func (sh *strictHandler) UpdateWebhookEndpoint(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath) {
+	var request UpdateWebhookEndpointRequestObject
+
+	request.EndpointId = endpointId
+
+	var body UpdateWebhookEndpointJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateWebhookEndpoint(ctx, request.(UpdateWebhookEndpointRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateWebhookEndpoint")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateWebhookEndpointResponseObject); ok {
+		if err := validResponse.VisitUpdateWebhookEndpointResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReplayDeadWebhookDeliveries operation middleware
+func (sh *strictHandler) ReplayDeadWebhookDeliveries(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath) {
+	var request ReplayDeadWebhookDeliveriesRequestObject
+
+	request.EndpointId = endpointId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReplayDeadWebhookDeliveries(ctx, request.(ReplayDeadWebhookDeliveriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReplayDeadWebhookDeliveries")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReplayDeadWebhookDeliveriesResponseObject); ok {
+		if err := validResponse.VisitReplayDeadWebhookDeliveriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RotateWebhookEndpointSecret operation middleware
+func (sh *strictHandler) RotateWebhookEndpointSecret(w http.ResponseWriter, r *http.Request, endpointId WebhookEndpointIdPath) {
+	var request RotateWebhookEndpointSecretRequestObject
+
+	request.EndpointId = endpointId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RotateWebhookEndpointSecret(ctx, request.(RotateWebhookEndpointSecretRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RotateWebhookEndpointSecret")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RotateWebhookEndpointSecretResponseObject); ok {
+		if err := validResponse.VisitRotateWebhookEndpointSecretResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
