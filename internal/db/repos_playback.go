@@ -256,6 +256,8 @@ type NewPlaybackSession struct {
 	ViewerID  string
 	Now       time.Time
 	ExpiresAt time.Time
+	// OverlayCode is the session's overlay watermark code (ADR 0048); empty stores none.
+	OverlayCode string
 }
 
 // InsertPlaybackSession stores an active session under the hash of its ID. The asset must belong
@@ -295,6 +297,7 @@ func (r *Repos) InsertPlaybackSession(ctx context.Context, in NewPlaybackSession
 	row, err := r.q.InsertPlaybackSession(ctx, dbgen.InsertPlaybackSessionParams{
 		IDHash: SessionHash(in.ID), ClientID: cid, AuthMethod: in.AuthMethod, ViewerID: in.ViewerID, Now: in.Now,
 		ExpiresAt: in.ExpiresAt, AssetID: aid, Variant: in.Variant.String(), TenantID: tid,
+		OverlayCode: strPtr(in.OverlayCode),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
