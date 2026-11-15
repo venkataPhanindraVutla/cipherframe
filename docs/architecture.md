@@ -564,6 +564,17 @@ browser -- POST /v1/play/tenants/<tenant>/sessions -->  guarded (CORS from the t
   (`api_key`, `jwt`, `callback`) is tied to it by a CHECK: a client exactly when the method is
   `api_key`. The per-viewer limit counts all methods together.
 
+## Overlay watermark (M7-3, ADR 0048)
+
+The overlay is drawn by the player; the transcode and the delivery objects never contain it (invariants I2
+and I3). The control plane supplies the parameters: `overlay_settings` holds the tenant's policy, and every
+session creation path (the API key, and the browser JWT and callback paths on the edge) ends in
+`playback.Service.CreateSession`, which reads the settings and returns the `overlay` object. The session
+code is derived there from the session hash and the tenant (`internal/overlay`) and stored in
+`playback_sessions.overlay_code`, indexed per tenant, which is what the code lookup reads. The retention
+sweep sets old codes to `NULL`, so the code is traceable exactly as long as the access trail. The drift seed
+is derived from the session ID and returned only in the response; it is not stored.
+
 ## The access trail (M4-7)
 
 The access trail is the one record of viewer activity (invariant I10). It is built so that it can

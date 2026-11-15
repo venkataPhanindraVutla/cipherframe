@@ -1417,6 +1417,110 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/overlay-settings:
+    get:
+      operationId: getOverlaySettings
+      summary: Get the overlay watermark settings
+      description: |
+        Returns the tenant's effective overlay settings: the stored ones, or the defaults (off) when
+        none were ever stored (then `updated_at` is absent). Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: The effective settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverlaySettings"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateOverlaySettings
+      summary: Replace the overlay watermark settings
+      description: |
+        Replaces every overlay setting (a full replacement: send all fields; a missing one is
+        `invalid_request` with an `errors` entry naming it). An invalid value, such as a template
+        with an unknown placeholder, is `invalid_request` with an `errors` entry per field and
+        nothing is stored. The change is audited and applies to sessions created afterwards.
+        Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OverlaySettingsInput"
+      responses:
+        "200":
+          description: The settings were replaced.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverlaySettings"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/overlay-codes/{code}:
+    get:
+      operationId: lookupOverlayCode
+      summary: Find the session behind an overlay code
+      description: |
+        Maps an overlay session code seen in a leaked recording back to the caller's tenant's
+        sessions: the viewer ID, the asset and the session fingerprint that the access trail shows
+        on every row of the session. A code is 40 bits, so more than one session can match; an
+        unknown code, a code of another tenant and a code past the access-trail retention window
+        are an empty list. Requires the `assets:read` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: The 8-character code, from `A-Z` and `2-9` without `I` and `O` (case is ignored).
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 16
+      responses:
+        "200":
+          description: The matching sessions, newest first.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverlayCodeLookup"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/privacy-settings:
     get:
       operationId: getPrivacySettings
@@ -4457,6 +4561,153 @@ components:
           description: |
             The per-key request limit in force, absent when unlimited. Request counts are kept in
             memory per api instance and are not reported.
+    OverlaySettings:
+      description: |
+        A tenant's effective overlay watermark settings (ADR 0043, 0048). The overlay is drawn by
+        the player over the video; it is deterrence only and a determined viewer can remove it.
+      type: object
+      additionalProperties: false
+      required: [enabled, template, opacity, font_size_fraction, color]
+      properties:
+        enabled:
+          type: boolean
+          description: Return an `overlay` object when a session is created. Default `false`.
+        template:
+          type: string
+          maxLength: 120
+          description: |
+            1 to 120 characters of plain text: no control characters, line breaks, `<`, `>` or `&`.
+            It uses only `{session_code}`, `{date}` and `{time}`, and holds at least one. Any other
+            brace is refused. Default `{session_code} {date} {time} UTC`.
+        opacity:
+          type: number
+          format: double
+          minimum: 0.05
+          maximum: 0.8
+          description: Default 0.25.
+        font_size_fraction:
+          type: number
+          format: double
+          minimum: 0.015
+          maximum: 0.1
+          description: Text height as a fraction of the video height. Default 0.03.
+        color:
+          type: string
+          pattern: "^#[0-9A-F]{6}$"
+          description: "`#RRGGBB`, upper-case. Default `#FFFFFF`."
+        updated_at:
+          type: string
+          format: date-time
+          description: When the settings were last replaced. Absent while the defaults are in force.
+    OverlaySettingsInput:
+      description: |
+        Every overlay setting. The fields are not marked `required` so that a missing one is
+        `invalid_request` with an `errors` entry naming it.
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        template:
+          type: string
+        opacity:
+          type: number
+          format: double
+        font_size_fraction:
+          type: number
+          format: double
+        color:
+          type: string
+    PlaybackOverlay:
+      description: |
+        The overlay the player draws over the video (ADR 0048). It holds nothing about the viewer.
+        The player draws `template` after substituting `{date}` (the viewer's current UTC date,
+        `YYYY-MM-DD`) and `{time}` (UTC, `HH:MM:SS`, refreshed at least every second), and moves it
+        along the drift path of `drift` (`spec/test-vectors/overlay/README.md`). It is deterrence
+        only: a viewer who controls the player can remove it.
+      type: object
+      additionalProperties: false
+      required: [template, session_code, style, drift]
+      properties:
+        template:
+          type: string
+          description: |
+            The tenant's template with `{session_code}` already replaced by `session_code`. Only
+            `{date}` and `{time}` are left for the player. Draw it as plain text, never as markup.
+        session_code:
+          type: string
+          pattern: "^[A-Z2-9]{8}$"
+          description: |
+            A short code derived from the session. It is not the session ID or the token and cannot
+            be used to act on the session. The tenant maps it back to the session and viewer with
+            `lookupOverlayCode`.
+        style:
+          type: object
+          additionalProperties: false
+          required: [opacity, font_size_fraction, color]
+          properties:
+            opacity:
+              type: number
+              format: double
+            font_size_fraction:
+              type: number
+              format: double
+              description: Text height as a fraction of the video height.
+            color:
+              type: string
+              pattern: "^#[0-9A-F]{6}$"
+        drift:
+          type: object
+          additionalProperties: false
+          required: [algorithm, seed, period_seconds, margin]
+          properties:
+            algorithm:
+              type: string
+              enum: [lissajous-v1]
+            seed:
+              type: string
+              pattern: "^[0-9a-f]{16}$"
+              description: |
+                The path seed, derived one way from the session ID. The same session always gets
+                the same seed; it reveals nothing usable about the session ID.
+            period_seconds:
+              type: integer
+              description: The path repeats every this many seconds.
+            margin:
+              type: number
+              format: double
+              description: Distance kept from every frame edge, as a fraction of the frame width and height.
+    OverlayCodeLookup:
+      type: object
+      additionalProperties: false
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/OverlayCodeSession"
+    OverlayCodeSession:
+      type: object
+      additionalProperties: false
+      required: [asset_id, viewer_id, auth_method, state, created_at, session_fingerprint]
+      properties:
+        asset_id:
+          type: string
+        viewer_id:
+          type: string
+        auth_method:
+          type: string
+          enum: [api_key, jwt, callback]
+        state:
+          type: string
+          enum: [active, revoked, ended]
+        created_at:
+          type: string
+          format: date-time
+        session_fingerprint:
+          type: string
+          description: The 8-character fingerprint the access trail shows on every row of the session.
     PrivacySettings:
       description: |
         A tenant's effective privacy settings (ADR 0040).
@@ -4574,6 +4825,8 @@ components:
           description: |
             `header`: send the token as `Authorization: Bearer <token>`. `url`: the tenant opted in
             to tokens in URLs (ADR 0030), and `manifest_url` carries it.
+        overlay:
+          $ref: "#/components/schemas/PlaybackOverlay"
     PlaybackHeartbeat:
       type: object
       additionalProperties: false

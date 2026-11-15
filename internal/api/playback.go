@@ -56,6 +56,7 @@ func (s *server) CreatePlaybackSession(ctx context.Context, req gen.CreatePlayba
 			SessionExpiresAt:         c.SessionExpiresAt,
 			ManifestUrl:              c.ManifestURL.Reveal(),
 			TokenTransport:           gen.CreatedPlaybackSessionTokenTransport(c.TokenTransport),
+			Overlay:                  overlayOut(c.Overlay),
 		},
 		Headers: gen.CreatePlaybackSession201ResponseHeaders{CacheControl: noStore, XRequestId: requestID(ctx)},
 	}, nil

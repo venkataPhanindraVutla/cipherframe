@@ -170,6 +170,16 @@ type ExternalTask struct {
 	CompletedAt *time.Time
 }
 
+type OverlaySetting struct {
+	TenantID         pgtype.UUID
+	Enabled          bool
+	Template         string
+	Opacity          float64
+	FontSizeFraction float64
+	Color            string
+	UpdatedAt        time.Time
+}
+
 type PlaybackAccessLog struct {
 	ID             int64
 	TenantID       pgtype.UUID
@@ -255,6 +265,7 @@ type PlaybackSession struct {
 	SegmentsServed  int64
 	KeyServedAt     *time.Time
 	Variant         string
+	OverlayCode     *string
 }
 
 type PlaybackSetting struct {

@@ -59,11 +59,12 @@ WHERE tenant_id = sqlc.arg(tenant_id)::uuid
 -- name: InsertPlaybackSession :one
 -- The asset must belong to the tenant and be ready; otherwise no row is inserted.
 INSERT INTO playback_sessions (
-    id_hash, tenant_id, client_id, auth_method, asset_id, variant, viewer_id, state, created_at, last_heartbeat_at, expires_at
+    id_hash, tenant_id, client_id, auth_method, asset_id, variant, viewer_id, state, created_at, last_heartbeat_at, expires_at, overlay_code
 )
 SELECT sqlc.arg(id_hash)::bytea, a.tenant_id, sqlc.narg(client_id)::uuid, sqlc.arg(auth_method)::text, a.id,
        sqlc.arg(variant)::text, sqlc.arg(viewer_id)::text,
-       'active', sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(expires_at)::timestamptz
+       'active', sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(expires_at)::timestamptz,
+       sqlc.narg(overlay_code)::text
 FROM assets a
 WHERE a.id = sqlc.arg(asset_id)::uuid AND a.tenant_id = sqlc.arg(tenant_id)::uuid AND a.state = 'ready'
 RETURNING *;

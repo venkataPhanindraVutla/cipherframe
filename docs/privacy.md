@@ -77,6 +77,23 @@ change invariant I10:
 - Auto-revoke acts on a viewer's session on the strength of a counter. It is off by default, and the
   tenant, not Cipherframe, decides which kinds may do it.
 
+## The overlay watermark carries no personal data (ADR 0048)
+
+A tenant can have the player draw an overlay (a short session code and the viewer's current UTC time) over
+the video ([api.md](api.md#overlay-watermark-adr-0043-0048)). It is off by default.
+
+- The overlay holds **no personal data**: the template can use only `{session_code}`, `{date}` and
+  `{time}` (the viewer's own clock, in UTC, read by the player and not sent anywhere). The viewer ID, names
+  and emails are not available to it, and the server refuses any other placeholder.
+- The session code is a one-way derivation of the session, not the session ID or token. It maps back to a
+  viewer **only through the tenant's own data**: `GET /v1/overlay-codes/{code}` (scope `assets:read`)
+  returns the viewer ID your application chose and the session fingerprint of the access trail, and only
+  for your tenant's sessions.
+- The mapping lasts as long as the access trail: the code is stored on the session row and the worker's
+  retention job forgets it after `CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS` (90 days by default). A leak
+  found later cannot be traced.
+- The overlay is deterrence only; a viewer who controls the player can remove it.
+
 ## Settings and defaults (ADR 0040)
 
 | Setting | Default | Where |

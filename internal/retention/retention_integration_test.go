@@ -217,6 +217,7 @@ func TestPartitionMaintenanceFromALimitedRole(t *testing.T) {
 		fmt.Sprintf(`GRANT USAGE ON SCHEMA public TO %s`, role),
 		fmt.Sprintf(`GRANT SELECT, INSERT, DELETE ON playback_access_log, playback_events, webhook_events TO %s`, role),
 		fmt.Sprintf(`GRANT USAGE ON SEQUENCE playback_access_log_id_seq TO %s`, role),
+		fmt.Sprintf(`GRANT SELECT, UPDATE ON playback_sessions TO %s`, role), // the overlay codes (ADR 0048)
 	} {
 		if _, err := r.pool.Exec(ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)

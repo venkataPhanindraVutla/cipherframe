@@ -83,6 +83,8 @@ type Store interface {
 	DeleteAccessLogBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error)
 	DeletePlaybackEventsBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error)
 	DeleteWebhookEventsBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error)
+	// ClearOverlayCodesBefore forgets the overlay codes of old sessions (M7-3, ADR 0048).
+	ClearOverlayCodesBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error)
 }
 
 // Requester starts a deletion. *purge.Requester implements it.
@@ -112,6 +114,8 @@ type Result struct {
 	EventRows     int64
 	// WebhookRows is the webhook events deleted (their deliveries and attempts go with them).
 	WebhookRows int64
+	// OverlayCodes is the overlay codes cleared from old sessions.
+	OverlayCodes int64
 }
 
 // Sweep hands the assets that expired by now to the purge, then removes the access trail and the
@@ -146,6 +150,9 @@ func (s *Sweeper) Sweep(ctx context.Context) (Result, error) {
 	}
 	if res.WebhookRows, err = deleteOld(ctx, cutoff, s.Store.DeleteWebhookEventsBefore); err != nil {
 		errList = append(errList, fmt.Errorf("retention: delete old webhook events: %w", err))
+	}
+	if res.OverlayCodes, err = deleteOld(ctx, cutoff, s.Store.ClearOverlayCodesBefore); err != nil {
+		errList = append(errList, fmt.Errorf("retention: clear old overlay codes: %w", err))
 	}
 	return res, joinErrors(errList)
 }
