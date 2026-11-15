@@ -145,7 +145,7 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 				continue
 			}
 			p := strings.NewReplacer("{key_id}", keyID, "{session_id}", sessionID, "{asset_id}", assetID, "{kid}", "key-1",
-				"{endpoint_id}", endpointID, "{delivery_id}", deliveryID, "{subtitle_id}", "sub_"+strings.Repeat("0", 26), "{client_id}", "cli_"+strings.Repeat("0", 26)).Replace(path)
+				"{endpoint_id}", endpointID, "{delivery_id}", deliveryID, "{subtitle_id}", "sub_"+strings.Repeat("0", 26), "{client_id}", "cli_"+strings.Repeat("0", 26), "{code}", "ABCDEFGH").Replace(path)
 			var body []byte
 			contentType := ""
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
@@ -164,6 +164,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"language":"en","label":"English","cues":[]}`)
 				case "updateQuotas", "updateClientQuotas":
 					body = []byte(`{"concurrent_sessions":5}`)
+				case "updateOverlaySettings":
+					body = []byte(`{"enabled":false}`)
 				case "updatePlaybackSettings":
 					body = []byte(`{}`)
 				case "updatePrivacySettings":
@@ -209,8 +211,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 58 {
-		t.Fatalf("exercised %d secured operations, want 58", n)
+	if n != 61 {
+		t.Fatalf("exercised %d secured operations, want 61", n)
 	}
 }
 

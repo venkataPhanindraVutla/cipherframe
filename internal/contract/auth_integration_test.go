@@ -139,6 +139,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 			if strings.HasPrefix(path, "/v1/webhook-") {
 				continue // exercised by TestWebhookOperationsMatchSpec
 			}
+			if strings.HasPrefix(path, "/v1/overlay-") {
+				continue // exercised by TestOverlayOperationsMatchSpec
+			}
 			if strings.HasPrefix(path, "/v1/play/") {
 				continue // exercised by TestEdgePlaybackOperationsMatchSpec
 			}

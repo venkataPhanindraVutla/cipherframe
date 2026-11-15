@@ -67,6 +67,7 @@ type fakeStore struct {
 	accessRows int64 // rows still to delete
 	eventRows  int64
 	hookRows   int64
+	codeRows   int64
 	cutoffs    []time.Time
 	delErr     error
 }
@@ -103,6 +104,10 @@ func (f *fakeStore) DeletePlaybackEventsBefore(_ context.Context, cutoff time.Ti
 
 func (f *fakeStore) DeleteWebhookEventsBefore(_ context.Context, cutoff time.Time, batch int) (int64, error) {
 	return f.del(&f.hookRows, cutoff, batch)
+}
+
+func (f *fakeStore) ClearOverlayCodesBefore(_ context.Context, cutoff time.Time, batch int) (int64, error) {
+	return f.del(&f.codeRows, cutoff, batch)
 }
 
 type fakeRequester struct {

@@ -23,6 +23,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/overlay"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
@@ -121,6 +122,8 @@ type Created struct {
 	SessionExpiresAt         time.Time
 	ManifestURL              config.Secret
 	TokenTransport           string
+	// Overlay is set when the tenant turned the overlay watermark on (ADR 0048).
+	Overlay *Overlay
 }
 
 // ValidateViewerID checks a viewer ID: 1 to 128 characters, valid UTF-8, printable, no control
@@ -249,11 +252,16 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 	if err != nil {
 		return Created{}, nil, err
 	}
+	ovl, err := s.repos.GetOverlaySettings(ctx, in.TenantID)
+	if err != nil {
+		return Created{}, nil, err
+	}
 
 	sid, err := id.NewSession()
 	if err != nil {
 		return Created{}, nil, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
 	}
+	code := overlay.SessionCode(db.SessionHash(sid), in.TenantID)
 	now := s.now().UTC().Truncate(time.Microsecond)
 	sessionExpires := now.Add(time.Duration(set.SessionMaxSeconds) * time.Second)
 	tokenExpires := now.Add(time.Duration(set.TokenTTLSeconds) * time.Second)
@@ -294,7 +302,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 		}
 		_, err := tx.InsertPlaybackSession(ctx, db.NewPlaybackSession{
 			ID: sid, TenantID: in.TenantID, ClientID: in.ClientID, AuthMethod: in.AuthMethod, AssetID: asset.ID,
-			Variant: variant, ViewerID: in.ViewerID, Now: now, ExpiresAt: sessionExpires,
+			Variant: variant, ViewerID: in.ViewerID, Now: now, ExpiresAt: sessionExpires, OverlayCode: code,
 		})
 		if errors.Is(err, db.ErrStateChanged) { // the asset stopped being ready since the check above
 			return errs.New(errs.AssetNotReady, "The asset is not ready for playback.")
@@ -327,7 +335,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 	return Created{
 		SessionID: sid, Variant: variant, Token: config.NewSecret(tok), TokenExpiresAt: tokenExpires.Truncate(time.Second),
 		HeartbeatIntervalSeconds: set.HeartbeatIntervalSeconds, SessionExpiresAt: sessionExpires,
-		ManifestURL: config.NewSecret(manifest), TokenTransport: transport,
+		ManifestURL: config.NewSecret(manifest), TokenTransport: transport, Overlay: newOverlay(ovl, sid, code),
 	}, rapid, nil
 }
 

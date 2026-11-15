@@ -16,6 +16,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/overlay"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
@@ -203,6 +204,7 @@ func (s *server) CreateBrowserPlaybackSession(ctx context.Context, req gen.Creat
 			SessionExpiresAt:         c.SessionExpiresAt,
 			ManifestUrl:              c.ManifestURL.Reveal(),
 			TokenTransport:           gen.CreatedPlaybackSessionTokenTransport(c.TokenTransport),
+			Overlay:                  overlayOut(c.Overlay),
 		},
 		Headers: gen.CreateBrowserPlaybackSession201ResponseHeaders{CacheControl: playlistCacheControl, XRequestId: requestID(ctx)},
 	}, nil
@@ -398,4 +400,16 @@ func (p *Playback) preflightTenant(w http.ResponseWriter, r *http.Request, rawTe
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// overlayOut is the overlay member of a session response; nil when the tenant has it off.
+func overlayOut(o *playback.Overlay) *gen.PlaybackOverlay {
+	if o == nil {
+		return nil
+	}
+	out := &gen.PlaybackOverlay{Template: o.Template, SessionCode: o.SessionCode}
+	out.Style.Opacity, out.Style.FontSizeFraction, out.Style.Color = o.Opacity, o.FontSizeFraction, o.Color
+	out.Drift.Algorithm, out.Drift.Seed = overlay.Algorithm, o.Seed
+	out.Drift.PeriodSeconds, out.Drift.Margin = overlay.PeriodSeconds, overlay.Margin
+	return out
 }

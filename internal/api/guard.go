@@ -61,6 +61,9 @@ var operationScopes = map[string][]db.Scope{
 	"VerifyArtifact":              {db.ScopeAssetsRead},
 	"GetPlaybackSessionAccessLog": {db.ScopeAssetsRead},
 	"GetPrivacySettings":          {db.ScopeAdmin},
+	"GetOverlaySettings":          {db.ScopeAdmin},
+	"UpdateOverlaySettings":       {db.ScopeAdmin},
+	"LookupOverlayCode":           {db.ScopeAssetsRead},
 	"UpdatePrivacySettings":       {db.ScopeAdmin},
 
 	"GetPlaybackAuth":              {db.ScopeAdmin},
@@ -397,6 +400,18 @@ func (g guarded) GetAssetSubtitle(w http.ResponseWriter, r *http.Request, assetI
 
 func (g guarded) DeleteAssetSubtitle(w http.ResponseWriter, r *http.Request, assetID gen.AssetId, subtitleID gen.SubtitleIdPath) {
 	g.a.run("DeleteAssetSubtitle", w, r, func(r *http.Request) { g.ServerInterface.DeleteAssetSubtitle(w, r, assetID, subtitleID) })
+}
+
+func (g guarded) GetOverlaySettings(w http.ResponseWriter, r *http.Request) {
+	g.a.run("GetOverlaySettings", w, r, func(r *http.Request) { g.ServerInterface.GetOverlaySettings(w, r) })
+}
+
+func (g guarded) UpdateOverlaySettings(w http.ResponseWriter, r *http.Request) {
+	g.a.run("UpdateOverlaySettings", w, r, func(r *http.Request) { g.ServerInterface.UpdateOverlaySettings(w, r) })
+}
+
+func (g guarded) LookupOverlayCode(w http.ResponseWriter, r *http.Request, code string) {
+	g.a.run("LookupOverlayCode", w, r, func(r *http.Request) { g.ServerInterface.LookupOverlayCode(w, r, code) })
 }
 
 func (g guarded) GetQuotas(w http.ResponseWriter, r *http.Request) {

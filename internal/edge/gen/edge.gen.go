@@ -69,6 +69,21 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for PlaybackOverlayDriftAlgorithm.
+const (
+	LissajousV1 PlaybackOverlayDriftAlgorithm = "lissajous-v1"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackOverlayDriftAlgorithm enum.
+func (e PlaybackOverlayDriftAlgorithm) Valid() bool {
+	switch e {
+	case LissajousV1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	ProblemCodeArtifactNotFound      ProblemCode = "artifact_not_found"
@@ -258,6 +273,13 @@ type CreatedPlaybackSession struct {
 	// with `?t=<token>` only when `token_transport` is `url`.
 	ManifestUrl string `json:"manifest_url"`
 
+	// Overlay The overlay the player draws over the video (ADR 0048). It holds nothing about the viewer.
+	// The player draws `template` after substituting `{date}` (the viewer's current UTC date,
+	// `YYYY-MM-DD`) and `{time}` (UTC, `HH:MM:SS`, refreshed at least every second), and moves it
+	// along the drift path of `drift` (`spec/test-vectors/overlay/README.md`). It is deterrence
+	// only: a viewer who controls the player can remove it.
+	Overlay *PlaybackOverlay `json:"overlay,omitempty"`
+
 	// SessionExpiresAt The session ends at this time at the latest, heartbeats or not.
 	SessionExpiresAt time.Time `json:"session_expires_at"`
 
@@ -316,6 +338,46 @@ type PlaybackHeartbeat struct {
 	// TokenExpiresAt When the token stops working. Never later than `session_expires_at`.
 	TokenExpiresAt time.Time `json:"token_expires_at"`
 }
+
+// PlaybackOverlay The overlay the player draws over the video (ADR 0048). It holds nothing about the viewer.
+// The player draws `template` after substituting `{date}` (the viewer's current UTC date,
+// `YYYY-MM-DD`) and `{time}` (UTC, `HH:MM:SS`, refreshed at least every second), and moves it
+// along the drift path of `drift` (`spec/test-vectors/overlay/README.md`). It is deterrence
+// only: a viewer who controls the player can remove it.
+type PlaybackOverlay struct {
+	Drift struct {
+		Algorithm PlaybackOverlayDriftAlgorithm `json:"algorithm"`
+
+		// Margin Distance kept from every frame edge, as a fraction of the frame width and height.
+		Margin float64 `json:"margin"`
+
+		// PeriodSeconds The path repeats every this many seconds.
+		PeriodSeconds int `json:"period_seconds"`
+
+		// Seed The path seed, derived one way from the session ID. The same session always gets
+		// the same seed; it reveals nothing usable about the session ID.
+		Seed string `json:"seed"`
+	} `json:"drift"`
+
+	// SessionCode A short code derived from the session. It is not the session ID or the token and cannot
+	// be used to act on the session. The tenant maps it back to the session and viewer with
+	// `lookupOverlayCode`.
+	SessionCode string `json:"session_code"`
+	Style       struct {
+		Color string `json:"color"`
+
+		// FontSizeFraction Text height as a fraction of the video height.
+		FontSizeFraction float64 `json:"font_size_fraction"`
+		Opacity          float64 `json:"opacity"`
+	} `json:"style"`
+
+	// Template The tenant's template with `{session_code}` already replaced by `session_code`. Only
+	// `{date}` and `{time}` are left for the player. Draw it as plain text, never as markup.
+	Template string `json:"template"`
+}
+
+// PlaybackOverlayDriftAlgorithm defines model for PlaybackOverlay.Drift.Algorithm.
+type PlaybackOverlayDriftAlgorithm string
 
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
 type Problem struct {

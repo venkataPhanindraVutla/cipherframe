@@ -241,6 +241,48 @@ func (e MaskingState) Valid() bool {
 	}
 }
 
+// Defines values for OverlayCodeSessionAuthMethod.
+const (
+	OverlayCodeSessionAuthMethodApiKey   OverlayCodeSessionAuthMethod = "api_key"
+	OverlayCodeSessionAuthMethodCallback OverlayCodeSessionAuthMethod = "callback"
+	OverlayCodeSessionAuthMethodJwt      OverlayCodeSessionAuthMethod = "jwt"
+)
+
+// Valid indicates whether the value is a known member of the OverlayCodeSessionAuthMethod enum.
+func (e OverlayCodeSessionAuthMethod) Valid() bool {
+	switch e {
+	case OverlayCodeSessionAuthMethodApiKey:
+		return true
+	case OverlayCodeSessionAuthMethodCallback:
+		return true
+	case OverlayCodeSessionAuthMethodJwt:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OverlayCodeSessionState.
+const (
+	OverlayCodeSessionStateActive  OverlayCodeSessionState = "active"
+	OverlayCodeSessionStateEnded   OverlayCodeSessionState = "ended"
+	OverlayCodeSessionStateRevoked OverlayCodeSessionState = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OverlayCodeSessionState enum.
+func (e OverlayCodeSessionState) Valid() bool {
+	switch e {
+	case OverlayCodeSessionStateActive:
+		return true
+	case OverlayCodeSessionStateEnded:
+		return true
+	case OverlayCodeSessionStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlaybackEventKind.
 const (
 	PlaybackEventKindKeyRate              PlaybackEventKind = "key_rate"
@@ -283,6 +325,21 @@ func (e PlaybackJwtKeyAlg) Valid() bool {
 	case PlaybackJwtKeyAlgEdDSA:
 		return true
 	case PlaybackJwtKeyAlgRS256:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PlaybackOverlayDriftAlgorithm.
+const (
+	LissajousV1 PlaybackOverlayDriftAlgorithm = "lissajous-v1"
+)
+
+// Valid indicates whether the value is a known member of the PlaybackOverlayDriftAlgorithm enum.
+func (e PlaybackOverlayDriftAlgorithm) Valid() bool {
+	switch e {
+	case LissajousV1:
 		return true
 	default:
 		return false
@@ -1097,6 +1154,13 @@ type CreatedPlaybackSession struct {
 	// with `?t=<token>` only when `token_transport` is `url`.
 	ManifestUrl string `json:"manifest_url"`
 
+	// Overlay The overlay the player draws over the video (ADR 0048). It holds nothing about the viewer.
+	// The player draws `template` after substituting `{date}` (the viewer's current UTC date,
+	// `YYYY-MM-DD`) and `{time}` (UTC, `HH:MM:SS`, refreshed at least every second), and moves it
+	// along the drift path of `drift` (`spec/test-vectors/overlay/README.md`). It is deterrence
+	// only: a viewer who controls the player can remove it.
+	Overlay *PlaybackOverlay `json:"overlay,omitempty"`
+
 	// SessionExpiresAt The session ends at this time at the latest, heartbeats or not.
 	SessionExpiresAt time.Time `json:"session_expires_at"`
 
@@ -1276,6 +1340,63 @@ type MaskingState string
 // Name A human-readable name, 1 to 100 characters, no control characters.
 type Name = string
 
+// OverlayCodeLookup defines model for OverlayCodeLookup.
+type OverlayCodeLookup struct {
+	Sessions []OverlayCodeSession `json:"sessions"`
+}
+
+// OverlayCodeSession defines model for OverlayCodeSession.
+type OverlayCodeSession struct {
+	AssetId    string                       `json:"asset_id"`
+	AuthMethod OverlayCodeSessionAuthMethod `json:"auth_method"`
+	CreatedAt  time.Time                    `json:"created_at"`
+
+	// SessionFingerprint The 8-character fingerprint the access trail shows on every row of the session.
+	SessionFingerprint string                  `json:"session_fingerprint"`
+	State              OverlayCodeSessionState `json:"state"`
+	ViewerId           string                  `json:"viewer_id"`
+}
+
+// OverlayCodeSessionAuthMethod defines model for OverlayCodeSession.AuthMethod.
+type OverlayCodeSessionAuthMethod string
+
+// OverlayCodeSessionState defines model for OverlayCodeSession.State.
+type OverlayCodeSessionState string
+
+// OverlaySettings A tenant's effective overlay watermark settings (ADR 0043, 0048). The overlay is drawn by
+// the player over the video; it is deterrence only and a determined viewer can remove it.
+type OverlaySettings struct {
+	// Color `#RRGGBB`, upper-case. Default `#FFFFFF`.
+	Color string `json:"color"`
+
+	// Enabled Return an `overlay` object when a session is created. Default `false`.
+	Enabled bool `json:"enabled"`
+
+	// FontSizeFraction Text height as a fraction of the video height. Default 0.03.
+	FontSizeFraction float64 `json:"font_size_fraction"`
+
+	// Opacity Default 0.25.
+	Opacity float64 `json:"opacity"`
+
+	// Template 1 to 120 characters of plain text: no control characters, line breaks, `<`, `>` or `&`.
+	// It uses only `{session_code}`, `{date}` and `{time}`, and holds at least one. Any other
+	// brace is refused. Default `{session_code} {date} {time} UTC`.
+	Template string `json:"template"`
+
+	// UpdatedAt When the settings were last replaced. Absent while the defaults are in force.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// OverlaySettingsInput Every overlay setting. The fields are not marked `required` so that a missing one is
+// `invalid_request` with an `errors` entry naming it.
+type OverlaySettingsInput struct {
+	Color            *string  `json:"color,omitempty"`
+	Enabled          *bool    `json:"enabled,omitempty"`
+	FontSizeFraction *float64 `json:"font_size_fraction,omitempty"`
+	Opacity          *float64 `json:"opacity,omitempty"`
+	Template         *string  `json:"template,omitempty"`
+}
+
 // PlaybackAuth A tenant's playback authorization settings. The callback secret is never part of it.
 type PlaybackAuth struct {
 	CallbackEnabled bool `json:"callback_enabled"`
@@ -1419,6 +1540,46 @@ type PlaybackJwtKey struct {
 
 // PlaybackJwtKeyAlg defines model for PlaybackJwtKey.Alg.
 type PlaybackJwtKeyAlg string
+
+// PlaybackOverlay The overlay the player draws over the video (ADR 0048). It holds nothing about the viewer.
+// The player draws `template` after substituting `{date}` (the viewer's current UTC date,
+// `YYYY-MM-DD`) and `{time}` (UTC, `HH:MM:SS`, refreshed at least every second), and moves it
+// along the drift path of `drift` (`spec/test-vectors/overlay/README.md`). It is deterrence
+// only: a viewer who controls the player can remove it.
+type PlaybackOverlay struct {
+	Drift struct {
+		Algorithm PlaybackOverlayDriftAlgorithm `json:"algorithm"`
+
+		// Margin Distance kept from every frame edge, as a fraction of the frame width and height.
+		Margin float64 `json:"margin"`
+
+		// PeriodSeconds The path repeats every this many seconds.
+		PeriodSeconds int `json:"period_seconds"`
+
+		// Seed The path seed, derived one way from the session ID. The same session always gets
+		// the same seed; it reveals nothing usable about the session ID.
+		Seed string `json:"seed"`
+	} `json:"drift"`
+
+	// SessionCode A short code derived from the session. It is not the session ID or the token and cannot
+	// be used to act on the session. The tenant maps it back to the session and viewer with
+	// `lookupOverlayCode`.
+	SessionCode string `json:"session_code"`
+	Style       struct {
+		Color string `json:"color"`
+
+		// FontSizeFraction Text height as a fraction of the video height.
+		FontSizeFraction float64 `json:"font_size_fraction"`
+		Opacity          float64 `json:"opacity"`
+	} `json:"style"`
+
+	// Template The tenant's template with `{session_code}` already replaced by `session_code`. Only
+	// `{date}` and `{time}` are left for the player. Draw it as plain text, never as markup.
+	Template string `json:"template"`
+}
+
+// PlaybackOverlayDriftAlgorithm defines model for PlaybackOverlay.Drift.Algorithm.
+type PlaybackOverlayDriftAlgorithm string
 
 // PlaybackSessionStatus defines model for PlaybackSessionStatus.
 type PlaybackSessionStatus struct {
@@ -2320,6 +2481,9 @@ type CreateKeyJSONRequestBody = CreateKeyRequest
 // RotateKeyJSONRequestBody defines body for RotateKey for application/json ContentType.
 type RotateKeyJSONRequestBody = RotateKeyRequest
 
+// UpdateOverlaySettingsJSONRequestBody defines body for UpdateOverlaySettings for application/json ContentType.
+type UpdateOverlaySettingsJSONRequestBody = OverlaySettingsInput
+
 // UpdatePlaybackAuthJSONRequestBody defines body for UpdatePlaybackAuth for application/json ContentType.
 type UpdatePlaybackAuthJSONRequestBody = PlaybackAuthInput
 
@@ -2623,6 +2787,15 @@ type ServerInterface interface {
 	// RotateKey Rotate an API key in place
 	// (POST /v1/keys/{key_id}/rotate)
 	RotateKey(w http.ResponseWriter, r *http.Request, keyId KeyId)
+	// LookupOverlayCode Find the session behind an overlay code
+	// (GET /v1/overlay-codes/{code})
+	LookupOverlayCode(w http.ResponseWriter, r *http.Request, code string)
+	// GetOverlaySettings Get the overlay watermark settings
+	// (GET /v1/overlay-settings)
+	GetOverlaySettings(w http.ResponseWriter, r *http.Request)
+	// UpdateOverlaySettings Replace the overlay watermark settings
+	// (PUT /v1/overlay-settings)
+	UpdateOverlaySettings(w http.ResponseWriter, r *http.Request)
 	// GetPlaybackAuth Get the playback authorization settings
 	// (GET /v1/playback-auth)
 	GetPlaybackAuth(w http.ResponseWriter, r *http.Request)
@@ -3555,6 +3728,60 @@ func (siw *ServerInterfaceWrapper) RotateKey(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RotateKey(w, r, keyId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LookupOverlayCode operation middleware
+func (siw *ServerInterfaceWrapper) LookupOverlayCode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "code" -------------
+	var code string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "code", r.PathValue("code"), &code, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LookupOverlayCode(w, r, code)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOverlaySettings operation middleware
+func (siw *ServerInterfaceWrapper) GetOverlaySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOverlaySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateOverlaySettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdateOverlaySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateOverlaySettings(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4579,6 +4806,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-events", wrapper.ListPlaybackEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-settings", wrapper.GetPlaybackSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-settings", wrapper.UpdatePlaybackSettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/overlay-settings", wrapper.GetOverlaySettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/overlay-settings", wrapper.UpdateOverlaySettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/overlay-codes/{code}", wrapper.LookupOverlayCode)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/privacy-settings", wrapper.GetPrivacySettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/privacy-settings", wrapper.UpdatePrivacySettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/quotas", wrapper.GetQuotas)
@@ -8096,6 +8326,315 @@ type RotateKeydefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response RotateKeydefaultApplicationProblemPlusJSONResponse) VisitRotateKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupOverlayCodeRequestObject struct {
+	Code string `json:"code"`
+}
+
+type LookupOverlayCodeResponseObject interface {
+	VisitLookupOverlayCodeResponse(w http.ResponseWriter) error
+}
+
+type LookupOverlayCode200ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type LookupOverlayCode200JSONResponse struct {
+	Body    OverlayCodeLookup
+	Headers LookupOverlayCode200ResponseHeaders
+}
+
+func (response LookupOverlayCode200JSONResponse) VisitLookupOverlayCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupOverlayCode400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response LookupOverlayCode400ApplicationProblemPlusJSONResponse) VisitLookupOverlayCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupOverlayCode401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response LookupOverlayCode401ApplicationProblemPlusJSONResponse) VisitLookupOverlayCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupOverlayCode403ResponseHeaders struct {
+	XRequestId string
+}
+
+type LookupOverlayCode403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers LookupOverlayCode403ResponseHeaders
+}
+
+func (response LookupOverlayCode403ApplicationProblemPlusJSONResponse) VisitLookupOverlayCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupOverlayCodedefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type LookupOverlayCodedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    LookupOverlayCodedefaultResponseHeaders
+	StatusCode int
+}
+
+func (response LookupOverlayCodedefaultApplicationProblemPlusJSONResponse) VisitLookupOverlayCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOverlaySettingsRequestObject struct {
+}
+
+type GetOverlaySettingsResponseObject interface {
+	VisitGetOverlaySettingsResponse(w http.ResponseWriter) error
+}
+
+type GetOverlaySettings200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetOverlaySettings200JSONResponse struct {
+	Body    OverlaySettings
+	Headers GetOverlaySettings200ResponseHeaders
+}
+
+func (response GetOverlaySettings200JSONResponse) VisitGetOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOverlaySettings401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetOverlaySettings401ApplicationProblemPlusJSONResponse) VisitGetOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOverlaySettings403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetOverlaySettings403ApplicationProblemPlusJSONResponse) VisitGetOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOverlaySettingsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetOverlaySettingsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetOverlaySettingsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetOverlaySettingsdefaultApplicationProblemPlusJSONResponse) VisitGetOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOverlaySettingsRequestObject struct {
+	Body *UpdateOverlaySettingsJSONRequestBody
+}
+
+type UpdateOverlaySettingsResponseObject interface {
+	VisitUpdateOverlaySettingsResponse(w http.ResponseWriter) error
+}
+
+type UpdateOverlaySettings200ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateOverlaySettings200JSONResponse struct {
+	Body    OverlaySettings
+	Headers UpdateOverlaySettings200ResponseHeaders
+}
+
+func (response UpdateOverlaySettings200JSONResponse) VisitUpdateOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOverlaySettings400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateOverlaySettings400ApplicationProblemPlusJSONResponse) VisitUpdateOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOverlaySettings401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateOverlaySettings401ApplicationProblemPlusJSONResponse) VisitUpdateOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOverlaySettings403ResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateOverlaySettings403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers UpdateOverlaySettings403ResponseHeaders
+}
+
+func (response UpdateOverlaySettings403ApplicationProblemPlusJSONResponse) VisitUpdateOverlaySettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOverlaySettingsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type UpdateOverlaySettingsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    UpdateOverlaySettingsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response UpdateOverlaySettingsdefaultApplicationProblemPlusJSONResponse) VisitUpdateOverlaySettingsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -12068,6 +12607,15 @@ type StrictServerInterface interface {
 	// RotateKey Rotate an API key in place
 	// (POST /v1/keys/{key_id}/rotate)
 	RotateKey(ctx context.Context, request RotateKeyRequestObject) (RotateKeyResponseObject, error)
+	// LookupOverlayCode Find the session behind an overlay code
+	// (GET /v1/overlay-codes/{code})
+	LookupOverlayCode(ctx context.Context, request LookupOverlayCodeRequestObject) (LookupOverlayCodeResponseObject, error)
+	// GetOverlaySettings Get the overlay watermark settings
+	// (GET /v1/overlay-settings)
+	GetOverlaySettings(ctx context.Context, request GetOverlaySettingsRequestObject) (GetOverlaySettingsResponseObject, error)
+	// UpdateOverlaySettings Replace the overlay watermark settings
+	// (PUT /v1/overlay-settings)
+	UpdateOverlaySettings(ctx context.Context, request UpdateOverlaySettingsRequestObject) (UpdateOverlaySettingsResponseObject, error)
 	// GetPlaybackAuth Get the playback authorization settings
 	// (GET /v1/playback-auth)
 	GetPlaybackAuth(ctx context.Context, request GetPlaybackAuthRequestObject) (GetPlaybackAuthResponseObject, error)
@@ -12980,6 +13528,87 @@ func (sh *strictHandler) RotateKey(w http.ResponseWriter, r *http.Request, keyId
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RotateKeyResponseObject); ok {
 		if err := validResponse.VisitRotateKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LookupOverlayCode operation middleware
+func (sh *strictHandler) LookupOverlayCode(w http.ResponseWriter, r *http.Request, code string) {
+	var request LookupOverlayCodeRequestObject
+
+	request.Code = code
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LookupOverlayCode(ctx, request.(LookupOverlayCodeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LookupOverlayCode")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LookupOverlayCodeResponseObject); ok {
+		if err := validResponse.VisitLookupOverlayCodeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOverlaySettings operation middleware
+func (sh *strictHandler) GetOverlaySettings(w http.ResponseWriter, r *http.Request) {
+	var request GetOverlaySettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOverlaySettings(ctx, request.(GetOverlaySettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOverlaySettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOverlaySettingsResponseObject); ok {
+		if err := validResponse.VisitGetOverlaySettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateOverlaySettings operation middleware
+func (sh *strictHandler) UpdateOverlaySettings(w http.ResponseWriter, r *http.Request) {
+	var request UpdateOverlaySettingsRequestObject
+
+	var body UpdateOverlaySettingsJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateOverlaySettings(ctx, request.(UpdateOverlaySettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateOverlaySettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateOverlaySettingsResponseObject); ok {
+		if err := validResponse.VisitUpdateOverlaySettingsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
