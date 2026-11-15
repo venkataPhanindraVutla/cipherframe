@@ -146,6 +146,11 @@ type fakeRepo struct {
 	// beforeMaskingComplete, when set, runs once at the start of CompleteMasking (under the lock):
 	// another writer changing the manifest while masking finishes.
 	beforeMaskingComplete func()
+	// logo is the tenant's current logo; the first PinLogo copies it into pinned, which every later
+	// call returns whatever logo is by then (the real repository pins once per asset).
+	logo   db.LogoPin
+	pinned *db.LogoPin
+	pins   int
 	// onGet, when set, runs before every GetAsset with the 1-based call number (without the lock).
 	onGet func(n int)
 	gets  int
@@ -256,6 +261,17 @@ func (r *fakeRepo) CompleteMasking(_ context.Context, _ id.TenantID, _ id.AssetI
 	return nil
 }
 
+func (r *fakeRepo) PinLogo(context.Context, id.TenantID, id.AssetID) (db.LogoPin, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pins++
+	if r.pinned == nil {
+		p := r.logo
+		r.pinned = &p
+	}
+	return *r.pinned, nil
+}
+
 func (r *fakeRepo) SetMasking(_ context.Context, _ id.TenantID, _ id.AssetID, state string, faces *int, _ time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -363,6 +379,8 @@ type fakeTools struct {
 	mu        sync.Mutex
 	plaintext map[string][]byte
 	lastSpec  media.TranscodeSpec
+	// logoRaw is the raw RGBA file the last transcode was given, read while the job directory existed.
+	logoRaw []byte
 }
 
 func (f *fakeTools) Version(context.Context) (string, error) {
@@ -381,6 +399,13 @@ func (f *fakeTools) Probe(context.Context, string) (media.Info, error) {
 func (f *fakeTools) Transcode(ctx context.Context, spec media.TranscodeSpec, progress func(time.Duration)) error {
 	f.transcodes++
 	f.lastSpec = spec
+	if spec.Logo != nil {
+		b, err := os.ReadFile(spec.Logo.Path)
+		if err != nil {
+			return err
+		}
+		f.logoRaw = b
+	}
 	if f.events != nil {
 		*f.events = append(*f.events, "transcode")
 	}

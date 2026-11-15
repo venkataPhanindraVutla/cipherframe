@@ -43,6 +43,9 @@ type Repo interface {
 	// of the manifest m was built from: if the stored manifest changed meanwhile (a subtitle track
 	// was added or removed), it fails with db.ErrManifestChanged and the caller builds m again.
 	CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, base []byte, faces int, at time.Time) error
+	// PinLogo fixes the asset's brand logo from the tenant's current one, unless an earlier call
+	// did, and returns it (ADR 0049).
+	PinLogo(ctx context.Context, tenant id.TenantID, asset id.AssetID) (db.LogoPin, error)
 	// SetMasking records the masking state (and the face count, when known) of a masking asset.
 	SetMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, state string, faces *int, at time.Time) error
 }
@@ -95,6 +98,21 @@ func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.Asse
 		return r.enqueueAnchor(ctx, tx, tenant, asset, c.Manifest.PayloadSHA256)
 	})
 	return out, err
+}
+
+// PinLogo implements Repo. It runs under the tenant's brand lock, so the logo version it pins cannot
+// be removed by a change of the logo that commits meanwhile.
+func (r *DBRepo) PinLogo(ctx context.Context, tenant id.TenantID, asset id.AssetID) (db.LogoPin, error) {
+	var pin db.LogoPin
+	err := inTx(ctx, r.pool, func(_ pgx.Tx, repos *db.Repos) error {
+		if err := repos.LockBrand(ctx, tenant); err != nil {
+			return err
+		}
+		var err error
+		pin, err = repos.PinAssetLogo(ctx, tenant, asset, time.Now().UTC())
+		return err
+	})
+	return pin, err
 }
 
 // CompleteMasking implements Repo.

@@ -53,12 +53,13 @@ func (p *Processor) ffmpegVersionString(ctx context.Context) (string, error) {
 // sealManifest builds the integrity manifest of a published asset, signs it as a DSSE envelope and
 // returns the row to store with the completion. A signer failure is returned as an ordinary error,
 // which the job retries. Neither the payload nor the signature is ever logged.
-func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, at time.Time) (*db.AssetManifest, error) {
+func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, logo *manifest.Logo, at time.Time) (*db.AssetManifest, error) {
 	ffmpeg, err := p.ffmpegVersionString(ctx)
 	if err != nil {
 		return nil, err
 	}
 	in, err := manifestInput(asset, src, ladder, info, pub, ffmpeg, cmp.Or(p.X264Preset, media.X264Preset), at)
+	in.Encoder.Logo = logo
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +119,7 @@ func DecodeManifest(envelope []byte) (manifest.Manifest, error) {
 
 // sealMasked adds the masked variant to the asset's stored manifest and signs it again. The stored
 // manifest's own members are carried over as signed; only the masked section is new.
-func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.AssetManifest, ladder []media.Rendition, pub published, faces, frames int, at time.Time) (*db.AssetManifest, error) {
+func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.AssetManifest, ladder []media.Rendition, pub published, logo *manifest.Logo, faces, frames int, at time.Time) (*db.AssetManifest, error) {
 	m, err := DecodeManifest(current.Envelope)
 	if err != nil {
 		return nil, err
@@ -134,7 +135,7 @@ func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.A
 	}
 	built, err := manifest.WithMasked(m, manifest.MaskedInput{
 		CreatedAt: at, FacesDetected: faces, Frames: frames, Rungs: rungsOf(ladder), Renditions: renditions, Master: master,
-		Thumbnails: thumbs,
+		Thumbnails: thumbs, Logo: logo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: build the manifest: %w", err)
