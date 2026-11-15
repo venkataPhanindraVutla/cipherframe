@@ -34,6 +34,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
 )
 
 func TestMain(m *testing.M) { os.Exit(dbtest.Run(m)) }
@@ -77,6 +78,7 @@ type harness struct {
 	keyring *token.Keyring  // verifies the playback tokens the API signs
 	kms     *kmstest.Faulty // the key provider under the callback secrets, with fault injection
 	signing *signing.Manager
+	reg     *kms.Registry // the registry over kms, for the webhook dispatcher
 }
 
 // testEdgeURL is the edge public URL the playback service is built with.
@@ -129,13 +131,18 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	requester.Now = clk.Now
+	hooks, err := webhook.NewService(webhook.ServiceDeps{Pool: pool, KMS: reg, Now: clk.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := api.New(api.Deps{
-		Log: log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr, Playback: pb,
+		Webhooks: hooks,
+		Log:      log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr, Playback: pb,
 		Signing: signer, KeySet: signing.NewKeySet(repos, 0, clk.Now), Repos: repos, Purge: requester,
 	})
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)
-	return &harness{t: t, pool: pool, repos: repos, srv: srv, clk: clk, mgr: mgr, logs: logs, keyring: keyring, kms: faulty, signing: signer}
+	return &harness{t: t, pool: pool, repos: repos, srv: srv, clk: clk, mgr: mgr, logs: logs, keyring: keyring, kms: faulty, signing: signer, reg: reg}
 }
 
 // bootstrap creates a tenant with an admin key and returns the full key.

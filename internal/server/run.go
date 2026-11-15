@@ -34,6 +34,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/worker"
 )
 
@@ -191,6 +192,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
+		webhooks, err := webhook.NewService(webhook.ServiceDeps{Pool: pool, KMS: kmsReg})
+		if err != nil {
+			cleanup()
+			return err
+		}
 		handler := api.New(api.Deps{
 			Log:      log,
 			Ready:    ready,
@@ -204,6 +210,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			KeySet:      keySet,
 			Repos:       repos,
 			Purge:       requester,
+			Webhooks:    webhooks,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
@@ -242,7 +249,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		services = append(services, workerService{w: w}, ret)
+		services = append(services, workerService{w: w}, ret, webhookService{d: &webhook.Dispatcher{
+			Pool: pool, Secrets: viewerauth.NewSecretBox(kmsReg), Client: outbound.New(outbound.Options{Timeout: webhook.AttemptTimeout}), Log: log,
+		}})
 	}
 
 	log.InfoContext(ctx, "serving", slog.Any("roles", opts.Roles))
@@ -555,3 +564,13 @@ type workerService struct{ w *worker.Worker }
 
 func (s workerService) run(ctx context.Context) error { return s.w.Run(ctx) }
 func (workerService) close()                          {}
+
+// webhookService delivers webhooks in the worker role (M7-5): it claims due deliveries and POSTs
+// them through the SSRF-guarded client. Any number of workers may run it.
+type webhookService struct{ d *webhook.Dispatcher }
+
+func (s webhookService) run(ctx context.Context) error {
+	s.d.Run(ctx)
+	return nil
+}
+func (webhookService) close() {}

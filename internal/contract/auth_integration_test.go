@@ -136,6 +136,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 			if strings.HasPrefix(path, "/v1/signing-keys") {
 				continue // exercised by TestSigningKeyOperationsMatchSpec
 			}
+			if strings.HasPrefix(path, "/v1/webhook-") {
+				continue // exercised by TestWebhookOperationsMatchSpec
+			}
 			if strings.HasPrefix(path, "/v1/play/") {
 				continue // exercised by TestEdgePlaybackOperationsMatchSpec
 			}

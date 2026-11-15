@@ -12,6 +12,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
 )
 
 // server implements gen.StrictServerInterface.
@@ -28,6 +29,8 @@ type server struct {
 	repos *db.Repos
 	// purge starts asset deletions (M6-2).
 	purge *purge.Requester
+	// webhooks serves the webhook endpoints and deliveries (M7-5).
+	webhooks *webhook.Service
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

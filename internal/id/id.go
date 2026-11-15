@@ -32,14 +32,17 @@ type (
 	// SigningKeyKind marks integrity signing key IDs (ADR 0033). They are published in the key
 	// set, so they are not secret.
 	SigningKeyKind struct{}
+	// WebhookEndpointKind marks webhook endpoint IDs (ADR 0045).
+	WebhookEndpointKind struct{}
 )
 
-func (TenantKind) prefix() string     { return "ten" }
-func (ClientKind) prefix() string     { return "cli" }
-func (APIKeyKind) prefix() string     { return "key" }
-func (AssetKind) prefix() string      { return "ast" }
-func (ContentKeyKind) prefix() string { return "cky" }
-func (SigningKeyKind) prefix() string { return "sk" }
+func (TenantKind) prefix() string          { return "ten" }
+func (ClientKind) prefix() string          { return "cli" }
+func (APIKeyKind) prefix() string          { return "key" }
+func (AssetKind) prefix() string           { return "ast" }
+func (ContentKeyKind) prefix() string      { return "cky" }
+func (SigningKeyKind) prefix() string      { return "sk" }
+func (WebhookEndpointKind) prefix() string { return "whe" }
 
 // Aliases for the concrete ID types.
 type (
@@ -51,6 +54,8 @@ type (
 	ContentKeyID = ID[ContentKeyKind]
 	// SigningKeyID identifies an integrity signing key. It is the `keyid` of a signature.
 	SigningKeyID = ID[SigningKeyKind]
+	// WebhookEndpointID identifies a webhook endpoint.
+	WebhookEndpointID = ID[WebhookEndpointKind]
 )
 
 const uuidTextLen = 26

@@ -603,13 +603,10 @@ fingerprint the access trail shows, so the two can be matched; it is absent for 
 no response holds a session ID, a token or the hash of a session ID. `detail` holds small integers only
 (the limit and the count). A tenant only ever sees its own events.
 
-**Webhooks.** Webhook delivery arrives with milestone M7 and is not implemented: nothing is sent
-anywhere today, so read the events endpoint (poll it with `from`). The `playback_events` table is built
-as the outbox for it: every row has a nullable `delivered_at` and an index of the undelivered rows; M7's
-delivery worker will read them oldest first, post them and stamp `delivered_at`. The event `id` is
-stable, so a delivery can carry it. Events are removed after the access-trail retention window
-(`CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS`, default 90 days), delivered or not; M7's delivery worker
-has to run well inside it.
+**Webhooks.** Every stored event is also sent to the tenant's webhook endpoints as a `session.anomaly`
+event, with the same `id` as here (see [Webhooks](#webhooks-adr-0045)); this endpoint stays the way to
+read them. Events are removed after the access-trail retention window
+(`CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS`, default 90 days).
 
 ### Heartbeat and end: the player contract (ADR 0028)
 
@@ -1038,6 +1035,83 @@ read it. Credentials are never allowed.
 - Wrapped callback secrets are not re-wrapped by the KEK rotation job (`kms.rewrap`): a KEK version
   must stay configured while a secret wrapped under it is current or within its 24-hour overlap, or
   rotate the callback secret to re-wrap it.
+
+## Webhooks (ADR 0045)
+
+Cipherframe sends events to HTTPS endpoints you register. All operations need the `webhooks:manage`
+scope (an admin key has it) and are audited when they change something.
+
+| Operation | Route | Notes |
+|---|---|---|
+| `createWebhookEndpoint` | `POST /v1/webhook-endpoints` | `201` with the endpoint and its secret, once |
+| `listWebhookEndpoints` | `GET /v1/webhook-endpoints` | `200`, at most 10 items |
+| `getWebhookEndpoint` | `GET /v1/webhook-endpoints/{endpoint_id}` | `200` or `404` |
+| `updateWebhookEndpoint` | `PATCH /v1/webhook-endpoints/{endpoint_id}` | `url`, `events`, `enabled` |
+| `deleteWebhookEndpoint` | `DELETE /v1/webhook-endpoints/{endpoint_id}` | `204`, deliveries go with it |
+| `rotateWebhookEndpointSecret` | `POST /v1/webhook-endpoints/{endpoint_id}/rotate-secret` | `200` with the new secret, once |
+| `replayDeadWebhookDeliveries` | `POST /v1/webhook-endpoints/{endpoint_id}/replay-dead` | `200` `{"replayed": n}` |
+| `listWebhookDeliveries` | `GET /v1/webhook-deliveries` | `endpoint_id`, `status`, `limit`, `cursor` |
+| `getWebhookDelivery` | `GET /v1/webhook-deliveries/{delivery_id}` | the delivery and its attempts |
+| `replayWebhookDelivery` | `POST /v1/webhook-deliveries/{delivery_id}/replay` | `202`, `409` while pending |
+
+**Endpoints.** `url` must be `https`, without credentials, at most 2048 characters, and must not name a
+private, loopback or link-local address (a bad URL is `400`; the error never repeats it). The same
+guard as [the outbound request guard](#the-outbound-request-guard) runs again, on the resolved address,
+at every delivery. `events` lists the kinds to receive; absent or empty means all six. `enabled`
+defaults to `true`; the deliveries of a disabled endpoint wait. A tenant may have 10 endpoints (`409
+conflict` beyond that). An endpoint is `{id, url, events, enabled, secret_version,
+previous_secret_valid_until, created_at, updated_at}` with `id` as `whe_` and 26 characters.
+
+**Secrets.** The signing secret is returned **once**, by creation and by rotation, as `whsec_` and the
+standard base64 of 32 random bytes, with `Cache-Control: no-store`. It is stored wrapped by the key
+provider and never returned again. After a rotation the previous secret keeps signing for 24 hours, so
+each request carries two signatures until then. Creating and rotating need the key provider (`503
+dependency_unavailable` without it).
+
+**Events.** The request is `POST` with a JSON body and the three Standard Webhooks headers:
+
+```
+webhook-id: <event id, a UUID; the same on every attempt and replay>
+webhook-timestamp: <unix seconds, fresh on every attempt>
+webhook-signature: v1,<base64 HMAC-SHA256 of "<id>.<timestamp>.<body>">[ v1,<second signature>]
+```
+
+```json
+{"id": "0197...", "type": "asset.ready", "occurred_at": "2026-11-15T10:00:00Z",
+ "tenant_id": "ten_...", "data": {"asset_id": "ast_...", "state": "ready"}}
+```
+
+Verify with any Standard Webhooks library, reject timestamps more than a few minutes old, and
+deduplicate on `id`: delivery is at-least-once, in no guaranteed order.
+
+| `type` | When | `data` |
+|---|---|---|
+| `asset.ready` | processing finished | `asset_id`, `state` |
+| `asset.failed` | processing failed or the upload was aborted | `asset_id`, `state`, `failure_code` |
+| `asset.deleted` | the verified deletion finished | `asset_id`, `state`, `reason` (`requested` or `retention`) |
+| `retention.expired` | the asset's time-to-live ran out and its deletion started | `asset_id`, `state`, `expires_at` |
+| `session.revoked` | a playback session was revoked (API, automatic revoke, asset deletion) | `asset_id`, `viewer_id`, `session`, `reason` |
+| `session.anomaly` | an anomaly event was raised (`listPlaybackEvents`) | `kind`, `asset_id`, `viewer_id`, `session`, `detail` |
+
+`session` is the 8-character fingerprint the access trail shows, never the session ID. Absent values
+are left out. A retention deletion sends `retention.expired`, then `asset.deleted`.
+
+**Delivery.** A request has a 10-second timeout; any response that is not `2xx` (a redirect included,
+which is never followed) is a failure. A failed delivery is retried 11 times after 10 s, 30 s, 1 min,
+5 min, 15 min, 30 min, 1 h, 2 h, 4 h, 6 h and 8 h (each spread by up to 20%), about 22 hours in all;
+after the twelfth failure it is `dead`. A delivery is `{id, endpoint_id, event_id, kind, status,
+attempts, last_status_code, last_attempt_at, next_attempt_at, completed_at, created_at}` with `status`
+`pending`, `succeeded` or `dead`; `status=dead` is the dead-letter list. `getWebhookDelivery` adds the
+attempts: `number`, `at`, `status_code`, `duration_ms`, `error` (`status`, `timeout`, `network`,
+`redirect`, `blocked_address`, `bad_url`) and `excerpt`, the start of the response reduced to at most
+200 printable ASCII characters. Nothing else of a response is kept.
+
+**Replay.** `replayWebhookDelivery` puts a `succeeded` or `dead` delivery back in the queue with a fresh
+attempt budget; `replayDeadWebhookDeliveries` does it for every dead delivery of an endpoint. The event
+`id` does not change. Events, deliveries and attempts are removed after the access-trail retention
+window (`CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS`, default 90 days), so a dead delivery can be replayed
+for that long. An endpoint receives only events that happen after it was registered. The CLI wrapper of
+this API comes in M8.
 
 ## Integrity signing keys (ADR 0033)
 

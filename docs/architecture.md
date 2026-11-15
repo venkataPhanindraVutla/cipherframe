@@ -575,7 +575,7 @@ Package `internal/anomaly` raises the playback signals and applies the tenant's 
 
 ```
 edge key route ────────► Raise(key_replay | key_rate)                 ┐
-playback.Service ──────► Raise(session_limit | rapid_session_creation)├► playback_events (outbox for M7)
+playback.Service ──────► Raise(session_limit | rapid_session_creation)├► playback_events (+ webhook outbox)
 accesslog.Recorder ────► SegmentsServed(counts) ─► one batched UPDATE ┘        │ + revoke, audit, access-trail row
  (segment-count flush)     of playback_sessions.segments_served                 │   when the kind is in auto_revoke
 ```
@@ -597,9 +597,36 @@ accesslog.Recorder ────► SegmentsServed(counts) ─► one batched UPD
   key is never counted as one that did not.
 - **Rapid creation** counts `playback_sessions.created_at` for the viewer in the creation transaction
   (which already holds the viewer's lock) through `(tenant_id, viewer_id, created_at DESC)`.
-- **The outbox.** `playback_events.delivered_at` (NULL) and the partial index on undelivered rows exist
-  so that M7's webhook worker can claim rows oldest first, deliver and stamp them. Nothing in M4 reads
-  or writes `delivered_at`.
+- **The outbox.** Each stored anomaly event also becomes a `session.anomaly` webhook event, written by
+  a trigger in the same transaction (see [Webhooks](#webhooks)). `playback_events.delivered_at` is no
+  longer used.
+
+## Webhooks
+
+Webhooks (M7-5, [ADR 0045](adr/0045-webhooks.md)) send six events to HTTPS endpoints a tenant
+registers: `asset.ready`, `asset.failed`, `asset.deleted`, `session.revoked`, `session.anomaly` and
+`retention.expired`.
+
+- **The outbox is written by database triggers** on `assets.state`, on `playback_sessions.state` and on
+  inserts into `playback_events`, in the transaction of the change: an event exists if and only if the
+  change committed, whichever code path made it. `webhook_emit` writes a `webhook_events` row and one
+  `webhook_deliveries` row per enabled endpoint of the tenant whose filter matches, and nothing when
+  none does.
+- **The dispatcher** runs in the worker role. Every two seconds it claims due deliveries
+  (`FOR UPDATE SKIP LOCKED`, with a two-minute lease), POSTs each through the SSRF-guarded
+  `internal/outbound` client with a 10-second timeout, signs it with the Standard Webhooks helpers of
+  `internal/viewerauth` (`webhook-id` is the event ID, `webhook-timestamp` is fresh per attempt), and
+  settles the attempt (status code, duration, failure class, a 200-character sanitized excerpt) with the
+  delivery in one transaction. A failure retries after 10 s, 30 s, 1 min, 5 min, 15 min, 30 min, 1 h,
+  2 h, 4 h, 6 h, 8 h (each with up to 20% jitter); the twelfth failure makes the delivery `dead`.
+  Delivery is at-least-once.
+- **Secrets** are wrapped by the key provider with a purpose bound to the endpoint, shown once at
+  creation and at rotation, and the previous secret signs for 24 hours after a rotation.
+- **Admin API** (scope `webhooks:manage`): endpoints (create, list, get, update, delete, rotate the
+  secret) and deliveries (list with `endpoint_id` and `status` filters, get with attempts, replay one,
+  replay an endpoint's dead-lettered ones).
+- **Retention.** The retention job deletes webhook events, with their deliveries and attempts, after the
+  access-trail window.
 
 ## Keys
 

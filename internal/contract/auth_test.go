@@ -136,13 +136,16 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 	keyID := "key_" + strings.Repeat("0", 26)
 	assetID := "ast_" + strings.Repeat("0", 26)
 	sessionID := "ses_" + strings.Repeat("0", 52)
+	endpointID := "whe_" + strings.Repeat("0", 26)
+	deliveryID := "00000000-0000-4000-8000-000000000000"
 	n := 0
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
 			if op.Security == nil || len(*op.Security) == 0 || !slices.Contains(op.Tags, "api") {
 				continue
 			}
-			p := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(path, "{key_id}", keyID), "{session_id}", sessionID), "{asset_id}", assetID), "{kid}", "key-1")
+			p := strings.NewReplacer("{key_id}", keyID, "{session_id}", sessionID, "{asset_id}", assetID, "{kid}", "key-1",
+				"{endpoint_id}", endpointID, "{delivery_id}", deliveryID).Replace(path)
 			var body []byte
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
 				body = []byte(`{"name":"x"}`)
@@ -165,6 +168,10 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"sha256":"` + strings.Repeat("0", 64) + `"}`)
 				case "revokePlaybackSessions":
 					body = []byte(`{"viewer_id":"viewer"}`)
+				case "createWebhookEndpoint":
+					body = []byte(`{"url":"https://hooks.example.com/cf"}`)
+				case "updateWebhookEndpoint":
+					body = []byte(`{"enabled":false}`)
 				case "createPlaybackSession":
 					body = []byte(`{"asset_id":"` + assetID + `","viewer_id":"viewer"}`)
 				}
@@ -188,8 +195,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 38 {
-		t.Fatalf("exercised %d secured operations, want 38", n)
+	if n != 48 {
+		t.Fatalf("exercised %d secured operations, want 48", n)
 	}
 }
 

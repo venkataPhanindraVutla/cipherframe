@@ -7,6 +7,7 @@
 //     CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS (default 90): the Sweeper drops whole monthly partitions
 //     past the window and deletes the older rows of the partition the window ends in, and the older
 //     rows of playback_events, which is not partitioned.
+//   - Webhook events, with their deliveries and attempts, follow the same window (ADR 0045).
 package retention
 
 import (
@@ -81,6 +82,7 @@ type Store interface {
 	DropAccessLogPartitionsBefore(ctx context.Context, before time.Time) ([]string, error)
 	DeleteAccessLogBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error)
 	DeletePlaybackEventsBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error)
+	DeleteWebhookEventsBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error)
 }
 
 // Requester starts a deletion. *purge.Requester implements it.
@@ -108,6 +110,8 @@ type Result struct {
 	// AccessLogRows and EventRows are the rows deleted one by one.
 	AccessLogRows int64
 	EventRows     int64
+	// WebhookRows is the webhook events deleted (their deliveries and attempts go with them).
+	WebhookRows int64
 }
 
 // Sweep hands the assets that expired by now to the purge, then removes the access trail and the
@@ -139,6 +143,9 @@ func (s *Sweeper) Sweep(ctx context.Context) (Result, error) {
 	}
 	if res.EventRows, err = deleteOld(ctx, cutoff, s.Store.DeletePlaybackEventsBefore); err != nil {
 		errList = append(errList, fmt.Errorf("retention: delete old anomaly events: %w", err))
+	}
+	if res.WebhookRows, err = deleteOld(ctx, cutoff, s.Store.DeleteWebhookEventsBefore); err != nil {
+		errList = append(errList, fmt.Errorf("retention: delete old webhook events: %w", err))
 	}
 	return res, joinErrors(errList)
 }
@@ -215,10 +222,11 @@ func (s *Sweeper) Run(ctx context.Context, interval time.Duration) {
 		case err != nil:
 			s.Log.ErrorContext(ctx, "retention sweep failed", slog.Any("error", err))
 		}
-		if res.ExpiredAssets > 0 || len(res.DroppedPartitions) > 0 || res.AccessLogRows > 0 || res.EventRows > 0 {
+		if res.ExpiredAssets > 0 || len(res.DroppedPartitions) > 0 || res.AccessLogRows > 0 || res.EventRows > 0 || res.WebhookRows > 0 {
 			s.Log.InfoContext(ctx, "retention sweep",
 				slog.Int("expired_assets", res.ExpiredAssets), slog.Int("dropped_partitions", len(res.DroppedPartitions)),
-				slog.Int64("access_log_rows", res.AccessLogRows), slog.Int64("event_rows", res.EventRows))
+				slog.Int64("access_log_rows", res.AccessLogRows), slog.Int64("event_rows", res.EventRows),
+				slog.Int64("webhook_rows", res.WebhookRows))
 		}
 	}
 	run()

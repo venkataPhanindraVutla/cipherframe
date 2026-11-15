@@ -293,3 +293,53 @@ type UploadToken struct {
 	ExpiresAt time.Time
 	CreatedAt time.Time
 }
+
+type WebhookAttempt struct {
+	ID         int64
+	DeliveryID pgtype.UUID
+	TenantID   pgtype.UUID
+	Number     int32
+	At         time.Time
+	StatusCode *int32
+	DurationMs int32
+	Error      *string
+	Excerpt    string
+}
+
+type WebhookDelivery struct {
+	ID            pgtype.UUID
+	TenantID      pgtype.UUID
+	EventID       pgtype.UUID
+	EndpointID    pgtype.UUID
+	State         string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastStatus    *int32
+	LastAttemptAt *time.Time
+	CompletedAt   *time.Time
+	CreatedAt     time.Time
+}
+
+type WebhookEndpoint struct {
+	ID                 pgtype.UUID
+	TenantID           pgtype.UUID
+	Url                string
+	Events             []string
+	Enabled            bool
+	SecretEnvelope     []byte
+	SecretVersion      int32
+	PrevSecretEnvelope []byte
+	PrevSecretVersion  *int32
+	SecretRotatedAt    *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type WebhookEvent struct {
+	ID         pgtype.UUID
+	TenantID   pgtype.UUID
+	Kind       string
+	Data       []byte
+	OccurredAt time.Time
+	CreatedAt  time.Time
+}

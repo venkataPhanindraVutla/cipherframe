@@ -294,6 +294,31 @@ func TestSecretBoxBindsTenantAndVersion(t *testing.T) {
 	}
 }
 
+// A secret sealed for one purpose (a webhook endpoint) does not open for another, nor as the
+// tenant's callback secret.
+func TestSecretBoxBindsPurpose(t *testing.T) {
+	ctx := context.Background()
+	box, _ := newBox(t)
+	tenant := id.New[id.TenantKind]()
+	secret, _ := viewerauth.GenerateSecret()
+	env, err := box.SealFor(ctx, "test-fixture-purpose-a", tenant, 1, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := box.OpenFor(ctx, "test-fixture-purpose-a", tenant, 1, env); err != nil || !bytes.Equal(got, secret) {
+		t.Fatalf("open for the same purpose: %v", err)
+	}
+	if _, err := box.OpenFor(ctx, "test-fixture-purpose-b", tenant, 1, env); err == nil {
+		t.Fatal("opened for another purpose")
+	}
+	if _, err := box.Open(ctx, tenant, 1, env); err == nil {
+		t.Fatal("opened as a callback secret")
+	}
+	if _, err := box.SealFor(ctx, "", tenant, 1, secret); err == nil {
+		t.Fatal("sealed without a purpose")
+	}
+}
+
 // An allow that arrives as the budget runs out must still be a timeout. The server answers the
 // moment the client gives up, which is when the transport can hand the response over anyway; run
 // it many times so the race is hit.

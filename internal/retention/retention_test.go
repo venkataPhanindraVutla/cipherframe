@@ -66,6 +66,7 @@ type fakeStore struct {
 	dropBefore time.Time
 	accessRows int64 // rows still to delete
 	eventRows  int64
+	hookRows   int64
 	cutoffs    []time.Time
 	delErr     error
 }
@@ -100,6 +101,10 @@ func (f *fakeStore) DeletePlaybackEventsBefore(_ context.Context, cutoff time.Ti
 	return f.del(&f.eventRows, cutoff, batch)
 }
 
+func (f *fakeStore) DeleteWebhookEventsBefore(_ context.Context, cutoff time.Time, batch int) (int64, error) {
+	return f.del(&f.hookRows, cutoff, batch)
+}
+
 type fakeRequester struct {
 	store  *fakeStore
 	reason []string
@@ -130,7 +135,7 @@ func newAsset() db.Asset {
 
 func TestSweepQueuesExpiredAssetsAndTrimsTheTrail(t *testing.T) {
 	now := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
-	st := &fakeStore{expired: []db.Asset{newAsset(), newAsset(), newAsset()}, dropped: []string{"playback_access_log_p202601"}, accessRows: 12000, eventRows: 7}
+	st := &fakeStore{expired: []db.Asset{newAsset(), newAsset(), newAsset()}, dropped: []string{"playback_access_log_p202601"}, accessRows: 12000, eventRows: 7, hookRows: 5}
 	rq := &fakeRequester{store: st}
 	s := &Sweeper{Store: st, Requester: rq, AccessLogDays: 90, Log: slog.New(slog.DiscardHandler), Now: func() time.Time { return now }}
 	res, err := s.Sweep(context.Background())
@@ -149,7 +154,7 @@ func TestSweepQueuesExpiredAssetsAndTrimsTheTrail(t *testing.T) {
 			t.Errorf("rows deleted before %v, want %v", c, wantCutoff)
 		}
 	}
-	if res.AccessLogRows != 12000 || res.EventRows != 7 || len(res.DroppedPartitions) != 1 {
+	if res.AccessLogRows != 12000 || res.EventRows != 7 || res.WebhookRows != 5 || len(res.DroppedPartitions) != 1 {
 		t.Errorf("result = %+v", res)
 	}
 }

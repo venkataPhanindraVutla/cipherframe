@@ -1509,6 +1509,338 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/webhook-endpoints:
+    post:
+      operationId: createWebhookEndpoint
+      summary: Register a webhook endpoint
+      description: |
+        Registers an https URL that receives Cipherframe's events (ADR 0045). The response carries
+        the signing secret **once**, as `whsec_<base64>`, the form Standard Webhooks libraries take;
+        Cipherframe stores it wrapped by the key provider and cannot show it again (rotate it to
+        get a new one). `events` filters the kinds the endpoint receives; leave it out or empty for
+        every kind. A tenant may have 10 endpoints (`conflict` beyond that). The URL must be https,
+        without credentials, and must not name a private, loopback or link-local address: the check
+        runs here and again, on the resolved address, at every delivery. Audited. Requires the
+        `webhooks:manage` scope. The response is `no-store`.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWebhookEndpointRequest"
+      responses:
+        "201":
+          description: The endpoint and its secret. The secret is shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpointCreated"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listWebhookEndpoints
+      summary: List webhook endpoints
+      description: |
+        Returns the caller's tenant's endpoints, oldest first (at most 10, so there is no paging).
+        The secret is never returned. Requires the `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      responses:
+        "200":
+          description: The endpoints.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpointList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/webhook-endpoints/{endpoint_id}:
+    get:
+      operationId: getWebhookEndpoint
+      summary: Get a webhook endpoint
+      description: |
+        Returns one endpoint, without its secret. An endpoint of another tenant is `not_found`.
+        Requires the `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEndpointIdPath"
+      responses:
+        "200":
+          description: The endpoint.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpoint"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateWebhookEndpoint
+      summary: Update a webhook endpoint
+      description: |
+        Changes the fields that are sent: `url`, `events` (an empty list means every kind) and
+        `enabled`. Deliveries of a disabled endpoint wait and resume when it is enabled again.
+        Audited. Requires the `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEndpointIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebhookEndpointRequest"
+      responses:
+        "200":
+          description: The endpoint after the change.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpoint"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteWebhookEndpoint
+      summary: Delete a webhook endpoint
+      description: |
+        Deletes the endpoint with its deliveries and their attempts. Audited. Requires the
+        `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEndpointIdPath"
+      responses:
+        "204":
+          description: Deleted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/webhook-endpoints/{endpoint_id}/rotate-secret:
+    post:
+      operationId: rotateWebhookEndpointSecret
+      summary: Rotate a webhook endpoint's secret
+      description: |
+        Generates a new 32-byte secret and returns it **once** as `whsec_<base64>`. For 24 hours
+        after a rotation the previous secret keeps signing too: every request then carries two
+        signatures in `webhook-signature`, so your receiver can switch secrets without refusing a
+        delivery. Audited. Requires the `webhooks:manage` scope. The response is `no-store`.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEndpointIdPath"
+      responses:
+        "200":
+          description: The new secret. It is shown only here.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotatedWebhookSecret"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/webhook-endpoints/{endpoint_id}/replay-dead:
+    post:
+      operationId: replayDeadWebhookDeliveries
+      summary: Replay an endpoint's dead-lettered deliveries
+      description: |
+        Puts every dead-lettered delivery of the endpoint back in the queue, each with a fresh
+        attempt budget, and returns how many. A receiver sees the same event ID again and
+        deduplicates on it. Audited. Requires the `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEndpointIdPath"
+      responses:
+        "200":
+          description: How many deliveries were queued again.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplayedDeliveries"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/webhook-deliveries:
+    get:
+      operationId: listWebhookDeliveries
+      summary: List webhook deliveries
+      description: |
+        Returns the caller's tenant's deliveries, newest first, with optional `endpoint_id` and
+        `status` filters (`status=dead` is the dead-letter list) and cursor pagination (`limit` up
+        to 100, default 50). A delivery is one event sent to one endpoint. Requires the
+        `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookDeliveryEndpointFilter"
+        - $ref: "#/components/parameters/WebhookDeliveryStatusFilter"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/AccessLogCursor"
+      responses:
+        "200":
+          description: One page of deliveries, newest first.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookDeliveryList"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/webhook-deliveries/{delivery_id}:
+    get:
+      operationId: getWebhookDelivery
+      summary: Get a webhook delivery
+      description: |
+        Returns one delivery with its attempts: when each was made, the status code, how long it
+        took, why it failed and a short sanitized excerpt of the response. A delivery of another
+        tenant is `not_found`. Requires the `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookDeliveryIdPath"
+      responses:
+        "200":
+          description: The delivery and its attempts.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookDeliveryDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/webhook-deliveries/{delivery_id}/replay:
+    post:
+      operationId: replayWebhookDelivery
+      summary: Replay a webhook delivery
+      description: |
+        Puts a delivered or dead-lettered delivery back in the queue with a fresh attempt budget.
+        The receiver sees the same event ID again. A delivery that is still `pending` is a
+        `conflict`. Audited. Requires the `webhooks:manage` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [webhooks:manage]
+      parameters:
+        - $ref: "#/components/parameters/WebhookDeliveryIdPath"
+      responses:
+        "202":
+          description: The delivery, `pending` again.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookDelivery"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /.well-known/cipherframe-keys.json:
     get:
       operationId: getSigningKeySet
@@ -2290,6 +2622,37 @@ components:
       schema:
         type: string
         maxLength: 64
+    WebhookEndpointIdPath:
+      name: endpoint_id
+      in: path
+      required: true
+      description: A webhook endpoint ID (`whe_` followed by 26 characters).
+      schema:
+        type: string
+        maxLength: 64
+    WebhookDeliveryIdPath:
+      name: delivery_id
+      in: path
+      required: true
+      description: A webhook delivery ID (a UUID), as listed by `listWebhookDeliveries`.
+      schema:
+        type: string
+        format: uuid
+    WebhookDeliveryEndpointFilter:
+      name: endpoint_id
+      in: query
+      required: false
+      description: Only deliveries to this endpoint (`whe_` followed by 26 characters).
+      schema:
+        type: string
+        maxLength: 64
+    WebhookDeliveryStatusFilter:
+      name: status
+      in: query
+      required: false
+      description: Only deliveries in this state. `dead` is the dead-letter list.
+      schema:
+        $ref: "#/components/schemas/WebhookDeliveryStatus"
   headers:
     XRequestId:
       description: |
@@ -2566,6 +2929,209 @@ components:
             $ref: "#/components/schemas/ApiKey"
         next_cursor:
           type: string
+    WebhookEventKind:
+      type: string
+      description: |
+        What happened. `asset.ready` and `asset.failed`: processing ended. `asset.deleted`: the
+        verified deletion finished (`reason` says whether it was requested or came from retention).
+        `retention.expired`: the asset's time-to-live ran out and its deletion started.
+        `session.revoked`: a playback session was revoked (by your call, by an automatic revoke or
+        because its asset is being deleted). `session.anomaly`: an anomaly event of
+        `listPlaybackEvents` was raised; the event ID is the same one.
+      enum: [asset.ready, asset.failed, asset.deleted, session.revoked, session.anomaly, retention.expired]
+    WebhookDeliveryStatus:
+      type: string
+      enum: [pending, succeeded, dead]
+    CreateWebhookEndpointRequest:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+          description: An https URL on a public address, without credentials.
+        events:
+          type: array
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/WebhookEventKind"
+          description: The kinds to receive. Empty or absent means every kind.
+        enabled:
+          type: boolean
+          description: Default `true`.
+    UpdateWebhookEndpointRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+        events:
+          type: array
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/WebhookEventKind"
+          description: Replaces the filter. An empty list means every kind.
+        enabled:
+          type: boolean
+    WebhookEndpoint:
+      type: object
+      additionalProperties: false
+      required: [id, url, events, enabled, secret_version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          description: The endpoint ID (`whe_` followed by 26 characters).
+        url:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookEventKind"
+          description: The filter. Empty means every kind.
+        enabled:
+          type: boolean
+        secret_version:
+          type: integer
+          description: Starts at 1 and grows with every rotation.
+        previous_secret_valid_until:
+          type: string
+          format: date-time
+          description: While the previous secret still signs, until when.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    WebhookEndpointCreated:
+      type: object
+      additionalProperties: false
+      required: [endpoint, secret]
+      properties:
+        endpoint:
+          $ref: "#/components/schemas/WebhookEndpoint"
+        secret:
+          type: string
+          description: |
+            The signing secret, `whsec_` followed by the standard base64 of 32 random bytes. Shown
+            only here; store it now.
+    WebhookEndpointList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookEndpoint"
+    RotatedWebhookSecret:
+      type: object
+      additionalProperties: false
+      required: [secret, version, previous_valid_until]
+      properties:
+        secret:
+          type: string
+          description: The new secret, `whsec_` followed by base64. Shown only here; store it now.
+        version:
+          type: integer
+        previous_valid_until:
+          type: string
+          format: date-time
+          description: Until when the previous secret also signs.
+    ReplayedDeliveries:
+      type: object
+      additionalProperties: false
+      required: [replayed]
+      properties:
+        replayed:
+          type: integer
+          format: int64
+    WebhookDelivery:
+      type: object
+      additionalProperties: false
+      required: [id, endpoint_id, event_id, kind, status, attempts, next_attempt_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        endpoint_id:
+          type: string
+        event_id:
+          type: string
+          format: uuid
+          description: The event's ID, also the `webhook-id` header and the `id` of the payload.
+        kind:
+          $ref: "#/components/schemas/WebhookEventKind"
+        status:
+          $ref: "#/components/schemas/WebhookDeliveryStatus"
+        attempts:
+          type: integer
+          description: Attempts made so far (a delivery is dead after 12).
+        last_status_code:
+          type: integer
+          description: The HTTP status of the last attempt. Absent when it got no response.
+        last_attempt_at:
+          type: string
+          format: date-time
+        next_attempt_at:
+          type: string
+          format: date-time
+          description: When the next attempt is due (meaningful while `pending`).
+        completed_at:
+          type: string
+          format: date-time
+          description: When the delivery succeeded or was dead-lettered.
+        created_at:
+          type: string
+          format: date-time
+    WebhookAttempt:
+      type: object
+      additionalProperties: false
+      required: [number, at, duration_ms]
+      properties:
+        number:
+          type: integer
+        at:
+          type: string
+          format: date-time
+        status_code:
+          type: integer
+          description: Absent when there was no response.
+        duration_ms:
+          type: integer
+        error:
+          type: string
+          description: |
+            Why the attempt failed: `status` (not 2xx), `timeout`, `network`, `redirect`,
+            `blocked_address` or `bad_url`. Absent on success.
+        excerpt:
+          type: string
+          description: The start of the response, reduced to at most 200 printable ASCII characters.
+    WebhookDeliveryDetail:
+      type: object
+      additionalProperties: false
+      required: [delivery, attempts]
+      properties:
+        delivery:
+          $ref: "#/components/schemas/WebhookDelivery"
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookAttempt"
+    WebhookDeliveryList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookDelivery"
+        next_cursor:
+          type: string
+          description: Present when there are older deliveries. Pass it as `cursor`.
     SigningKey:
       description: "An integrity signing key. Public data only; the private half is never returned."
       type: object

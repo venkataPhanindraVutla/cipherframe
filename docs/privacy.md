@@ -117,9 +117,25 @@ and every response for it. Keep the title in your own application, next to the a
   window and deletes older rows of the rest and of `playback_events`. That caps how long viewer IDs,
   and IP addresses and user agents where enabled, are kept. Rows are removed on that schedule, not
   per asset: deleting an asset does not erase its trail early.
+- **Webhook events** (the outbox, its deliveries and attempts) follow the same window and are removed
+  by the same job. See [What webhook payloads contain](#what-webhook-payloads-contain).
 - Not covered by a window yet: the audit log (`audit_events`, who did what with an API key) and the
   playback session rows (which hold the viewer ID and no address). Both are kept until a later
   change decides (see [roadmap.md](roadmap.md)).
+
+## What webhook payloads contain
+
+Webhooks (ADR 0045) send a tenant's endpoints events about its own assets and sessions. A payload holds
+the event ID, its kind and time, the tenant ID, and in `data`: asset IDs, states and short codes
+(`failure_code`, the deletion `reason`, `expires_at`), the anomaly `kind` and its small-integer
+`detail`, and for `session.revoked` and `session.anomaly` the viewer ID the tenant chose, the 8-character
+session fingerprint and, for a revocation, the reason it was made with. A payload never holds a viewer's
+IP address or user agent, a file name or title, a key, a playback token, a signed URL or a session ID,
+whatever the privacy settings say, and Cipherframe adds nothing about a viewer that the tenant did not
+already supply. Each attempt keeps the response status, its duration and, at most, 200 printable
+characters of the response, so a receiver should not echo personal data in its replies. Events,
+deliveries and attempts are deleted with the access trail (90 days by default); deleting an endpoint
+deletes its deliveries at once.
 
 ## What this does not protect against
 
