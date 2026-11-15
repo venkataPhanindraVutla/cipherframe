@@ -122,6 +122,12 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
+	// The same logo as the original variant: whichever job starts first pins it (ADR 0049).
+	logo, err := p.pinLogo(ctx, asset, dir)
+	if err != nil {
+		return err
+	}
+
 	// 1. The source, hashed in the same pass. The source object is still there: nothing deletes
 	// it when asset.process completes. The size is checked now; the hash is checked against the
 	// one asset.process records (RecordSource) once the asset is ready, before anything is published.
@@ -175,6 +181,9 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	spec := media.TranscodeSpec{
 		Source: maskedPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset,
 		Thumbs: thumbnailSpec(dir, info, renditions),
+		// The logo is drawn by this transcode, after the masker has blurred the faces in the file it
+		// reads: the blur can neither cover nor distort the logo (ADR 0049).
+		Logo: logo.mediaSpec(),
 	}
 	if err := p.transcode(ctx, asset, spec, false, log); err != nil {
 		return err
@@ -216,7 +225,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 		}
 		at := p.Now().UTC()
 		var sealed *db.AssetManifest
-		if sealed, err = p.sealMasked(ctx, asset, current, renditions, pub, *out.FacesDetected, *out.Frames, at); err != nil {
+		if sealed, err = p.sealMasked(ctx, asset, current, renditions, pub, logo.manifestLogo(), *out.FacesDetected, *out.Frames, at); err != nil {
 			return err
 		}
 		err = p.Repo.CompleteMasking(ctx, asset.TenantID, asset.ID, pub.artifacts, *sealed, current.PayloadSHA256, *out.FacesDetected, at)

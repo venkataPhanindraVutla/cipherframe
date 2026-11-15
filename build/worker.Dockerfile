@@ -86,7 +86,9 @@ RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-comp
 #   decode  h264 hevc vp8 vp9 libdav1d(av1) aac opus mp3 (+ parsers)
 #   encode  libx264, aac; mjpeg (poster and sprite JPEGs, ADR 0046)
 #   output  muxers mp4 and hls (fMP4 segments); null (decode checks and tests); image2 (JPEG files)
-#   filters scale format aresample null anull setsar fps split trim setpts tile; transpose hflip vflip apply the display
+#   filters scale format aresample null anull setsar fps split trim setpts tile overlay colorchannelmixer (the brand logo,
+#           ADR 0049: it arrives as raw RGBA pixels through the rawvideo demuxer, so no PNG decoder and no zlib are
+#           built); transpose hflip vflip apply the display
 #           matrix rotation (FFmpeg's autorotate inserts them); ffmpeg adds aformat/trim/etc itself.
 # Not built: network protocols, devices, every other codec, container and filter, zlib/bzlib/iconv
 # (so compressed MP4 headers and Matroska header compression are rejected).
@@ -109,7 +111,7 @@ RUN ./configure \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
         --enable-encoder=libx264,aac,mjpeg \
         --enable-muxer=mp4,hls,null,image2 \
-        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile \
+        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe \

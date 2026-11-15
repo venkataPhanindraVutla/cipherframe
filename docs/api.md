@@ -70,6 +70,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
 | `GET /v1/assets/{asset_id}/subtitles`, `GET /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/subtitles`, `POST /v1/assets/{asset_id}/transcripts`, `DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:write` |
+| `GET /v1/brand/logo`, `PUT /v1/brand/logo`, `PATCH /v1/brand/logo`, `DELETE /v1/brand/logo` | yes | no | `admin` |
 | `POST /v1/playback-sessions` | yes | no | `sessions:write` |
 | `GET /v1/playback-sessions/{session_id}` | yes | no | `sessions:write` |
 | `POST /v1/playback-sessions/{session_id}/revoke`, `POST /v1/playback-sessions/revoke` | yes | no | `sessions:write` |
@@ -423,6 +424,60 @@ playlist**: segments are encrypted whole, so a playlist of byte ranges into them
 - The three objects are in the signed manifest by hash (see [integrity.md](integrity.md#thumbnails)):
   `POST /v1/verify` with `asset_id`, `variant` and path `poster.jpg`, `sprite.jpg` or `thumbnails.vtt`
   answers `ours` or `modified` with no proof.
+
+## Brand logo (ADR 0043, 0049)
+
+A tenant can have one logo that is burned into the video of every asset transcoded afterwards. All four
+operations need the `admin` scope and act on the caller's tenant.
+
+| Method and path | What it does |
+|---|---|
+| `PUT /v1/brand/logo` | Uploads a logo as a new version and makes it current. `200` with the logo. |
+| `GET /v1/brand/logo` | The current logo's metadata (never the image). `404 not_found` when there is none. |
+| `PATCH /v1/brand/logo` | Changes `corner`, `opacity_percent` or `enabled` without a new upload (JSON, fields left out keep their value). `404` when there is none. |
+| `DELETE /v1/brand/logo` | Removes the logo. `204`; `404` when there is none. |
+
+`PUT` takes `multipart/form-data`: `file` (required), `corner` (`top_left`, `top_right`, `bottom_left`,
+`bottom_right`; default `bottom_right`), `opacity` (a whole number of percent, 10 to 100; default 100) and
+`enabled` (`true` or `false`; default `true`). The response and `GET` are `version` (the stored version's
+ID), `sha256` and `size_bytes` (of the PNG the server stored), `width`, `height`, `corner`,
+`opacity_percent`, `enabled`, `created_at` (of the version) and `updated_at`. Errors: `400 invalid_request`
+with a field error on `file`, `corner`, `opacity` or `enabled` (never quoting the file), `413
+payload_too_large`, `401`, `403`, `429`, `503`.
+
+**What is accepted.** A still PNG of at most 256 KB, 16 to 1024 pixels on each side. The server checks
+the size, then the PNG signature, then the header's dimensions (a tiny file that claims a huge image is
+refused before it is decoded), then decodes the whole file. An animated PNG and a fully transparent
+image are refused (`400`). It then writes the picture again with its own PNG encoder and stores only
+that: text, EXIF, colour profiles and every other chunk of your file are dropped, and the `sha256` is
+the hash of the re-encoded file. The file name you send is ignored and never stored or logged.
+
+**Where it is drawn.** At 15 percent of each picture's width (never taller than a quarter of its
+height, so a very tall logo shrinks), 2 percent of the width in from the chosen corner, blended at the
+opacity, on every rendition and also on the poster and the sprite tiles (ADR 0049). The masked variant
+gets the same logo, drawn after the faces are blurred.
+
+**Not retroactive.** The logo is part of the encoded video. A new upload, a changed placement and a
+removal affect only assets whose processing starts afterwards:
+
+- An asset that is being processed keeps the logo it started with, also when the job is retried and for
+  its masked variant, even if you change the logo meanwhile.
+- An asset that is already `ready` keeps its video as it is. Cipherframe has no re-transcode, so a new
+  logo does not appear on your existing videos and **removing the logo does not remove it from videos
+  already made**. To rebrand an old video, upload its source again as a new asset.
+- Each asset's signed manifest says which logo it was made with (`encoder.logo`, and `masked.logo`; see
+  [integrity.md](integrity.md#the-brand-logo)).
+- Old stored versions are deleted when a change leaves no asset that is still being processed (or whose
+  masked variant is still to be made) depending on them, at the next upload or removal.
+
+Every change is audited (`brand.logo.put`, `brand.logo.update`, `brand.logo.delete`) with the version
+ID and no file name.
+
+### What the brand logo does not protect against
+
+- **Removal by someone who has the file.** The logo is deterrence and branding, not a watermark of a
+  viewer: it is identical for every viewer and anyone can crop or paint over a recording.
+- **A tenant's own mistake.** A wrong logo burned into a video stays there; see "Not retroactive".
 
 ## Playback sessions and settings (ADR 0028, 0030)
 

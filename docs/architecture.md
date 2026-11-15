@@ -54,6 +54,7 @@ names, never user-supplied text:
 |---|---|
 | source | `t/<tenant>/a/<asset>/source/<128 random bits, hex>` (stored on the asset row, never derivable from IDs) |
 | delivery | `t/<tenant>/a/<asset>/…` (per variant under `hls/` or `masked/hls/`: playlists, init and media segments, `poster.jpg`, `sprite.jpg`, `thumbnails.vtt`; and `subtitles/<track>.vtt`) |
+| delivery | `t/<tenant>/branding/logo/<version>.png` (a tenant's brand logo versions, ADR 0049: not under any asset prefix) |
 
 `keys.AssetPrefixes` returns the prefix deletion must enumerate in each bucket. It lives beside the
 key builders, and a test checks that every key built for an asset falls under one of them.
@@ -228,7 +229,9 @@ hostile file name can be neither an option nor a URL.
 
 - **`Tools.CheckCapabilities`** runs at startup in the worker role only (api and edge need no
   FFmpeg). It lists the build's encoders, decoders, muxers, demuxers, protocols and filters and fails
-  with one message naming everything missing.
+  with one message naming everything missing. M7-4 added the `overlay` and `colorchannelmixer` filters
+  and the `rawvideo` decoder and demuxer to the list (the brand logo, ADR 0049), so **a worker image
+  built before it must be rebuilt**: it refuses to start and says which are missing.
 - **`Tools.Probe`** runs `ffprobe -print_format json -show_format -show_streams` with a timeout and a
   4 MiB output cap and returns `Info`: container, duration, the first non-cover-art video stream and
   the first audio stream. The video's *display* size applies the sample aspect ratio and the display
@@ -294,6 +297,17 @@ overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder 
    the same timeout, and the plaintext images go away with the directory. Go writes the WebVTT
    thumbnail track from the plan. For the masked variant this is the asset.mask job's own transcode,
    so its images come from the masked file. Missing images do not fail the asset.
+
+   **Brand logo (ADR 0049).** Before the download, the first job of the asset (the original's or the
+   masked variant's) pins the tenant's current logo on the asset (`asset_logo_pins`: version, SHA-256,
+   corner, opacity, or none), under the tenant's brand lock; every retry and the other variant read the
+   pin back. The worker fetches that version from the delivery bucket, checks it against the pinned
+   hash, decodes it with Go and writes raw RGBA into the job directory. The same FFmpeg process reads
+   it as a second, `rawvideo` input and draws it, after scaling and `setsar`, on each rendition and on
+   the poster and tile branches, at 15 percent of that picture's width. FFmpeg never parses the PNG.
+   For the masked variant the logo is drawn by the transcode of the masked file, so after masking. A
+   pinned logo that is gone or does not match its hash fails the asset (`logo_unavailable`). A tenant's
+   change to its logo reaches only assets that have not been pinned yet.
 7. **Encrypt and upload.** For each rendition, each media segment is read, encrypted in memory with
    AES-128-CBC under a fresh random IV (package `internal/hls`, [encryption.md](encryption.md)),
    hashed as stored, and uploaded; the plaintext file is deleted as soon as it is read and the

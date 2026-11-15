@@ -99,6 +99,9 @@ type TranscodeSpec struct {
 	// Thumbs, when set, adds a poster and a sprite sheet to the same run (ADR 0046): two more
 	// branches of the split, so the source is still decoded once.
 	Thumbs *ThumbnailSpec
+	// Logo, when set, is drawn on every rendition and on the poster and sprite tiles in the same run
+	// (ADR 0049), after the picture is scaled to its output size.
+	Logo *LogoSpec
 }
 
 // X264Presets are the libx264 presets CIPHERFRAME_WORKER_X264_PRESET accepts, fastest first.
@@ -144,6 +147,11 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 	if spec.Thumbs != nil {
 		branches += 2
 	}
+	if spec.Logo != nil {
+		if err := spec.Logo.validate(); err != nil {
+			return nil, err
+		}
+	}
 	fmt.Fprintf(&fg, "[0:%d]fps=%s,split=%d", v.Index, rate.Expr, branches)
 	for i := range branches {
 		fmt.Fprintf(&fg, "[s%d]", i)
@@ -152,7 +160,12 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 		if r.Width < 2 || r.Height < 2 || r.Width%2 != 0 || r.Height%2 != 0 {
 			return nil, errors.New("media: rendition size must be even")
 		}
-		fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p[v%d]", i, r.Width, r.Height, i)
+		if spec.Logo == nil {
+			fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p[v%d]", i, r.Width, r.Height, i)
+			continue
+		}
+		fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1[b%d];%s;[o%d]format=yuv420p[v%d]",
+			i, r.Width, r.Height, i, spec.Logo.overlay(i, fmt.Sprintf("b%d", i), fmt.Sprintf("o%d", i), r.Width, r.Height), i, i)
 	}
 
 	if spec.Thumbs != nil {
@@ -160,7 +173,10 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 			return nil, errors.New("media: thumbnail directory must be absolute and the plan not empty")
 		}
 		n := len(spec.Renditions)
-		fg.WriteString(";" + spec.Thumbs.graph(fmt.Sprintf("s%d", n), fmt.Sprintf("s%d", n+1)))
+		fg.WriteString(";" + spec.Thumbs.graph(fmt.Sprintf("s%d", n), fmt.Sprintf("s%d", n+1), spec.Logo, n, n+1))
+	}
+	if spec.Logo != nil {
+		fg.WriteString(";" + spec.Logo.prepare("1:v", branches))
 	}
 
 	args := []string{
@@ -169,8 +185,11 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 		"-protocol_whitelist", "file,pipe",
 		"-y",
 		"-i", src,
-		"-filter_complex", fg.String(),
 	}
+	if spec.Logo != nil {
+		args = append(args, spec.Logo.args()...)
+	}
+	args = append(args, "-filter_complex", fg.String())
 	for i, r := range spec.Renditions {
 		dir := spec.RenditionDir(r)
 		args = append(args,

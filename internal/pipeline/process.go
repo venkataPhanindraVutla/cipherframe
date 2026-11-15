@@ -43,6 +43,13 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
+	// The asset's brand logo is fixed now (ADR 0049) and kept for every retry and for the masked
+	// variant, so a logo that changes while this runs does not reach this asset.
+	logo, err := p.pinLogo(ctx, asset, dir)
+	if err != nil {
+		return err
+	}
+
 	// 1. Download and hash in one pass.
 	if asset.SourceKey == "" {
 		return permanent(FailureSourceMissing, errors.New("the asset has no source object"))
@@ -98,7 +105,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	}
 	spec := media.TranscodeSpec{
 		Source: srcPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset,
-		Thumbs: thumbnailSpec(dir, info, renditions),
+		Thumbs: thumbnailSpec(dir, info, renditions), Logo: logo.mediaSpec(),
 	}
 	if err := p.transcode(ctx, asset, spec, true, log); err != nil {
 		return err
@@ -132,7 +139,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		return err
 	}
 	at := p.Now().UTC()
-	sealed, err := p.sealManifest(ctx, asset, sourceDigest{sha256: src.SHA256, size: src.Size}, renditions, info, pub, at)
+	sealed, err := p.sealManifest(ctx, asset, sourceDigest{sha256: src.SHA256, size: src.Size}, renditions, info, pub, logo.manifestLogo(), at)
 	if err != nil {
 		return err
 	}

@@ -1585,6 +1585,186 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/brand/logo:
+    get:
+      operationId: getBrandLogo
+      summary: Get the tenant's brand logo
+      description: |
+        Returns the metadata of the caller's tenant's current brand logo (M7-4, ADR 0043, ADR 0049):
+        the version, hash and size of the stored image and how it is placed. The image itself is
+        never returned. `404 not_found` when the tenant has no logo. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: The current logo.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandLogo"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: putBrandLogo
+      summary: Upload the tenant's brand logo
+      description: |
+        Stores a new version of the tenant's brand logo and makes it current (M7-4, ADR 0049). The
+        body is `multipart/form-data` with the member `file` and the optional `corner`, `opacity`
+        and `enabled`. The file name the client sends is ignored and never stored or logged.
+
+        The file must be a still PNG of at most 256 KB, between 16 and 1024 pixels on each side. It
+        is checked before anything else touches it: the size, the PNG signature, the header's
+        dimensions (so a tiny file that claims a huge image is refused before it is decoded), then a
+        full decode by the server. An animated PNG is refused (`400`), as is an image that is fully
+        transparent. The server then writes the picture again with its own PNG encoder and stores
+        only that, so text, metadata and every other ancillary chunk of the upload are gone. A file
+        that is not a PNG, is damaged or breaks a limit is `400 invalid_request` with a field error
+        on `file` that never quotes it; one over 256 KB (before or after the rewrite) is `413`.
+
+        `corner` is `top_left`, `top_right`, `bottom_left` or `bottom_right` (default
+        `bottom_right`), `opacity` is a whole number of percent from 10 to 100 (default 100) and
+        `enabled` is `true` or `false` (default `true`). The logo is drawn at 15 percent of the
+        picture's width.
+
+        **Not retroactive.** The logo is burned into the video when an asset is transcoded. A new
+        logo, a changed placement and a removal apply only to assets whose processing starts
+        afterwards. An asset that is being processed keeps the logo it started with, also across
+        retries, and assets that are already ready keep theirs: there is no re-transcode. Old
+        versions are removed once no asset in processing needs them. Requires the `admin` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The PNG, at most 256 KB and 1024 pixels on the longer side.
+                corner:
+                  type: string
+                  enum: [top_left, top_right, bottom_left, bottom_right]
+                  description: Default `bottom_right`.
+                opacity:
+                  type: string
+                  description: A whole number from 10 to 100 (percent). Default 100.
+                enabled:
+                  type: string
+                  enum: ["true", "false"]
+                  description: Whether assets processed from now on get the logo. Default `true`.
+      responses:
+        "200":
+          description: The new current logo.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandLogo"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateBrandLogo
+      summary: Change the brand logo's placement
+      description: |
+        Changes the current logo's corner, opacity or enabled flag without a new upload; a field
+        left out keeps its value. Like an upload it applies only to assets whose processing starts
+        afterwards (ADR 0049). `404 not_found` when the tenant has no logo. Requires the `admin`
+        scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrandLogoPlacement"
+      responses:
+        "200":
+          description: The logo with its new placement.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandLogo"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteBrandLogo
+      summary: Remove the tenant's brand logo
+      description: |
+        Removes the tenant's logo setting and the stored versions that no asset in processing still
+        needs (ADR 0049). Assets processed afterwards get no logo; assets already ready keep the one
+        burned into their video. `404 not_found` when the tenant has no logo. Requires the `admin`
+        scope.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "204":
+          description: The logo was removed.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/quotas:
     get:
       operationId: getQuotas
@@ -4437,6 +4617,59 @@ components:
         next_cursor:
           type: string
           description: Present when there are older events. Pass it as `cursor`.
+    BrandLogo:
+      description: |
+        A tenant's current brand logo (ADR 0049): the stored image's identity and how it is placed.
+        `version`, `sha256` and the placement are what the signed manifest of an asset made with
+        this logo records.
+      type: object
+      additionalProperties: false
+      required: [version, sha256, size_bytes, width, height, corner, opacity_percent, enabled, created_at, updated_at]
+      properties:
+        version:
+          type: string
+          description: The ID of the stored version.
+        sha256:
+          type: string
+          description: Hex SHA-256 of the stored PNG, the one the server wrote.
+        size_bytes:
+          type: integer
+        width:
+          type: integer
+        height:
+          type: integer
+        corner:
+          type: string
+          enum: [top_left, top_right, bottom_left, bottom_right]
+        opacity_percent:
+          type: integer
+          minimum: 10
+          maximum: 100
+        enabled:
+          type: boolean
+          description: Whether assets processed from now on get the logo.
+        created_at:
+          type: string
+          format: date-time
+          description: When this version was uploaded.
+        updated_at:
+          type: string
+          format: date-time
+          description: When the logo or its placement last changed.
+    BrandLogoPlacement:
+      description: Fields to change; a field left out keeps its value.
+      type: object
+      additionalProperties: false
+      properties:
+        corner:
+          type: string
+          enum: [top_left, top_right, bottom_left, bottom_right]
+        opacity_percent:
+          type: integer
+          minimum: 10
+          maximum: 100
+        enabled:
+          type: boolean
     Quotas:
       description: |
         The limits of a tenant (ADR 0047). A limit that is absent is unlimited. `storage_bytes` is

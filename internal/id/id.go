@@ -36,6 +36,8 @@ type (
 	WebhookEndpointKind struct{}
 	// SubtitleKind marks subtitle track IDs (ADR 0044). They are not secret.
 	SubtitleKind struct{}
+	// LogoVersionKind marks brand logo version IDs (ADR 0049). They are not secret.
+	LogoVersionKind struct{}
 )
 
 func (TenantKind) prefix() string          { return "ten" }
@@ -46,6 +48,7 @@ func (ContentKeyKind) prefix() string      { return "cky" }
 func (SigningKeyKind) prefix() string      { return "sk" }
 func (WebhookEndpointKind) prefix() string { return "whe" }
 func (SubtitleKind) prefix() string        { return "sub" }
+func (LogoVersionKind) prefix() string     { return "lgo" }
 
 // Aliases for the concrete ID types.
 type (
@@ -61,6 +64,8 @@ type (
 	WebhookEndpointID = ID[WebhookEndpointKind]
 	// SubtitleID identifies a subtitle track of an asset.
 	SubtitleID = ID[SubtitleKind]
+	// LogoVersionID identifies one immutable version of a tenant's brand logo.
+	LogoVersionID = ID[LogoVersionKind]
 )
 
 const uuidTextLen = 26

@@ -30,6 +30,7 @@ const (
  A....D aac                  AAC (Advanced Audio Coding)
  A....D opus                 Opus
  A....D mp3float             MP3 (MPEG audio layer 3) (codec mp3)
+ V....D rawvideo             raw video
 `
 	fullMuxers = `File formats:
  D. = Demuxing supported
@@ -45,6 +46,7 @@ const (
  .E = Muxing supported
  --
  D  matroska,webm   Matroska / WebM
+ D  rawvideo        raw video
  D  mov,mp4,m4a,3gp,3g2,mj2 QuickTime / MOV
 `
 	fullProtocols = `Supported file protocols:
@@ -68,6 +70,8 @@ Output:
  ... trim              V->V       Pick one continuous section from the input.
  ... setpts            V->V       Set PTS for the output video frame.
  ... tile              V->V       Tile several successive frames together.
+ T.. overlay           VV->V      Overlay a video source on top of the input.
+ ... colorchannelmixer V->V       Adjust colors by mixing color channels.
 `
 )
 

@@ -145,6 +145,9 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 			if strings.HasPrefix(path, "/v1/play/") {
 				continue // exercised by TestEdgePlaybackOperationsMatchSpec
 			}
+			if path == "/v1/brand/logo" {
+				continue // exercised by TestBrandLogoOperationsMatchSpec
+			}
 			if path == "/v1/quotas" || path == "/v1/usage" || strings.HasSuffix(path, "/quotas") {
 				continue // exercised by TestStorageQuotaClientOverrideAndRace
 			}

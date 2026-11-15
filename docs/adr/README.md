@@ -54,6 +54,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0046](0046-thumbnails.md) | Thumbnails: poster, sprite sheet, thumbnail track | none (M7-2) | Accepted (flagged for owner review) | 2026-11-15 |
 | [0047](0047-quotas-and-per-client-limits.md) | Quotas and per-client limits | none (M7-6) | Accepted (flagged for owner review) | 2026-11-15 |
 | [0048](0048-overlay-watermark-policy.md) | Overlay watermark policy: settings, session code, drift path | none (M7-3, details under P12) | Accepted (flagged for owner review) | 2026-11-15 |
+| [0049](0049-brand-logo.md) | Per-tenant brand logo burned in at transcode | none (M7-4) | Accepted (flagged for owner review) | 2026-11-15 |
 
 ## Open gates
 

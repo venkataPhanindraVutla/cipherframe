@@ -84,6 +84,16 @@ type AssetDeletionRecord struct {
 	CreatedAt     time.Time
 }
 
+type AssetLogoPin struct {
+	AssetID        pgtype.UUID
+	TenantID       pgtype.UUID
+	VersionID      pgtype.UUID
+	Sha256         []byte
+	Corner         *string
+	OpacityPercent *int32
+	PinnedAt       time.Time
+}
+
 type AssetManifest struct {
 	AssetID       pgtype.UUID
 	TenantID      pgtype.UUID
@@ -312,6 +322,25 @@ type Tenant struct {
 	Name       string
 	CreatedAt  time.Time
 	DisabledAt *time.Time
+}
+
+type TenantLogo struct {
+	TenantID       pgtype.UUID
+	VersionID      pgtype.UUID
+	Corner         string
+	OpacityPercent int32
+	Enabled        bool
+	UpdatedAt      time.Time
+}
+
+type TenantLogoVersion struct {
+	ID        pgtype.UUID
+	TenantID  pgtype.UUID
+	Sha256    []byte
+	SizeBytes int32
+	Width     int32
+	Height    int32
+	CreatedAt time.Time
 }
 
 type TenantQuota struct {

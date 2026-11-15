@@ -9,7 +9,7 @@ Last updated: 2026-11-15.
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M7 next) |
+| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M8 next, after gate P13) |
 | v2.0.0 | npm, Go and Python SDKs and verifiers, shared conformance vectors | Not started |
 | v2.1.0 | Python ML worker: local speech-to-text, perceptual fingerprint matching, invisible per-asset or per-tenant watermark | Not started |
 
@@ -27,7 +27,7 @@ Last updated: 2026-11-15.
 | Faster face masking (ADR 0037) | Done |
 | Encoder preset and detection stride (ADR 0038) | Done |
 | M6 Deletion and retention | Done ([ADR 0040](adr/0040-retention-and-privacy-defaults.md), [ADR 0042](adr/0042-deletion-and-retention-details.md)) |
-| M7 Subtitles, thumbnails, branding, webhooks, quotas | In progress (M7-1, M7-2, M7-3, M7-5 and M7-6 done; P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md), [ADR 0046](adr/0046-thumbnails.md), [ADR 0047](adr/0047-quotas-and-per-client-limits.md), [ADR 0048](adr/0048-overlay-watermark-policy.md)) |
+| M7 Subtitles, thumbnails, branding, webhooks, quotas | Done (P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md), [ADR 0046](adr/0046-thumbnails.md), [ADR 0047](adr/0047-quotas-and-per-client-limits.md), [ADR 0048](adr/0048-overlay-watermark-policy.md), [ADR 0049](adr/0049-brand-logo.md)) |
 | M8 CLI (Go) and reference player (TypeScript) | Not started (gate P13) |
 | M9 Operations and release | Not started (gate P14) |
 | M10 v1 extras (may slip to v1.1) | Not started (gates P16 to P18) |
@@ -87,7 +87,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 - [x] M7-3 Overlay watermark policy: tenant settings, session code with a lookup through the access trail, the
   `overlay` object in every session response, deterministic drift with conformance vectors
   ([ADR 0048](adr/0048-overlay-watermark-policy.md))
-- [ ] M7-4 Per-tenant brand logo burned in at transcode
+- [x] M7-4 Per-tenant brand logo burned in at transcode ([ADR 0049](adr/0049-brand-logo.md); not retroactive, worker images must be rebuilt)
 - [x] M7-5 Webhooks (`asset.ready`, `asset.failed`, `asset.deleted`, `session.revoked`,
   `session.anomaly`, `retention.expired`): outbox written by triggers, Standard Webhooks signing,
   retries over about a day, dead-letter list and replay API ([ADR 0045](adr/0045-webhooks.md))

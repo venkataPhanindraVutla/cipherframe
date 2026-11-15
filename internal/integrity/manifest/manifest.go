@@ -181,6 +181,9 @@ type Masked struct {
 	Renditions    []Rendition `json:"renditions"`
 	Artifacts     []Artifact  `json:"artifacts"`
 	TopLevel      TopLevel    `json:"top_level"`
+	// Logo is the brand logo burned into the masked variant, the same one as the original's (ADR
+	// 0049); it is drawn after the faces are masked.
+	Logo *Logo `json:"logo,omitempty"`
 	// Thumbnails are the masked variant's own poster, sprite sheet and track, made from the masked
 	// output (ADR 0046).
 	Thumbnails []Artifact `json:"thumbnails,omitempty"`
@@ -197,6 +200,20 @@ type Encoder struct {
 	KeyframeSeconds int    `json:"keyframe_seconds"`
 	Encryption      string `json:"encryption"` // "AES-128"
 	Rungs           []Rung `json:"rungs"`
+	// Logo records the brand logo burned into the renditions (ADR 0049). It is absent for an asset
+	// made without one, so a manifest without a logo is byte for byte what it was before logos.
+	Logo *Logo `json:"logo,omitempty"`
+}
+
+// Logo is a brand logo as it was burned in: the SHA-256 (hex) of the stored PNG and its version ID
+// identify the image, and the placement says how it was drawn. WidthPercent is the logo's share of
+// the picture width, recorded because it is a constant of the encoder, not of the tenant.
+type Logo struct {
+	SHA256         string `json:"sha256"`
+	Version        string `json:"version"`
+	Corner         string `json:"corner"`
+	OpacityPercent int    `json:"opacity_percent"`
+	WidthPercent   int    `json:"width_percent"`
 }
 
 // Rung is the encoder setting of one rendition.
@@ -305,6 +322,10 @@ func Build(in Input) (*Built, error) {
 		Source:          Source{SHA256: hex.EncodeToString(in.SourceSHA256[:]), Size: in.SourceSize},
 	}
 	m.Encoder.Rungs = append([]Rung(nil), in.Encoder.Rungs...)
+	if in.Encoder.Logo != nil {
+		l := *in.Encoder.Logo
+		m.Encoder.Logo = &l
+	}
 
 	t := buildTree(in.Renditions, in.Master)
 	m.Renditions, m.Artifacts, m.TopLevel = t.renditions, t.artifacts, t.top
@@ -379,6 +400,7 @@ type MaskedInput struct {
 	Renditions    []RenditionInput
 	Master        StoredObject
 	Thumbnails    []Thumbnail // optional (ADR 0046)
+	Logo          *Logo       // optional (ADR 0049)
 }
 
 // WithMasked returns m with its masked section set (replacing an earlier one) and the new canonical
@@ -407,7 +429,7 @@ func WithMasked(m Manifest, in MaskedInput) (*Built, error) {
 	m.Masked = &Masked{
 		CreatedAt:     in.CreatedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
 		FacesDetected: in.FacesDetected, Frames: in.Frames, Rungs: append([]Rung(nil), in.Rungs...),
-		Renditions: t.renditions, Artifacts: t.artifacts, TopLevel: t.top, Thumbnails: thumbs,
+		Renditions: t.renditions, Artifacts: t.artifacts, TopLevel: t.top, Thumbnails: thumbs, Logo: in.Logo,
 	}
 	canonical, err := jcs.Marshal(m)
 	if err != nil {
