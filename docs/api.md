@@ -447,6 +447,10 @@ The asset must belong to your tenant and be `ready`. The `201` answer, `Cache-Co
 }
 ```
 
+When the tenant turned the [overlay watermark](#overlay-watermark-adr-0043-0048) on, the answer also holds an
+`overlay` object (every creation path: this one, and the browser JWT and callback paths below). It is absent
+while the overlay is off.
+
 **The session's variant.** A session is bound to one variant for its whole life, and edge serves only
 that variant's playlists, segments and key: a `masked` session cannot fetch a byte or the key of the
 `original`, and the reverse. Without `variant`, an asset created with `mask_faces` gets `masked` and
@@ -1283,6 +1287,71 @@ Notes:
 - **Abuse of unauthenticated endpoints.** The request rate limit starts after authentication and covers the
   api listener only; the edge has its own per-session limits ([playback](#playback-sessions-and-settings-adr-0028-0030)).
 - **A burst across instances.** See the per-instance note above.
+
+## Overlay watermark (ADR 0043, 0048)
+
+The overlay is text the **player draws over the video**: the session code and the viewer's current UTC time,
+moving slowly across the frame. It is never burned into the video (every viewer gets the same bytes). It is
+**deterrence only**: it tells a viewer that a recording can be traced, and shows when it was made, but anyone
+who controls the player, or who films the screen with the overlay cropped or masked, can remove it. It is
+not a security control and Cipherframe does not claim it stops a leak.
+
+| Method and path | Scope | What it does |
+|---|---|---|
+| `GET /v1/overlay-settings` | `admin` | The tenant's settings (the defaults, with the overlay off, until the first `PUT`; `updated_at` appears with it). |
+| `PUT /v1/overlay-settings` | `admin` | Replaces every setting. A missing field is `400 invalid_request` with an `errors` entry; so is an invalid value. Audited as `overlay_settings.update`; applies to sessions created afterwards. |
+| `GET /v1/overlay-codes/{code}` | `assets:read` | Maps a code seen in a leaked recording to the tenant's sessions (below). |
+
+**Settings.**
+
+| Field | Default | Rule |
+|---|---|---|
+| `enabled` | `false` | Return `overlay` in session responses. |
+| `template` | `{session_code} {date} {time} UTC` | 1 to 120 characters of plain text. Only `{session_code}`, `{date}` and `{time}` are placeholders, at least one must be present, and any other `{` or `}` is refused (an unknown placeholder is an error, never passed through). No control characters, line breaks, other format or separator characters, `<`, `>` or `&`. |
+| `opacity` | `0.25` | 0.05 to 0.8. |
+| `font_size_fraction` | `0.03` | 0.015 to 0.1: the text height as a fraction of the video height. |
+| `color` | `#FFFFFF` | `#RRGGBB`, upper-case hexadecimal. |
+
+There is no placeholder for the viewer ID, a name, an email or any other per-session text from your
+application, so nothing about a person can reach the screen through the overlay.
+
+**In the session response.**
+
+```json
+"overlay": {
+  "template": "K7QH2M9X {date} {time} UTC",
+  "session_code": "K7QH2M9X",
+  "style": {"opacity": 0.25, "font_size_fraction": 0.03, "color": "#FFFFFF"},
+  "drift": {"algorithm": "lissajous-v1", "seed": "94027ae60bbd3256", "period_seconds": 240, "margin": 0.02}
+}
+```
+
+- `template` has `{session_code}` already replaced; the player replaces `{date}` with the viewer's current
+  UTC date (`YYYY-MM-DD`) and `{time}` with the UTC time (`HH:MM:SS`, refreshed at least every second), and
+  draws the result as **plain text** (never as markup). `session_code` is also given on its own, for a
+  support screen.
+- The player moves the text along the path of `drift`, which depends only on `seed`: the same session always
+  gets the same path and different sessions get different ones. The algorithm and the conformance vectors
+  are in [spec/test-vectors/overlay](../spec/test-vectors/overlay/README.md); the Go reference is
+  `internal/overlay`.
+- The `seed` and the code are one-way derivations of the session, unrelated to the session ID and the token:
+  they cannot be used to play, heartbeat, end or revoke the session.
+
+**Tracing a leaked code.** `GET /v1/overlay-codes/K7QH2M9X` (case is ignored) returns
+`{"sessions": [{"asset_id", "viewer_id", "auth_method", "state", "created_at", "session_fingerprint"}]}`:
+your viewer ID, the asset and the fingerprint the [access trail](#the-access-trail-and-the-privacy-settings)
+shows on every row of the session, so you can read what that session did. The code is 40 bits, so a second
+session can match by chance (the list says so); another tenant's code, an unknown code and a code **past the
+access-trail retention window** (90 days by default) give an empty list: the worker's retention job forgets
+the code of sessions older than the window. A malformed code is `400 invalid_request`.
+
+### What the overlay does not protect against
+
+- **A viewer who controls the player.** The overlay is drawn client-side; a modified player, a browser
+  extension or a screen filter removes it. A recording made after cropping it out carries nothing.
+- **A leak found after the window.** Past the retention window the code cannot be traced.
+- **A code seen only in part.** Eight characters are shown; a partly legible code can match no session or,
+  rarely, several.
 
 ## Integrity signing keys (ADR 0033)
 
