@@ -385,11 +385,17 @@ The FFmpeg in it is configured with `--disable-everything --disable-network --di
 and only what ADR 0024 lists: `file` and `pipe` protocols; MP4/MOV and Matroska/WebM input; H.264,
 HEVC, VP8, VP9, AV1 (through dav1d, because FFmpeg's own AV1 decoder needs a hardware accelerator),
 AAC, Opus and MP3 decoding; libx264 and AAC encoding; MP4 and HLS (fMP4) output; and the
-`scale`, `format`, `aresample`, `null`, `anull`, `setsar`, `fps`, `split`, `transpose`, `hflip` and
-`vflip` filters (`split` fans the decoded frames out to one scaled branch per rendition) (the last three apply a rotated phone video's display matrix). Everything is pinned by
+`scale`, `format`, `aresample`, `null`, `anull`, `setsar`, `fps`, `split`, `transpose`, `hflip`,
+`vflip`, `trim`, `setpts`, `tile`, `overlay` and `colorchannelmixer` filters (`split` fans the decoded frames out to one scaled branch per rendition; `transpose`, `hflip` and `vflip` apply a rotated phone video's display matrix; `trim`, `setpts` and `tile` make the thumbnails; `overlay` and `colorchannelmixer` draw the brand logo, which arrives as raw pixels through the `rawvideo` demuxer). Everything is pinned by
 SHA-256 or digest. `/usr/share/licenses/ffmpeg/` holds the licence texts and `SOURCE.md`, the
 written source offer with the exact sources and configure line. The image's `ENV` points
 `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH` at `/usr/local/bin`.
+
+**Rebuild the worker image after upgrading to the brand logo (M7-4, ADR 0049).** The startup check now
+requires the `overlay` and `colorchannelmixer` filters and the `rawvideo` decoder and demuxer. A worker
+image (or your own FFmpeg) built before that fails the check and the worker does not start; the message
+names what is missing. Rebuild `cipherframe-worker` (or add those components to your FFmpeg) and roll the
+worker before the api serves the logo endpoints to tenants.
 
 **Startup check.** A process with the `worker` role runs `ffmpeg -buildconf`, `-encoders`,
 `-decoders`, `-muxers`, `-demuxers`, `-protocols` and `-filters` before connecting to anything and

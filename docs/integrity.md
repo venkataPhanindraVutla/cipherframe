@@ -38,7 +38,7 @@ is the hash of the ciphertext.
 | `asset_id`, `tenant_id` | The prefixed ids of the asset and its tenant. |
 | `created_at` | When the manifest was made. |
 | `pipeline_version` | The Cipherframe version that ran the pipeline. |
-| `encoder` | `ffmpeg` (first line of `ffmpeg -version`), `video_codec`, `preset`, `frame_rate`, `segment_seconds`, `keyframe_seconds`, `encryption` (`AES-128`), and `rungs`: per rendition `name`, `crf`, `maxrate_kbps`, `bufsize_kbps`, `audio_kbps`. |
+| `encoder` | `ffmpeg` (first line of `ffmpeg -version`), `video_codec`, `preset`, `frame_rate`, `segment_seconds`, `keyframe_seconds`, `encryption` (`AES-128`), and `rungs`: per rendition `name`, `crf`, `maxrate_kbps`, `bufsize_kbps`, `audio_kbps`. With a brand logo also `logo` (ADR 0049); see "The brand logo". |
 | `renditions` | In ladder order: `name`, `width`, `height`, `bandwidth`, `segment_count`, `init` and `segments` (each `path`, `sha256`, `size`, segments in playlist order), and `merkle_root`. |
 | `artifacts` | The master playlist (`kind` `master`) and each media playlist (`kind` `playlist`, with its `rendition`): `kind`, `path`, `sha256`, `size`. |
 | `top_level` | `order`, the leaf labels of the top-level tree, and `root`. |
@@ -147,6 +147,19 @@ Merkle tree, so `top_level.root` and every proof and timestamp of the media do n
 thumbnail has no inclusion proof; a manifest without thumbnails has no member and is byte for byte what
 it was. A verifier that does not know the member ignores it. The track is stored as written by the
 worker (the sprite reference has no token); the token is added only when a session serves it.
+
+### The brand logo
+
+An asset made while its tenant had an enabled brand logo records it (ADR 0049): `encoder.logo` for the
+original variant and `masked.logo` for the masked one, each with `sha256` (of the PNG the server stored),
+`version` (the logo version's ID), `corner`, `opacity_percent` and `width_percent` (the logo's share of
+each picture's width, 15, a constant of the encoder). The values come from what the asset was pinned to
+when its processing started, so they say what was drawn into the video and not what the tenant has now;
+the masked variant's equals the original's. The logo is in no Merkle tree: `top_level.root` and every
+proof and timestamp are unchanged. A manifest of an asset without a logo has no member and is byte for
+byte what it was. A verifier that does not know the member ignores it, and the offline verifier opens a
+manifest that has it. The logo's pixels are part of the encoded video, so they are covered by the
+segment hashes; the `logo` member lets a tenant show which logo file (by hash) the video was made with.
 
 The `asset_manifests` row also records the `key_id` of the signer, the SHA-256 of the payload and
 the top-level root as separate columns, so a lookup does not need to parse the envelope. A signer
