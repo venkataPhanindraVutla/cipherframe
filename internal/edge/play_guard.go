@@ -84,7 +84,8 @@ func cleanPlayPath(r *http.Request) bool {
 func playRouteSession(path string) (id.SessionID, bool) {
 	parts := strings.Split(strings.TrimPrefix(path, playPrefix), "/")
 	switch {
-	case len(parts) == 2 && (parts[1] == "master.m3u8" || parts[1] == "key" || parts[1] == "heartbeat" || parts[1] == "end"):
+	case len(parts) == 2 && (parts[1] == "master.m3u8" || parts[1] == "key" || parts[1] == "heartbeat" || parts[1] == "end" ||
+		parts[1] == hls.PosterName || parts[1] == hls.SpriteName || parts[1] == hls.ThumbnailTrackName):
 	case len(parts) == 3:
 		if _, err := keys.ParseRendition(parts[1]); err != nil {
 			return id.SessionID{}, false

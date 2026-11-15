@@ -123,12 +123,18 @@ func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.A
 	if err != nil {
 		return nil, err
 	}
-	renditions, master, err := renditionInputs(keys.VariantHLSPrefix(asset.TenantID, asset.ID, keys.Masked), pub)
+	prefix := keys.VariantHLSPrefix(asset.TenantID, asset.ID, keys.Masked)
+	renditions, master, err := renditionInputs(prefix, pub)
+	if err != nil {
+		return nil, err
+	}
+	thumbs, err := thumbnailInputs(prefix, pub)
 	if err != nil {
 		return nil, err
 	}
 	built, err := manifest.WithMasked(m, manifest.MaskedInput{
 		CreatedAt: at, FacesDetected: faces, Frames: frames, Rungs: rungsOf(ladder), Renditions: renditions, Master: master,
+		Thumbnails: thumbs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: build the manifest: %w", err)
@@ -144,8 +150,11 @@ func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, i
 		PipelineVersion: version.Get().Version, SourceSHA256: src.sha256, SourceSize: src.size,
 	}
 	var err error
-	in.Renditions, in.Master, err = renditionInputs(keys.HLSPrefix(asset.TenantID, asset.ID), pub)
-	if err != nil {
+	prefix := keys.HLSPrefix(asset.TenantID, asset.ID)
+	if in.Renditions, in.Master, err = renditionInputs(prefix, pub); err != nil {
+		return in, err
+	}
+	if in.Thumbnails, err = thumbnailInputs(prefix, pub); err != nil {
 		return in, err
 	}
 
@@ -199,6 +208,9 @@ func renditionInputs(prefix string, pub published) ([]manifest.RenditionInput, m
 			master = o
 			continue
 		}
+		if thumbnailKinds[a.Kind] != "" { // listed by thumbnailInputs
+			continue
+		}
 		r := byRendition[a.Rendition]
 		if r == nil {
 			return nil, master, errors.New("pipeline: an artifact names an unknown rendition")
@@ -213,6 +225,30 @@ func renditionInputs(prefix string, pub published) ([]manifest.RenditionInput, m
 		}
 	}
 	return renditions, master, nil
+}
+
+// thumbnailKinds maps the registry kinds of a variant's thumbnails to the manifest's.
+var thumbnailKinds = map[db.ArtifactKind]string{
+	db.ArtifactPoster: manifest.KindPoster, db.ArtifactSprite: manifest.KindSprite, db.ArtifactThumbnails: manifest.KindThumbnails,
+}
+
+// thumbnailInputs turns the thumbnail rows of one variant into the manifest's input, paths relative
+// to prefix, the variant's HLS prefix. A variant without any gives nil.
+func thumbnailInputs(prefix string, pub published) ([]manifest.Thumbnail, error) {
+	var out []manifest.Thumbnail
+	for _, a := range pub.artifacts {
+		kind := thumbnailKinds[a.Kind]
+		if kind == "" {
+			continue
+		}
+		if len(a.SHA256) != sha256.Size || !strings.HasPrefix(a.ObjectKey, prefix) {
+			return nil, errors.New("pipeline: a thumbnail does not belong to the variant's HLS prefix")
+		}
+		o := manifest.StoredObject{Path: strings.TrimPrefix(a.ObjectKey, prefix), Size: a.SizeBytes}
+		copy(o.SHA256[:], a.SHA256)
+		out = append(out, manifest.Thumbnail{Kind: kind, Object: o})
+	}
+	return out, nil
 }
 
 // rational writes an FFmpeg frame rate expression ("30", "30000/1001" or "23.976") as a rational

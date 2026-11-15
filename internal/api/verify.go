@@ -303,6 +303,15 @@ func (s *server) verifyAt(ctx context.Context, repos *db.Repos, tenantID id.Tena
 		}
 		return res, nil
 	}
+	if th := m.VariantThumbnails(variant == proof.Masked); slices.ContainsFunc(th, func(a manifest.Artifact) bool { return a.Path == path }) {
+		// A thumbnail object (ADR 0046): signed by hash, in no Merkle tree, so no proof either.
+		aidStr, v := aid.String(), gen.ArtifactVariant(variant)
+		res := gen.VerifyResult{Outcome: gen.Modified, AssetId: &aidStr, Variant: &v, Path: &path}
+		if i := slices.IndexFunc(th, func(a manifest.Artifact) bool { return a.Path == path }); th[i].SHA256 == sum {
+			res.Outcome = gen.Ours
+		}
+		return res, nil
+	}
 	pf, err := proof.Build(m, variant, path)
 	switch {
 	case errors.Is(err, proof.ErrNotFound), errors.Is(err, proof.ErrNoVariant):

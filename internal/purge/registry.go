@@ -33,8 +33,11 @@ const (
 	KindPlaylist Kind = "playlist"
 	KindInit     Kind = "init"
 	KindSegment  Kind = "segment"
-	// KindPoster is the poster image (not written yet; registered so M7 cannot forget it).
-	KindPoster Kind = "poster"
+	// KindPoster, KindSprite and KindThumbnails are a variant's poster image, sprite sheet and WebVTT
+	// thumbnail track (ADR 0046). The masked variant has its own, made from the masked output.
+	KindPoster     Kind = "poster"
+	KindSprite     Kind = "sprite"
+	KindThumbnails Kind = "thumbnails"
 	// KindSubtitle is a subtitle track (WebVTT), shared by every variant (ADR 0044).
 	KindSubtitle Kind = "subtitle"
 	// KindOther is anything else under an asset prefix. It is deleted like the rest and counted
@@ -64,7 +67,9 @@ func Registry() []Entry {
 		{Kind: KindPlaylist, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactPlaylist},
 		{Kind: KindInit, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactInit},
 		{Kind: KindSegment, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactSegment},
-		{Kind: KindPoster, Bucket: keys.Delivery, Artifact: db.ArtifactPoster},
+		{Kind: KindPoster, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactPoster},
+		{Kind: KindSprite, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactSprite},
+		{Kind: KindThumbnails, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactThumbnails},
 		{Kind: KindSubtitle, Bucket: keys.Delivery, Artifact: db.ArtifactSubtitle},
 	}
 }
@@ -99,10 +104,6 @@ func Classify(tenant id.TenantID, asset id.AssetID, bucket keys.Bucket, key stri
 		if !ok {
 			return c
 		}
-		if rest == "poster.jpg" {
-			c.Kind = KindPoster
-			return c
-		}
 		if name, ok := strings.CutPrefix(rest, "subtitles/"); ok && strings.HasSuffix(name, ".vtt") && !strings.Contains(name, "/") {
 			c.Kind = KindSubtitle
 			return c
@@ -120,10 +121,18 @@ func Classify(tenant id.TenantID, asset id.AssetID, bucket keys.Bucket, key stri
 	return c
 }
 
-// hlsKind classifies a path relative to a variant's HLS prefix.
+// hlsKind classifies a path relative to a variant's HLS prefix: the master playlist, the variant's
+// thumbnails and the per-rendition files.
 func hlsKind(rel string) Kind {
-	if rel == "master.m3u8" {
+	switch rel {
+	case "master.m3u8":
 		return KindMaster
+	case "poster.jpg":
+		return KindPoster
+	case "sprite.jpg":
+		return KindSprite
+	case "thumbnails.vtt":
+		return KindThumbnails
 	}
 	rendition, name, ok := strings.Cut(rel, "/")
 	if !ok || rendition == "" || strings.Contains(name, "/") {

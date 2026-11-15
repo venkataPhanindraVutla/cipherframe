@@ -78,6 +78,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `GET /v1/assets/{asset_id}/access-log`, `GET /v1/playback-sessions/{session_id}/access-log` | yes | no | `assets:read` |
 | `GET /v1/play/{session_id}/master.m3u8`, `GET /v1/play/{session_id}/{rendition}/media.m3u8` | no | yes | playback token (`manifest`) |
 | `GET /v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8`, `.../track.vtt` | no | yes | playback token (`manifest`) |
+| `GET /v1/play/{session_id}/poster.jpg`, `.../sprite.jpg`, `.../thumbnails.vtt` | no | yes | playback token (`manifest`) |
 | `GET /v1/play/{session_id}/{rendition}/{file}` | no | yes | playback token (`segment`) |
 | `GET /v1/play/{session_id}/key` | no | yes | playback token (`key`) |
 | `POST /v1/play/{session_id}/heartbeat`, `POST /v1/play/{session_id}/end` | no | yes | playback token (`manifest`) |
@@ -389,6 +390,40 @@ reads another asset's track (`404`). Responses are `no-store`.
   for it.
 - Cue positioning and styles are dropped, and nothing translates or checks the words.
 
+## Thumbnails (ADR 0046)
+
+Every asset processed after M7-2 has, for each variant (the original and, with `mask_faces`, the
+masked one), a poster, a sprite sheet and a WebVTT thumbnail track. There is no endpoint to list or
+upload them: they are made by the worker in the same FFmpeg run as the renditions and are read only
+through a playback session, on the same guard as the media playlists (a `manifest`-scope token, the
+session row, `token_in_url`, CORS, the one generic `401`).
+
+| Route | Returns |
+|---|---|
+| `GET /v1/play/{session_id}/poster.jpg` | A JPEG poster frame, taken at 10 percent of the video, at most 640 pixels wide. |
+| `GET /v1/play/{session_id}/sprite.jpg` | A JPEG sheet of thumbnail tiles (each at most 160 x 288), at most 10 per row, one every 10 seconds (a longer interval for a very long video, at most 600 tiles). |
+| `GET /v1/play/{session_id}/thumbnails.vtt` | The thumbnail track (`text/vtt`): one cue per tile, `sprite.jpg#xywh=x,y,w,h`. |
+
+**How a player finds them.** The names are fixed and sit beside the master playlist: take `manifest_url`
+and replace `master.m3u8` with `poster.jpg` or `thumbnails.vtt` (with `token_in_url` on, keep the
+`?t=<token>`). The cues name the sprite as the relative `sprite.jpg`, which resolves to the session's own
+sprite route, and carry the token when `token_in_url` is on. Pass the poster to the player's poster
+option and the track to its thumbnail or preview support (for example a `metadata` text track). The
+session creation response and the master playlist do not list them, and there is **no I-frame
+playlist**: segments are encrypted whole, so a playlist of byte ranges into them could not be decrypted
+(ADR 0046). An asset processed before thumbnails existed, or whose images were skipped, answers `404`.
+
+- **A session sees only its own variant's images.** A session bound to the masked variant gets images made
+  from the masked output, and `404` if there are none; it is never answered with an original's image.
+- **Always through edge.** Thumbnails are unencrypted images of faces, so they are streamed by edge for
+  every tenant, including those with `delivery: presigned`: no thumbnail URL is a storage URL, and
+  nothing about them is public. Anyone with a valid session can keep them, as with subtitle tracks.
+- Responses are `image/jpeg` or `text/vtt`, `no-store`, `Referrer-Policy: no-referrer`, with
+  `Content-Length`. A fetch is not a row in the access trail.
+- The three objects are in the signed manifest by hash (see [integrity.md](integrity.md#thumbnails)):
+  `POST /v1/verify` with `asset_id`, `variant` and path `poster.jpg`, `sprite.jpg` or `thumbnails.vtt`
+  answers `ours` or `modified` with no proof.
+
 ## Playback sessions and settings (ADR 0028, 0030)
 
 Endpoint names and shapes are flagged for owner review before v1.0.0. This section covers the
@@ -510,7 +545,8 @@ still applies. The edge segment route keeps working in both modes.
   Edge never logs them.
 - The URLs point at `CIPHERFRAME_S3_PUBLIC_ENDPOINT`, which must be reachable by the player, and
   the delivery bucket needs a CORS rule that allows your origins to GET (docs/usage.md). Source
-  objects are never presigned.
+  objects are never presigned, and neither are the poster, the sprite sheet and the thumbnail track: they
+are unencrypted images, always served by edge (ADR 0046).
 
 ### Playlists and segments on edge (ADR 0027, 0030)
 
@@ -525,6 +561,7 @@ follows the URIs in the playlists; it never builds a URL itself.
 | `/v1/play/{session_id}/key` | `key` | The 16-byte AES-128 content key, raw (`application/octet-stream`). See below. |
 | `/v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8` | `manifest` | One subtitle track's media playlist (one WebVTT segment). See "Subtitles and transcripts". |
 | `/v1/play/{session_id}/subtitles/{subtitle_id}/track.vtt` | `manifest` | The track's WebVTT file (`text/vtt`), unencrypted, `no-store`. |
+| `/v1/play/{session_id}/poster.jpg`, `.../sprite.jpg`, `.../thumbnails.vtt` | `manifest` | The session variant's poster, sprite sheet and thumbnail track, unencrypted, `no-store`, always through edge. See "Thumbnails". |
 
 **Rewriting.** The stored playlists are canonical templates with the placeholder `cipherframe-key`
 as the key URI (ADR 0027). Edge rewrites them per request with a strict line rewriter that touches

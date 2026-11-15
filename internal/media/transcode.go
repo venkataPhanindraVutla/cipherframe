@@ -96,6 +96,9 @@ type TranscodeSpec struct {
 	Renditions []Rendition
 	// Preset is the libx264 preset of every rendition (ADR 0038); empty means X264Preset.
 	Preset string
+	// Thumbs, when set, adds a poster and a sprite sheet to the same run (ADR 0046): two more
+	// branches of the split, so the source is still decoded once.
+	Thumbs *ThumbnailSpec
 }
 
 // X264Presets are the libx264 presets CIPHERFRAME_WORKER_X264_PRESET accepts, fastest first.
@@ -137,8 +140,12 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 	rate := OutputFrameRate(v.FrameRate)
 
 	var fg strings.Builder
-	fmt.Fprintf(&fg, "[0:%d]fps=%s,split=%d", v.Index, rate.Expr, len(spec.Renditions))
-	for i := range spec.Renditions {
+	branches := len(spec.Renditions)
+	if spec.Thumbs != nil {
+		branches += 2
+	}
+	fmt.Fprintf(&fg, "[0:%d]fps=%s,split=%d", v.Index, rate.Expr, branches)
+	for i := range branches {
 		fmt.Fprintf(&fg, "[s%d]", i)
 	}
 	for i, r := range spec.Renditions {
@@ -146,6 +153,14 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 			return nil, errors.New("media: rendition size must be even")
 		}
 		fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p[v%d]", i, r.Width, r.Height, i)
+	}
+
+	if spec.Thumbs != nil {
+		if !filepath.IsAbs(spec.Thumbs.Dir) || strings.ContainsRune(spec.Thumbs.Dir, 0) || spec.Thumbs.Plan.Tiles < 1 {
+			return nil, errors.New("media: thumbnail directory must be absolute and the plan not empty")
+		}
+		n := len(spec.Renditions)
+		fg.WriteString(";" + spec.Thumbs.graph(fmt.Sprintf("s%d", n), fmt.Sprintf("s%d", n+1)))
 	}
 
 	args := []string{
@@ -194,6 +209,9 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 			"file:"+filepath.Join(dir, PlaylistFile),
 		)
 	}
+	if spec.Thumbs != nil {
+		args = append(args, spec.Thumbs.args()...)
+	}
 	return args, nil
 }
 
@@ -216,6 +234,11 @@ func (t Tools) Transcode(ctx context.Context, spec TranscodeSpec, progress func(
 	for _, r := range spec.Renditions {
 		if err := os.MkdirAll(spec.RenditionDir(r), 0o700); err != nil {
 			return errs.Wrap(errs.InternalError, "", fmt.Errorf("media: create rendition directory: %w", err))
+		}
+	}
+	if spec.Thumbs != nil {
+		if err := os.MkdirAll(spec.Thumbs.Dir, 0o700); err != nil {
+			return errs.Wrap(errs.InternalError, "", fmt.Errorf("media: create thumbnail directory: %w", err))
 		}
 	}
 	stderr, err := runStreaming(ctx, t.FFmpeg, args, progressWriter(progress))

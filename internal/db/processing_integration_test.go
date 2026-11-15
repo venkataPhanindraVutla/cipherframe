@@ -104,7 +104,10 @@ func TestCompleteProcessingAndArtifacts(t *testing.T) {
 		artifact(a, db.ArtifactPlaylist, "720p", "hls/720p/playlist.m3u8"),
 		artifact(a, db.ArtifactInit, "720p", "hls/720p/init.mp4"),
 		artifact(a, db.ArtifactSegment, "720p", "hls/720p/seg-0.m4s"),
-		artifact(a, db.ArtifactPoster, "", "poster.jpg"),
+		artifact(a, db.ArtifactPoster, "", "hls/poster.jpg"),
+		artifact(a, db.ArtifactSprite, "", "hls/sprite.jpg"),
+		artifact(a, db.ArtifactThumbnails, "", "hls/thumbnails.vtt"),
+		artifact(a, db.ArtifactSubtitle, "", "subtitles/sub_x.vtt"),
 	} {
 		if err := r.RecordArtifact(ctx, art); err != nil {
 			t.Fatalf("%s: %v", art.ObjectKey, err)
@@ -117,7 +120,7 @@ func TestCompleteProcessingAndArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := r.ListArtifacts(ctx, a.ID)
-	if err != nil || len(list) != 5 {
+	if err != nil || len(list) != 8 {
 		t.Fatalf("ListArtifacts = %d, %v", len(list), err)
 	}
 	for _, x := range list {
@@ -154,12 +157,12 @@ func TestCompleteProcessingAndArtifacts(t *testing.T) {
 		t.Error("accepted a short hash")
 	}
 
-	// Deleting the HLS artifacts keeps the poster.
+	// Deleting a variant's artifacts takes its thumbnails too and keeps the subtitle track.
 	n, err := r.DeleteHLSArtifacts(ctx, a.ID, db.VariantOriginal)
-	if err != nil || n != 4 {
+	if err != nil || n != 7 {
 		t.Fatalf("DeleteHLSArtifacts = %d, %v", n, err)
 	}
-	if list, _ := r.ListArtifacts(ctx, a.ID); len(list) != 1 || list[0].Kind != db.ArtifactPoster {
+	if list, _ := r.ListArtifacts(ctx, a.ID); len(list) != 1 || list[0].Kind != db.ArtifactSubtitle {
 		t.Fatalf("after DeleteHLSArtifacts: %+v", list)
 	}
 

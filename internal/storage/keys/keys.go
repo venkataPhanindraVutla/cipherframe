@@ -171,9 +171,22 @@ func Segment(t id.TenantID, a id.AssetID, r Rendition, n int) string {
 	return VariantSegment(t, a, Original, r, n)
 }
 
-// Poster is the key of the poster image in the delivery bucket.
-func Poster(t id.TenantID, a id.AssetID) string {
-	return DeliveryPrefix(t, a) + "poster.jpg"
+// VariantPoster, VariantSprite and VariantThumbnails are the keys of a variant's poster image, sprite
+// sheet and WebVTT thumbnail track (ADR 0046). They sit directly under the variant's HLS prefix, so
+// a masked variant's images can never share a key with the original's, and the prefix scan that
+// removes a variant's output removes them too.
+func VariantPoster(t id.TenantID, a id.AssetID, v Variant) string {
+	return VariantHLSPrefix(t, a, v) + "poster.jpg"
+}
+
+// VariantSprite is the key of a variant's sprite sheet.
+func VariantSprite(t id.TenantID, a id.AssetID, v Variant) string {
+	return VariantHLSPrefix(t, a, v) + "sprite.jpg"
+}
+
+// VariantThumbnails is the key of a variant's WebVTT thumbnail track.
+func VariantThumbnails(t id.TenantID, a id.AssetID, v Variant) string {
+	return VariantHLSPrefix(t, a, v) + "thumbnails.vtt"
 }
 
 // Subtitle is the key of one subtitle track (WebVTT) in the delivery bucket (ADR 0044). The track ID

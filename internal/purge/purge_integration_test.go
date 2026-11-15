@@ -168,6 +168,23 @@ func (r *rig) seed(maskFaces bool) seeded {
 		add(keys.Delivery, keys.VariantMaster(r.tenant.ID, aid, v))
 		add(keys.Delivery, keys.VariantPlaylist(r.tenant.ID, aid, v, r720))
 		add(keys.Delivery, keys.VariantInitSegment(r.tenant.ID, aid, v, r720))
+		// Thumbnails (M7-2): each variant has its own poster, sprite sheet and track.
+		for _, th := range []struct {
+			kind db.ArtifactKind
+			key  string
+		}{
+			{db.ArtifactPoster, keys.VariantPoster(r.tenant.ID, aid, v)},
+			{db.ArtifactSprite, keys.VariantSprite(r.tenant.ID, aid, v)},
+			{db.ArtifactThumbnails, keys.VariantThumbnails(r.tenant.ID, aid, v)},
+		} {
+			add(keys.Delivery, th.key)
+			if err := r.repos.RecordArtifact(ctx, db.Artifact{
+				AssetID: aid, Kind: th.kind, Bucket: "delivery", ObjectKey: th.key,
+				SizeBytes: 10, SHA256: bytes.Repeat([]byte{9}, 32), Variant: v.String(),
+			}); err != nil {
+				r.t.Fatal(err)
+			}
+		}
 		for n := range 3 {
 			key := keys.VariantSegment(r.tenant.ID, aid, v, r720, n)
 			add(keys.Delivery, key)
@@ -188,7 +205,6 @@ func (r *rig) seed(maskFaces bool) seeded {
 			r.t.Fatal(err)
 		}
 	}
-	add(keys.Delivery, keys.Poster(r.tenant.ID, aid))
 	// Two subtitle tracks (M7-1): the object, its registry row and its metadata row.
 	for i := range 2 {
 		track := id.New[id.SubtitleKind]()
@@ -435,6 +451,27 @@ func (r *rig) checkRecord(a db.Asset, s seeded, reason string, wantKeys []string
 	if subtitles != 2 {
 		r.t.Errorf("the record counts %d subtitle tracks, want 2", subtitles)
 	}
+	// M7 acceptance: every variant's poster, sprite sheet and thumbnail track is removed and counted
+	// under its own variant.
+	thumbs := map[string]int64{}
+	for _, o := range rec.Objects {
+		switch purge.Kind(o.Kind) {
+		case purge.KindPoster, purge.KindSprite, purge.KindThumbnails:
+			thumbs[o.Kind+"/"+o.Variant] += o.Count
+		}
+	}
+	wantThumbs := 3
+	if a.MaskFaces {
+		wantThumbs = 6
+	}
+	if len(thumbs) != wantThumbs {
+		r.t.Errorf("the record counts thumbnails %v, want %d kind and variant entries", thumbs, wantThumbs)
+	}
+	for k, n := range thumbs {
+		if n != 1 {
+			r.t.Errorf("the record counts %d of %s, want 1", n, k)
+		}
+	}
 	var gotKeys []string
 	for _, k := range rec.ContentKeys.Keys {
 		gotKeys = append(gotKeys, k.ID+"/"+k.Variant)
@@ -490,7 +527,7 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 	ctx := context.Background()
 	s := r.seed(true)
 	a := s.asset
-	sticky := r.newPurger(stickyStore{Store: r.buckets.Delivery, stick: keys.Poster(a.TenantID, a.ID)})
+	sticky := r.newPurger(stickyStore{Store: r.buckets.Delivery, stick: keys.VariantPoster(a.TenantID, a.ID, keys.Original)})
 	err := r.run(sticky, a, db.DeletionRequested)
 	if !errors.Is(err, purge.ErrLeftovers) {
 		t.Fatalf("error = %v, want ErrLeftovers", err)
@@ -510,8 +547,8 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 		t.Errorf("state = %s", got.State)
 	}
 	// The retry found only the stuck poster, but the record still counts what the first attempt
-	// deleted: the six registered segments (three per variant), the two subtitle tracks and the
-	// poster.
+	// deleted: the six registered segments (three per variant), the two subtitle tracks and the six
+	// thumbnail objects (three per variant, the stuck poster among them).
 	row, err := r.repos.GetDeletionRecord(ctx, a.TenantID, a.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -534,8 +571,8 @@ func TestPurgeFailsLoudlyWhenObjectsRemain(t *testing.T) {
 			delivery += o.Count
 		}
 	}
-	if delivery != 9 {
-		t.Errorf("the record counts %d delivery objects after a retry, want 9", delivery)
+	if delivery != 14 {
+		t.Errorf("the record counts %d delivery objects after a retry, want 14", delivery)
 	}
 }
 

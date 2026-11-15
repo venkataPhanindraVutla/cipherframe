@@ -17,6 +17,7 @@ const (
  ------
  V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
  A....D aac                  AAC (Advanced Audio Coding)
+ V....D mjpeg                MJPEG (Motion JPEG)
 `
 	fullDecoders = `Decoders:
  V..... = Video
@@ -35,6 +36,7 @@ const (
  .E = Muxing supported
  --
   E hls             Apple HTTP Live Streaming
+  E image2          image2 sequence
   E mp4             MP4 (MPEG-4 Part 14)
   E null            raw null video
 `
@@ -63,6 +65,9 @@ Output:
  ... setsar            V->V       Set the pixel sample aspect ratio.
  ... fps               V->V       Force constant framerate.
  ... split             V->N       Pass on the input to N video outputs.
+ ... trim              V->V       Pick one continuous section from the input.
+ ... setpts            V->V       Set PTS for the output video frame.
+ ... tile              V->V       Tile several successive frames together.
 `
 )
 

@@ -25,6 +25,13 @@ const (
 	KindPlaylist = "playlist"
 )
 
+// Kinds recorded in Manifest.Thumbnails (ADR 0046).
+const (
+	KindPoster     = "poster"
+	KindSprite     = "sprite"
+	KindThumbnails = "thumbnails"
+)
+
 // Manifest is the document that is signed. Its JSON encoding is canonical (see Build); no field is
 // a floating-point number.
 type Manifest struct {
@@ -46,6 +53,54 @@ type Manifest struct {
 	// Merkle tree: the signature covers each track's hash, and the top-level root stays the
 	// identity of the encoded media.
 	Subtitles []Subtitle `json:"subtitles,omitempty"`
+	// Thumbnails lists the original variant's poster, sprite sheet and thumbnail track (ADR 0046),
+	// paths relative to the variant's HLS prefix. Like the subtitle list it is absent when there are
+	// none, so a manifest without thumbnails is byte for byte what it was, and it is in no Merkle
+	// tree: the signature covers each hash and the top-level root stays the identity of the media.
+	Thumbnails []Artifact `json:"thumbnails,omitempty"`
+}
+
+// Thumbnail is one stored thumbnail object as Build and WithMasked take it. Kind is KindPoster,
+// KindSprite or KindThumbnails and Object's path is relative to the variant's HLS prefix.
+type Thumbnail struct {
+	Kind   string
+	Object StoredObject
+}
+
+// thumbnailList validates the objects and returns them as manifest artifacts in the fixed order
+// poster, sprite, track. It returns nil for none; otherwise all three are required, once each.
+func thumbnailList(in []Thumbnail) ([]Artifact, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]Artifact, 0, len(in))
+	for _, kind := range []string{KindPoster, KindSprite, KindThumbnails} {
+		for _, t := range in {
+			if t.Kind != kind {
+				continue
+			}
+			if err := checkObject("thumbnail "+kind, t.Object); err != nil {
+				return nil, err
+			}
+			out = append(out, Artifact{Kind: kind, Path: t.Object.Path, SHA256: hex.EncodeToString(t.Object.SHA256[:]), Size: t.Object.Size})
+		}
+	}
+	if len(in) != 3 || len(out) != 3 {
+		return nil, errors.New("manifest: thumbnails are one poster, one sprite sheet and one track")
+	}
+	return out, nil
+}
+
+// VariantThumbnails returns the thumbnail objects the manifest records for a variant ("original" or
+// "masked"), nil when it has none.
+func (m Manifest) VariantThumbnails(masked bool) []Artifact {
+	if !masked {
+		return m.Thumbnails
+	}
+	if m.Masked == nil {
+		return nil
+	}
+	return m.Masked.Thumbnails
 }
 
 // Subtitle is one subtitle track. The label a player shows is not recorded: it is a free-text title
@@ -126,6 +181,9 @@ type Masked struct {
 	Renditions    []Rendition `json:"renditions"`
 	Artifacts     []Artifact  `json:"artifacts"`
 	TopLevel      TopLevel    `json:"top_level"`
+	// Thumbnails are the masked variant's own poster, sprite sheet and track, made from the masked
+	// output (ADR 0046).
+	Thumbnails []Artifact `json:"thumbnails,omitempty"`
 }
 
 // Encoder records how the renditions were made.
@@ -218,6 +276,7 @@ type Input struct {
 	Encoder           Encoder
 	Renditions        []RenditionInput
 	Master            StoredObject
+	Thumbnails        []Thumbnail // optional (ADR 0046)
 	SourceSHA256      [32]byte
 	SourceSize        int64
 }
@@ -235,6 +294,7 @@ func Build(in Input) (*Built, error) {
 	if err := validate(in); err != nil {
 		return nil, err
 	}
+	var err error
 	m := Manifest{
 		Schema:          Schema,
 		AssetID:         in.AssetID,
@@ -248,6 +308,9 @@ func Build(in Input) (*Built, error) {
 
 	t := buildTree(in.Renditions, in.Master)
 	m.Renditions, m.Artifacts, m.TopLevel = t.renditions, t.artifacts, t.top
+	if m.Thumbnails, err = thumbnailList(in.Thumbnails); err != nil {
+		return nil, err
+	}
 
 	canonical, err := jcs.Marshal(m)
 	if err != nil {
@@ -315,6 +378,7 @@ type MaskedInput struct {
 	Rungs         []Rung
 	Renditions    []RenditionInput
 	Master        StoredObject
+	Thumbnails    []Thumbnail // optional (ADR 0046)
 }
 
 // WithMasked returns m with its masked section set (replacing an earlier one) and the new canonical
@@ -335,11 +399,15 @@ func WithMasked(m Manifest, in MaskedInput) (*Built, error) {
 	}
 	copy(top[:], raw)
 
+	thumbs, err := thumbnailList(in.Thumbnails)
+	if err != nil {
+		return nil, err
+	}
 	t := buildTree(in.Renditions, in.Master)
 	m.Masked = &Masked{
 		CreatedAt:     in.CreatedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
 		FacesDetected: in.FacesDetected, Frames: in.Frames, Rungs: append([]Rung(nil), in.Rungs...),
-		Renditions: t.renditions, Artifacts: t.artifacts, TopLevel: t.top,
+		Renditions: t.renditions, Artifacts: t.artifacts, TopLevel: t.top, Thumbnails: thumbs,
 	}
 	canonical, err := jcs.Marshal(m)
 	if err != nil {

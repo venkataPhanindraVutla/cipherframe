@@ -32,7 +32,6 @@ func TestPurgeCoversEveryKeyTheSystemWrites(t *testing.T) {
 		{keys.Source, src, KindSource, ""},
 		{keys.Source, src + ".info", KindTusInfo, ""},
 		{keys.Source, src + ".part", KindTusPart, ""},
-		{keys.Delivery, keys.Poster(tenant, asset), KindPoster, ""},
 		{keys.Delivery, keys.Subtitle(tenant, asset, id.New[id.SubtitleKind]()), KindSubtitle, ""},
 	}
 	for _, v := range []keys.Variant{keys.Original, keys.Masked} {
@@ -42,6 +41,9 @@ func TestPurgeCoversEveryKeyTheSystemWrites(t *testing.T) {
 			written{keys.Delivery, keys.VariantInitSegment(tenant, asset, v, r720), KindInit, v.String()},
 			written{keys.Delivery, keys.VariantSegment(tenant, asset, v, r720, 0), KindSegment, v.String()},
 			written{keys.Delivery, keys.VariantSegment(tenant, asset, v, r720, 123), KindSegment, v.String()},
+			written{keys.Delivery, keys.VariantPoster(tenant, asset, v), KindPoster, v.String()},
+			written{keys.Delivery, keys.VariantSprite(tenant, asset, v), KindSprite, v.String()},
+			written{keys.Delivery, keys.VariantThumbnails(tenant, asset, v), KindThumbnails, v.String()},
 		)
 	}
 	all = append(all,

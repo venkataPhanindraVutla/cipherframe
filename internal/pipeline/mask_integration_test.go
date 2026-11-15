@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"image"
+	_ "image/jpeg"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -81,6 +83,13 @@ type masker struct {
 // startMasker runs a fake masker until the test ends. It copies the input to the output and
 // completes the task with the given output, or fails it (not retryable) when fail is true.
 func (r *rig) startMasker(output string, fail bool) *masker {
+	return r.startMaskerWith(output, fail, "")
+}
+
+// startMaskerWith is startMasker with a masked file of its own: when replacement is not empty the
+// masker writes that file instead of a copy of its input, so the masked output differs from the
+// original in more than name.
+func (r *rig) startMaskerWith(output string, fail bool, replacement string) *masker {
 	m := &masker{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -111,7 +120,13 @@ func (r *rig) startMasker(output string, fail bool) *masker {
 				_ = jobs.Fail(ctx, r.pool, task.ID, "test-fixture-masker", res)
 				continue
 			}
-			if err := os.WriteFile(filepath.Join(r.workDir, p.Output), in, 0o600); err != nil { //nolint:gosec // test: a path inside the test's work directory
+			out := in
+			if replacement != "" {
+				if out, err = os.ReadFile(replacement); err != nil { //nolint:gosec // a fixture the test just generated
+					return
+				}
+			}
+			if err := os.WriteFile(filepath.Join(r.workDir, p.Output), out, 0o600); err != nil { //nolint:gosec // test: a path inside the test's work directory
 				return
 			}
 			res.Status, res.Output = jobs.StatusSucceeded, json.RawMessage(output)
@@ -531,5 +546,98 @@ func TestMaskRunsBesideProcess(t *testing.T) {
 	}
 	if bytes.Equal(r.key(a), r.maskedKey(a)) {
 		t.Fatal("both variants share a content key")
+	}
+}
+
+// The masked variant's poster, sprite sheet and track are made from the masked output (ADR 0046).
+// The fake masker here hands back a different, smaller video, so an image made from the original
+// would have the original's size and look.
+func TestMaskedThumbnailsComeFromTheMaskedOutput(t *testing.T) {
+	r := newMaskRig(t)
+	ctx := context.Background()
+	src := generate(t, testmedia.Spec{Name: "source.mp4", Width: 640, Height: 360, Duration: 8 * time.Second, FPS: 30})
+	replacement := generate(t, testmedia.Spec{Name: "masked.mp4", Width: 320, Height: 180, Duration: 8 * time.Second, FPS: 30})
+	asset, _ := r.commitAs(src, true)
+	if err := r.process(asset); err != nil {
+		t.Fatalf("asset.process: %v\n%s", err, r.logs.String())
+	}
+	r.startMaskerWith(`{"faces_detected":1,"frames":240}`, false, replacement)
+	if err := r.mask(asset); err != nil {
+		t.Fatalf("asset.mask: %v\n%s", err, r.logs.String())
+	}
+	a, err := r.repos.GetAsset(ctx, asset.TenantID, asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	size := func(key string) (int, int) {
+		cfg, format, err := image.DecodeConfig(bytes.NewReader(r.get(r.buckets.Delivery, key)))
+		if err != nil || format != "jpeg" {
+			t.Fatalf("%s is not a JPEG: %v", key, err)
+		}
+		return cfg.Width, cfg.Height
+	}
+	for _, c := range []struct {
+		variant keys.Variant
+		w, h    int
+	}{{keys.Original, 640, 360}, {keys.Masked, 320, 180}} {
+		w, h := size(keys.VariantPoster(a.TenantID, a.ID, c.variant))
+		if w != c.w || h != c.h {
+			t.Errorf("%s poster is %dx%d, want %dx%d", c.variant, w, h, c.w, c.h)
+		}
+	}
+	// The sprite tiles are the masked video's size too: 8 s is one row of one tile.
+	if w, h := size(keys.VariantSprite(a.TenantID, a.ID, keys.Masked)); w != 160 || h != 90 {
+		t.Errorf("masked sprite is %dx%d", w, h)
+	}
+	for _, f := range []func(id.TenantID, id.AssetID, keys.Variant) string{keys.VariantPoster, keys.VariantSprite, keys.VariantThumbnails} {
+		o := r.get(r.buckets.Delivery, f(a.TenantID, a.ID, keys.Original))
+		m := r.get(r.buckets.Delivery, f(a.TenantID, a.ID, keys.Masked))
+		if f(a.TenantID, a.ID, keys.Masked) != keys.VariantThumbnails(a.TenantID, a.ID, keys.Masked) && bytes.Equal(o, m) {
+			t.Errorf("%s: the masked variant's image is byte for byte the original's", f(a.TenantID, a.ID, keys.Masked))
+		}
+	}
+
+	// Registered per variant, and in the re-signed manifest under each variant's own list.
+	arts, err := r.repos.ListArtifacts(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perVariant := map[string]int{}
+	for _, art := range arts {
+		switch art.Kind {
+		case db.ArtifactPoster, db.ArtifactSprite, db.ArtifactThumbnails:
+			perVariant[art.Variant]++
+			if !strings.HasPrefix(art.ObjectKey, keys.VariantHLSPrefix(a.TenantID, a.ID, keys.Variant(art.Variant))) {
+				t.Errorf("%s artifact %s is under the wrong variant's prefix", art.Variant, art.ObjectKey)
+			}
+		}
+	}
+	if perVariant[db.VariantOriginal] != 3 || perVariant[db.VariantMasked] != 3 {
+		t.Errorf("registered thumbnail artifacts per variant: %v", perVariant)
+	}
+	row, err := r.repos.GetManifest(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := pipeline.DecodeManifest(row.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, masked := range []bool{false, true} {
+		v := keys.Original
+		if masked {
+			v = keys.Masked
+		}
+		list := m.VariantThumbnails(masked)
+		if len(list) != 3 {
+			t.Fatalf("manifest lists %d %s thumbnail objects", len(list), v)
+		}
+		for _, art := range list {
+			got := sha256.Sum256(r.get(r.buckets.Delivery, keys.VariantHLSPrefix(a.TenantID, a.ID, v)+art.Path))
+			if hex.EncodeToString(got[:]) != art.SHA256 {
+				t.Errorf("%s %s: the manifest hash is not the hash of the stored object", v, art.Path)
+			}
+		}
 	}
 }

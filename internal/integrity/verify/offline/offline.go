@@ -160,7 +160,8 @@ func FromError(err error) Result {
 	return cannot(ReasonCannotSay, err)
 }
 
-// Paths lists every artifact path the manifest records for the variant, sorted.
+// Paths lists every artifact path the manifest records for the variant, sorted: its media files,
+// playlists and thumbnails.
 func (s *Signed) Paths(variant string) []string {
 	rends, arts := s.Manifest.Renditions, s.Manifest.Artifacts
 	if variant == proof.Masked {
@@ -177,6 +178,10 @@ func (s *Signed) Paths(variant string) []string {
 		}
 	}
 	for _, a := range arts {
+		out = append(out, a.Path)
+	}
+	// The variant's poster, sprite sheet and thumbnail track sit in the same tree (ADR 0046).
+	for _, a := range s.Manifest.VariantThumbnails(variant == proof.Masked) {
 		out = append(out, a.Path)
 	}
 	sort.Strings(out)
@@ -201,6 +206,10 @@ func (s *Signed) SubtitlePaths() []string {
 func (s *Signed) Artifact(path string, sum [sha256.Size]byte, variant string) Result {
 	if i := slices.IndexFunc(s.Manifest.Subtitles, func(t manifest.Subtitle) bool { return t.Path == path }); i >= 0 {
 		return compare(s.Manifest.Subtitles[i].SHA256, sum)
+	}
+	// A thumbnail object (ADR 0046) is signed by hash and is in no Merkle tree, so it has no proof.
+	if i := slices.IndexFunc(s.Manifest.VariantThumbnails(variant == proof.Masked), func(a manifest.Artifact) bool { return a.Path == path }); i >= 0 {
+		return compare(s.Manifest.VariantThumbnails(variant == proof.Masked)[i].SHA256, sum)
 	}
 	want, err := proof.Build(s.Manifest, variant, path)
 	switch {

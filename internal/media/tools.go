@@ -50,18 +50,19 @@ type listing struct {
 // encoders, muxers, filters and protocols of the minimal build. The native "av1" decoder of FFmpeg
 // is hardware-only, so software AV1 decoding needs libdav1d or libaom.
 var capabilities = []listing{
-	{flag: "-encoders", kind: "encoder", need: []requirement{one("libx264"), one("aac")}},
+	{flag: "-encoders", kind: "encoder", need: []requirement{one("libx264"), one("aac"), one("mjpeg")}},
 	{flag: "-decoders", kind: "decoder", need: []requirement{
 		one("h264"), one("hevc"), one("vp8"), one("vp9"),
 		{anyOf: []string{"libdav1d", "libaom-av1"}},
 		one("aac"), one("opus"),
 		{anyOf: []string{"mp3float", "mp3"}},
 	}},
-	{flag: "-muxers", kind: "muxer", need: []requirement{one("mp4"), one("hls")}},
+	{flag: "-muxers", kind: "muxer", need: []requirement{one("mp4"), one("hls"), one("image2")}},
 	{flag: "-demuxers", kind: "demuxer", need: []requirement{one("mov"), one("matroska")}},
 	{flag: "-protocols", kind: "protocol", need: []requirement{one("file"), one("pipe")}},
 	{flag: "-filters", kind: "filter", need: []requirement{
 		one("scale"), one("format"), one("aresample"), one("null"), one("anull"), one("setsar"), one("fps"), one("split"),
+		one("trim"), one("setpts"), one("tile"),
 	}},
 }
 
