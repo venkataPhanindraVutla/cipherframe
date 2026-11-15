@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,6 +40,79 @@ type Manifest struct {
 	Source          Source      `json:"source"`
 	// Masked is present once the asset's face-masked variant is published (ADR 0036).
 	Masked *Masked `json:"masked,omitempty"`
+	// Subtitles lists the asset's subtitle tracks, in track ID order (ADR 0044). It is absent while
+	// the asset has none, so a manifest without tracks is byte for byte what it was before tracks
+	// existed, and a verifier that does not know the field ignores it. The tracks are not in any
+	// Merkle tree: the signature covers each track's hash, and the top-level root stays the
+	// identity of the encoded media.
+	Subtitles []Subtitle `json:"subtitles,omitempty"`
+}
+
+// Subtitle is one subtitle track. The label a player shows is not recorded: it is a free-text title
+// (the manifest holds none, ADR 0040) and not part of what must not change. Path is relative to the asset's delivery prefix, not to a
+// variant's HLS prefix, because tracks are shared by the variants.
+type Subtitle struct {
+	ID       string `json:"id"`
+	Language string `json:"language"`
+	Default  bool   `json:"default"`
+	Origin   string `json:"origin"` // "upload" or "import"
+	Path     string `json:"path"`
+	SHA256   string `json:"sha256"`
+	Size     int64  `json:"size"`
+}
+
+// SubtitleInput is a stored track as WithSubtitles needs it.
+type SubtitleInput struct {
+	ID       string
+	Language string
+	Default  bool
+	Origin   string
+	Object   StoredObject // Path relative to the asset's delivery prefix
+}
+
+// WithSubtitles returns m with its subtitle list replaced by tracks (none removes it) and the new
+// canonical encoding, which is what gets signed again. Every other member is carried over as it
+// was signed, and TopRoot stays the original variant's top-level root.
+func WithSubtitles(m Manifest, tracks []SubtitleInput) (*Built, error) {
+	var top merkle.Hash
+	raw, err := hex.DecodeString(m.TopLevel.Root)
+	if err != nil || len(raw) != len(top) {
+		return nil, errors.New("manifest: the original top-level root is malformed")
+	}
+	copy(top[:], raw)
+
+	list := make([]Subtitle, 0, len(tracks))
+	seen := map[string]bool{}
+	defaults := 0
+	for _, t := range tracks {
+		if t.ID == "" || seen[t.ID] || t.Language == "" {
+			return nil, errors.New("manifest: a subtitle track needs a unique ID and a language")
+		}
+		seen[t.ID] = true
+		if err := checkObject("subtitle track", t.Object); err != nil {
+			return nil, err
+		}
+		if t.Default {
+			defaults++
+		}
+		list = append(list, Subtitle{
+			ID: t.ID, Language: t.Language, Default: t.Default, Origin: t.Origin,
+			Path: t.Object.Path, SHA256: hex.EncodeToString(t.Object.SHA256[:]), Size: t.Object.Size,
+		})
+	}
+	if defaults > 1 {
+		return nil, errors.New("manifest: at most one subtitle track is the default")
+	}
+	slices.SortFunc(list, func(a, b Subtitle) int { return strings.Compare(a.ID, b.ID) })
+	m.Subtitles = nil
+	if len(list) > 0 {
+		m.Subtitles = list
+	}
+	canonical, err := jcs.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("manifest: encode: %w", err)
+	}
+	return &Built{Manifest: m, Canonical: canonical, TopRoot: top}, nil
 }
 
 // Masked describes the masked variant: the same shapes as the original's members, with every path

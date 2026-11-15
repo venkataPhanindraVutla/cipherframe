@@ -27,7 +27,7 @@ Last updated: 2026-11-15.
 | Faster face masking (ADR 0037) | Done |
 | Encoder preset and detection stride (ADR 0038) | Done |
 | M6 Deletion and retention | Done ([ADR 0040](adr/0040-retention-and-privacy-defaults.md), [ADR 0042](adr/0042-deletion-and-retention-details.md)) |
-| M7 Subtitles, thumbnails, branding, webhooks, quotas | Not started (P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md)) |
+| M7 Subtitles, thumbnails, branding, webhooks, quotas | In progress (M7-1 and M7-5 done; P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md)) |
 | M8 CLI (Go) and reference player (TypeScript) | Not started (gate P13) |
 | M9 Operations and release | Not started (gate P14) |
 | M10 v1 extras (may slip to v1.1) | Not started (gates P16 to P18) |
@@ -82,7 +82,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 
 ### M7 Subtitles, thumbnails, branding, webhooks, quotas
 
-- [ ] M7-1 WebVTT subtitles, SRT conversion, transcript import
+- [x] M7-1 WebVTT subtitles, SRT conversion, transcript import ([ADR 0044](adr/0044-subtitle-tracks.md))
 - [ ] M7-2 Thumbnails: poster, sprite sheet with a WebVTT track, I-frame playlist
 - [ ] M7-3 Overlay watermark policy
 - [ ] M7-4 Per-tenant brand logo burned in at transcode

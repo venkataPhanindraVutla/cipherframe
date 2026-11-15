@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/anchor"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
@@ -32,6 +33,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
@@ -182,7 +184,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		}
 	}
 	if Has(opts.Roles, RoleAPI) {
-		assets, requester, err := newAssetService(pool, buckets, cfg, log)
+		assets, requester, queue, err := newAssetService(pool, buckets, cfg, log)
 		if err != nil {
 			cleanup()
 			return err
@@ -193,6 +195,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			return err
 		}
 		webhooks, err := webhook.NewService(webhook.ServiceDeps{Pool: pool, KMS: kmsReg})
+		if err != nil {
+			cleanup()
+			return err
+		}
+		subtitleSvc, err := newSubtitleService(pool, buckets, cfg, signer, queue, log)
 		if err != nil {
 			cleanup()
 			return err
@@ -211,6 +218,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Repos:       repos,
 			Purge:       requester,
 			Webhooks:    webhooks,
+			Subtitles:   subtitleSvc,
 		}).Handler()
 		s, err := newHTTPService("api", cfg.APIListen, handler, log)
 		if err != nil {
@@ -266,35 +274,54 @@ const lockPoolConns = 16
 // newAssetService builds the asset service of the api role, and the requester that starts
 // deletions. The api role needs the edge's public URL to tell clients where to upload; it refuses
 // to start without it.
-func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.Config, log *slog.Logger) (*uploads.Service, *purge.Requester, error) {
+func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.Config, log *slog.Logger) (*uploads.Service, *purge.Requester, *jobs.Queue, error) {
 	if cfg.Uploads.EdgePublicURL == "" {
-		return nil, nil, fmt.Errorf("%s is required when the api role runs", config.EnvEdgePublicURL)
+		return nil, nil, nil, fmt.Errorf("%s is required when the api role runs", config.EnvEdgePublicURL)
 	}
 	// An insert-only queue: the api role enqueues asset.process and asset.delete, the worker role
 	// handles them. The registry has no handlers, so it is told which queue each runs on.
 	reg := jobs.NewRegistry()
 	if err := pipeline.Declare(reg); err != nil {
-		return nil, nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	if err := purge.Declare(reg); err != nil {
-		return nil, nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, nil, fmt.Errorf("assets: %w", err)
+	}
+	// The subtitle service enqueues manifest.anchor when it re-signs a manifest (ADR 0044).
+	if err := anchor.Declare(reg); err != nil {
+		return nil, nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	queue, err := jobs.NewQueue(pool, reg, jobs.Config{Logger: log})
 	if err != nil {
-		return nil, nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	svc, err := uploads.NewService(uploads.Deps{
 		Pool: pool, Source: buckets.Source, Queue: queue, Limits: uploads.LimitsFrom(cfg.Uploads),
 		EdgeURL: cfg.Uploads.EdgePublicURL, Log: log,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	requester, err := purge.NewRequester(pool, queue)
 	if err != nil {
-		return nil, nil, fmt.Errorf("assets: %w", err)
+		return nil, nil, nil, fmt.Errorf("assets: %w", err)
 	}
-	return svc, requester, nil
+	return svc, requester, queue, nil
+}
+
+// newSubtitleService builds the subtitle service of the api role (M7-1). It stores tracks in the
+// delivery bucket and signs manifests with the current key; with timestamping on (ADR 0041) it
+// queues each new manifest for anchoring, like the worker does.
+func newSubtitleService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.Config, signer *signing.Manager, queue *jobs.Queue, log *slog.Logger) (*subtitles.Service, error) {
+	d := subtitles.Deps{Pool: pool, Delivery: buckets.Delivery, Signer: signer, Log: log}
+	if cfg.TSA.Enabled() {
+		d.Queue = queue
+	}
+	svc, err := subtitles.New(d)
+	if err != nil {
+		return nil, fmt.Errorf("subtitles: %w", err)
+	}
+	return svc, nil
 }
 
 // newPlaybackService builds the playback service of the api role: it signs playback tokens with

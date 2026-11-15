@@ -176,6 +176,16 @@ func Poster(t id.TenantID, a id.AssetID) string {
 	return DeliveryPrefix(t, a) + "poster.jpg"
 }
 
+// Subtitle is the key of one subtitle track (WebVTT) in the delivery bucket (ADR 0044). The track ID
+// is system-made; the language and label are never part of a key. Tracks are shared by every
+// variant, so the key sits beside the HLS trees, not in one.
+func Subtitle(t id.TenantID, a id.AssetID, track id.SubtitleID) string {
+	if track.IsZero() {
+		panic("keys: zero subtitle ID")
+	}
+	return DeliveryPrefix(t, a) + "subtitles/" + track.String() + ".vtt"
+}
+
 // AssetPrefixes returns every (bucket, prefix) pair that deleting the asset must enumerate. Anything
 // the system stores for the asset lies under one of them.
 func AssetPrefixes(t id.TenantID, a id.AssetID) []Prefix {

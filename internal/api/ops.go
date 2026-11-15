@@ -11,6 +11,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
 )
@@ -31,6 +32,8 @@ type server struct {
 	purge *purge.Requester
 	// webhooks serves the webhook endpoints and deliveries (M7-5).
 	webhooks *webhook.Service
+	// subtitles serves the subtitle track endpoints (M7-1).
+	subtitles *subtitles.Service
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

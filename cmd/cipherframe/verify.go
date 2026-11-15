@@ -153,7 +153,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		work = []jobs{{fl.Arg(0), *path}}
 	default:
 		var missing []string
-		work, missing = expand(fl.Args(), *root, signed.Paths(*variant))
+		work, missing = expand(fl.Args(), *root, signed.Paths(*variant), signed.SubtitlePaths())
 		for _, m := range missing {
 			lines = append(lines, line{Path: m, Outcome: missingReason, Reason: missingReason, Detail: "listed in the manifest, not in the directory"})
 		}
@@ -177,11 +177,16 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 
 // expand turns the file and directory arguments into jobs. A directory contributes every file
 // under it that the manifest lists, and each listed path with no file is returned as missing.
-// A plain file is matched by its path relative to root (or as given; an absolute path without
-// root by its base name).
-func expand(args []string, root string, listed []string) (work []jobs, missing []string) {
+// optional are manifest paths that are checked when the directory has them and never reported
+// missing (the subtitle tracks, which sit beside the HLS tree and not in it). A plain file is
+// matched by its path relative to root (or as given; an absolute path without root by its base
+// name).
+func expand(args []string, root string, listed, optional []string) (work []jobs, missing []string) {
 	inManifest := map[string]bool{}
 	for _, p := range listed {
+		inManifest[p] = true
+	}
+	for _, p := range optional {
 		inManifest[p] = true
 	}
 	for _, a := range args {

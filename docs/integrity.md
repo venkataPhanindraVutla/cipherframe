@@ -44,6 +44,7 @@ is the hash of the ciphertext.
 | `top_level` | `order`, the leaf labels of the top-level tree, and `root`. |
 | `source` | `sha256` and `size` of the uploaded original. |
 | `masked` | Only for an asset with a face-masked variant (ADR 0036); see "The masked variant". |
+| `subtitles` | Only for an asset with subtitle tracks (ADR 0044); see "Subtitle tracks". |
 
 Trees. Rendition `merkle_root`: leaves are the init segment and then the media segments in
 playlist order, each leaf's data being the artifact's 32-byte SHA-256. Top-level `root`: leaves in
@@ -112,6 +113,26 @@ The `top_root` column stays the original variant's top-level root; the masked va
 `masked.top_level.root` in the envelope. The encoder block at the top level describes the original
 variant; the masked file goes through the same code and the same encoder settings. An asset whose
 masking failed, or is still pending, has no `masked` member and keeps its first manifest.
+
+### Subtitle tracks
+
+Adding or deleting a subtitle track (M7-1, ADR 0044) builds the manifest again from the stored one with
+a `subtitles` member and signs it again; the new envelope replaces the old one in the transaction that
+registers or removes the track (and queues the timestamp job when anchoring is on). With no tracks the
+member is absent, so such a manifest is byte for byte what it was before tracks existed, and a verifier
+that does not know `subtitles` still checks the signature and the media: the schema stays
+`cipherframe.manifest/v1`.
+
+| `subtitles` entry | Content |
+| --- | --- |
+| `id` | The track ID (`sub_...`); entries are in ID order. |
+| `language`, `default`, `origin` | The BCP 47 tag in canonical case, whether it is the default track, and `upload` or `import`. |
+| `path` | `subtitles/<id>.vtt`, relative to the asset (the tracks are shared by both variants), not to an HLS prefix. |
+| `sha256`, `size` | Of the stored WebVTT file. |
+
+Tracks are **not** in any Merkle tree: `top_level.root` (and so every proof and timestamp of the media)
+does not change when a track does, and a track has no inclusion proof; the signature covers each hash.
+The label a player shows is not recorded, because the manifest holds no free-text title.
 
 The `asset_manifests` row also records the `key_id` of the signer, the SHA-256 of the payload and
 the top-level root as separate columns, so a lookup does not need to parse the envelope. A signer
@@ -242,7 +263,8 @@ variant, whose paths are relative to the masked prefix and which has its own tre
 `POST /v1/verify` maps the result onto the three public outcomes: `ours` (in the manifest, hash
 equal), `modified` (path in the manifest, hash different) and `cannot_say` (everything else,
 including a stored manifest whose signature does not verify with the published keys, which is also
-logged as an error). A hash-only lookup finds candidates in the artifact registry
+logged as an error). A track is checked by its path (`asset_id` and `path` `subtitles/<id>.vtt`): `ours` or `modified`, with no proof
+(tracks are signed by hash, outside the trees); a hash-only lookup does not search tracks. A hash-only lookup finds candidates in the artifact registry
 (`asset_artifacts`, by SHA-256) and confirms each against its signed manifest, so it returns the
 manifest path (the object key minus the variant's HLS prefix) and never a bucket or object key.
 
@@ -289,7 +311,7 @@ numbers, hex hashes, RFC 3339 UTC times with second precision.
 | `requested_at`, `completed_at` | When deletion was requested, and when the purge finished and storage was verified empty. |
 | `reason` | `requested` (an API call) or `retention` (the asset's time-to-live ran out). |
 | `pipeline_version` | The Cipherframe version that ran the purge. |
-| `objects` | One entry per bucket, artifact kind and variant, sorted by those: `bucket` (`source` or `delivery`), `kind` (`source`, `tus_info`, `tus_part`, `master`, `playlist`, `init`, `segment`, `poster`, or `other` for an object nothing in Cipherframe writes), `variant` (`original` or `masked` for HLS objects, absent otherwise), `count`, `bytes`. |
+| `objects` | One entry per bucket, artifact kind and variant, sorted by those: `bucket` (`source` or `delivery`), `kind` (`source`, `tus_info`, `tus_part`, `master`, `playlist`, `init`, `segment`, `poster`, `subtitle`, or `other` for an object nothing in Cipherframe writes), `variant` (`original` or `masked` for HLS objects, absent otherwise and for `subtitle`), `count`, `bytes`. |
 | `objects_deleted`, `bytes_deleted` | The totals of `objects`. |
 | `content_keys` | `destroyed` (the count) and `keys`: the `id` and `variant` of each destroyed content key, sorted by id. Never key material. |
 | `manifest_root` | The top-level Merkle root (hex) of the asset's manifest as it stood at deletion (the original variant's, the `top_root` column); absent if the asset never had a manifest. |
@@ -413,6 +435,8 @@ tool is the static binary `cipherframe` (`CGO_ENABLED=0 go build ./cmd/cipherfra
 cipherframe verify --manifest manifest.json --keys keys.json ./download/
 # The face-masked variant: its own directory, its own section of the manifest.
 cipherframe verify --manifest manifest.json --keys keys.json --variant masked ./download-masked/
+# A directory that also holds the subtitle tracks (DIR/subtitles/<id>.vtt) checks them too; a track
+# that is not there is not reported missing, because tracks sit beside the HLS tree, not in it.
 # One file, named by its manifest path, with the key set fetched over https.
 cipherframe verify --manifest manifest.json --keys-url https://cipherframe.example/.well-known/cipherframe-keys.json \
   --path 720p/seg-0.m4s seg-0.m4s

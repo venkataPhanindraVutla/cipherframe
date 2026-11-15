@@ -145,8 +145,9 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 				continue
 			}
 			p := strings.NewReplacer("{key_id}", keyID, "{session_id}", sessionID, "{asset_id}", assetID, "{kid}", "key-1",
-				"{endpoint_id}", endpointID, "{delivery_id}", deliveryID).Replace(path)
+				"{endpoint_id}", endpointID, "{delivery_id}", deliveryID, "{subtitle_id}", "sub_"+strings.Repeat("0", 26)).Replace(path)
 			var body []byte
+			contentType := ""
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
 				body = []byte(`{"name":"x"}`)
 				switch op.OperationID {
@@ -156,6 +157,11 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 					body = []byte(`{"size_bytes":1,"upload_method":"tus"}`)
 				case "updateAsset":
 					body = []byte(`{"ttl_seconds":3600}`)
+				case "createAssetSubtitle":
+					contentType = "multipart/form-data; boundary=x"
+					body = []byte("--x\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nWEBVTT\r\n--x\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nen\r\n--x\r\nContent-Disposition: form-data; name=\"label\"\r\n\r\nEnglish\r\n--x--\r\n")
+				case "importAssetTranscript":
+					body = []byte(`{"language":"en","label":"English","cues":[]}`)
 				case "updatePlaybackSettings":
 					body = []byte(`{}`)
 				case "updatePrivacySettings":
@@ -181,6 +187,12 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 				"malformed":  {"Authorization": "Bearer nope"},
 				"wrong kind": {"Authorization": "Basic abc"},
 			} {
+				if contentType != "" {
+					hdr = map[string]string{"Content-Type": contentType, "Authorization": hdr["Authorization"]}
+					if hdr["Authorization"] == "" {
+						delete(hdr, "Authorization")
+					}
+				}
 				ex := doBody(t, srv.URL, method, p, hdr, body)
 				if ex.resp.StatusCode != 401 {
 					t.Fatalf("%s %s (%s): status %d, body %s", method, path, name, ex.resp.StatusCode, ex.body)
@@ -195,8 +207,8 @@ func TestSecuredOperationsRequireAuthentication(t *testing.T) {
 			n++
 		}
 	}
-	if n != 48 {
-		t.Fatalf("exercised %d secured operations, want 48", n)
+	if n != 53 {
+		t.Fatalf("exercised %d secured operations, want 53", n)
 	}
 }
 
@@ -230,6 +242,7 @@ func TestUploadOperationsRequireAnUploadToken(t *testing.T) {
 			}
 			p := strings.ReplaceAll(strings.ReplaceAll(path, "{asset_id}", assetID), "{part_number}", "1")
 			var body []byte
+			contentType := ""
 			if op.RequestBody != nil && op.RequestBody.Value.Required {
 				body = []byte("part bytes")
 			}
@@ -239,6 +252,12 @@ func TestUploadOperationsRequireAnUploadToken(t *testing.T) {
 				"api key":    {"Content-Type": "application/octet-stream", "Authorization": "Bearer " + apiKey},
 				"wrong kind": {"Content-Type": "application/octet-stream", "Authorization": "Basic abc"},
 			} {
+				if contentType != "" {
+					hdr = map[string]string{"Content-Type": contentType, "Authorization": hdr["Authorization"]}
+					if hdr["Authorization"] == "" {
+						delete(hdr, "Authorization")
+					}
+				}
 				ex := doBody(t, srv.URL, method, p, hdr, body)
 				if ex.resp.StatusCode != 401 {
 					t.Fatalf("%s %s (%s): status %d, body %s", method, path, name, ex.resp.StatusCode, ex.body)

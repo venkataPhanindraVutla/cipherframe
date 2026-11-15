@@ -35,6 +35,8 @@ const (
 	KindSegment  Kind = "segment"
 	// KindPoster is the poster image (not written yet; registered so M7 cannot forget it).
 	KindPoster Kind = "poster"
+	// KindSubtitle is a subtitle track (WebVTT), shared by every variant (ADR 0044).
+	KindSubtitle Kind = "subtitle"
 	// KindOther is anything else under an asset prefix. It is deleted like the rest and counted
 	// separately, so an unexpected object shows up in the record instead of vanishing.
 	KindOther Kind = "other"
@@ -63,6 +65,7 @@ func Registry() []Entry {
 		{Kind: KindInit, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactInit},
 		{Kind: KindSegment, Bucket: keys.Delivery, PerVariant: true, Artifact: db.ArtifactSegment},
 		{Kind: KindPoster, Bucket: keys.Delivery, Artifact: db.ArtifactPoster},
+		{Kind: KindSubtitle, Bucket: keys.Delivery, Artifact: db.ArtifactSubtitle},
 	}
 }
 
@@ -98,6 +101,10 @@ func Classify(tenant id.TenantID, asset id.AssetID, bucket keys.Bucket, key stri
 		}
 		if rest == "poster.jpg" {
 			c.Kind = KindPoster
+			return c
+		}
+		if name, ok := strings.CutPrefix(rest, "subtitles/"); ok && strings.HasSuffix(name, ".vtt") && !strings.Contains(name, "/") {
+			c.Kind = KindSubtitle
 			return c
 		}
 		for _, v := range []keys.Variant{keys.Original, keys.Masked} {

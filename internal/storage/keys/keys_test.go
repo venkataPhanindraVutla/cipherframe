@@ -28,6 +28,7 @@ func allKeys(t *testing.T, tn id.TenantID, a id.AssetID) []builtKey {
 		{"Segment0", keys.Delivery, keys.Segment(tn, a, r, 0)},
 		{"Segment9999", keys.Delivery, keys.Segment(tn, a, r, 9999)},
 		{"Poster", keys.Delivery, keys.Poster(tn, a)},
+		{"Subtitle", keys.Delivery, keys.Subtitle(tn, a, id.New[id.SubtitleKind]())},
 		{"MaskedMaster", keys.Delivery, keys.VariantMaster(tn, a, keys.Masked)},
 		{"MaskedPlaylist", keys.Delivery, keys.VariantPlaylist(tn, a, keys.Masked, r)},
 		{"MaskedInitSegment", keys.Delivery, keys.VariantInitSegment(tn, a, keys.Masked, r)},
@@ -125,7 +126,7 @@ func TestHLSPrefixCoversEveryHLSKeyAndNothingElse(t *testing.T) {
 	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
 	for _, k := range allKeys(t, tn, a) {
 		under := strings.HasPrefix(k.key, keys.HLSPrefix(tn, a))
-		isHLS := k.bucket == keys.Delivery && k.name != "Poster" && !strings.HasPrefix(k.name, "Masked")
+		isHLS := k.bucket == keys.Delivery && k.name != "Poster" && k.name != "Subtitle" && !strings.HasPrefix(k.name, "Masked")
 		if under != isHLS {
 			t.Errorf("%s: under HLSPrefix = %v, want %v", k.name, under, isHLS)
 		}

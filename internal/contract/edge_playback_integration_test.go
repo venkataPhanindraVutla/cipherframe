@@ -5,6 +5,7 @@ package contract
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbtest"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/hls"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
@@ -33,12 +35,12 @@ import (
 func init() {
 	// The playback responses are not JSON: the validator checks their headers and content type,
 	// and treats the bodies as opaque bytes.
-	for _, ct := range []string{"application/vnd.apple.mpegurl", "video/mp4", "video/iso.segment", "application/octet-stream"} {
+	for _, ct := range []string{"application/vnd.apple.mpegurl", "video/mp4", "video/iso.segment", "application/octet-stream", "text/vtt"} {
 		openapi3filter.RegisterBodyDecoder(ct, openapi3filter.FileBodyDecoder)
 	}
 }
 
-// TestEdgePlaybackOperationsMatchSpec drives the four session-scoped playback operations through
+// TestEdgePlaybackOperationsMatchSpec drives the session-scoped playback operations through
 // the real edge handler chain, against a real database and object store, and validates every
 // request and response (200 with each content type, 400, 401, 404 and, for the key, 429) against the spec.
 func TestEdgePlaybackOperationsMatchSpec(t *testing.T) {
@@ -119,6 +121,18 @@ func TestEdgePlaybackOperationsMatchSpec(t *testing.T) {
 	srv := httptest.NewServer(edge.New(edge.Deps{Log: log, Playback: p}).Handler())
 	t.Cleanup(srv.Close)
 
+	// One subtitle track (M7-1), stored the way the subtitle service stores it.
+	const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n\n"
+	track := id.New[id.SubtitleKind]()
+	put(keys.Subtitle(res.Tenant.ID, asset.ID, track), []byte(vtt))
+	vttSum := sha256.Sum256([]byte(vtt))
+	if _, err := repos.InsertSubtitle(ctx, db.Subtitle{
+		ID: track, AssetID: asset.ID, TenantID: res.Tenant.ID, Language: "en", Label: "English", Origin: db.SubtitleUpload,
+		CueCount: 1, DurationMS: 6000, SizeBytes: int64(len(vtt)), SHA256: vttSum[:],
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	covered := map[string]bool{}
 	call := func(path string, hdr map[string]string, wantStatus int) {
 		t.Helper()
@@ -136,6 +150,13 @@ func TestEdgePlaybackOperationsMatchSpec(t *testing.T) {
 	call(base+"/480p/media.m3u8", auth, 200)
 	call(base+"/480p/init.mp4", auth, 200)
 	call(base+"/480p/seg-0.m4s", auth, 200)
+
+	call(base+"/subtitles/"+track.String()+"/media.m3u8", auth, 200)
+	call(base+"/subtitles/"+track.String()+"/track.vtt", auth, 200)
+	call(base+"/subtitles/"+track.String()+"/track.vtt", nil, 401)
+	call(base+"/subtitles/"+track.String()+"/media.m3u8", map[string]string{"Authorization": "Bearer nope"}, 401)
+	call(base+"/subtitles/sub_00000000000000000000000001/track.vtt", auth, 404)
+	call(base+"/subtitles/sub_00000000000000000000000001/media.m3u8", auth, 404)
 
 	call(base+"/master.m3u8", nil, 401)
 	call(base+"/480p/seg-0.m4s", map[string]string{"Authorization": "Bearer nope"}, 401)
@@ -166,7 +187,7 @@ func TestEdgePlaybackOperationsMatchSpec(t *testing.T) {
 	}
 	validateProblem(t, doc, ex)
 
-	for _, op := range []string{"getPlaybackMaster", "getPlaybackMedia", "getPlaybackSegment", "getPlaybackKey"} {
+	for _, op := range []string{"getPlaybackMaster", "getPlaybackMedia", "getPlaybackSegment", "getPlaybackKey", "getPlaybackSubtitleMedia", "getPlaybackSubtitleFile"} {
 		if !covered[op] {
 			t.Fatalf("%s was not exercised with a 200 response; covered = %v", op, covered)
 		}

@@ -23,12 +23,14 @@ const (
 	ArtifactInit     ArtifactKind = "init"
 	ArtifactSegment  ArtifactKind = "segment"
 	ArtifactPoster   ArtifactKind = "poster"
+	// ArtifactSubtitle is a subtitle track (ADR 0044).
+	ArtifactSubtitle ArtifactKind = "subtitle"
 )
 
 // Valid reports whether k is a known kind.
 func (k ArtifactKind) Valid() bool {
 	switch k {
-	case ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster:
+	case ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster, ArtifactSubtitle:
 		return true
 	}
 	return false
@@ -249,5 +251,5 @@ func (r *Repos) SetAssetMasking(ctx context.Context, tenantID id.TenantID, asset
 // ArtifactKinds returns every kind asset_artifacts can hold. The purge registry (package purge)
 // must register each of them.
 func ArtifactKinds() []ArtifactKind {
-	return []ArtifactKind{ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster}
+	return []ArtifactKind{ArtifactMaster, ArtifactPlaylist, ArtifactInit, ArtifactSegment, ArtifactPoster, ArtifactSubtitle}
 }

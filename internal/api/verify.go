@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api/gen"
@@ -291,6 +292,16 @@ func (s *server) verifyAt(ctx context.Context, repos *db.Repos, tenantID id.Tena
 		}
 		httpx.Logger(ctx).Error("stored manifest failed verification", slog.String("asset_id", aid.String()), slog.Any("error", err))
 		return cannotSay(gen.ManifestUnverifiable), nil
+	}
+	if i := slices.IndexFunc(m.Subtitles, func(t manifest.Subtitle) bool { return t.Path == path }); i >= 0 {
+		// A subtitle track (ADR 0044): signed by hash, in no Merkle tree, so there is no proof to
+		// return. Both variants share it.
+		aidStr, v := aid.String(), gen.ArtifactVariant(variant)
+		res := gen.VerifyResult{Outcome: gen.Modified, AssetId: &aidStr, Variant: &v, Path: &path}
+		if m.Subtitles[i].SHA256 == sum {
+			res.Outcome = gen.Ours
+		}
+		return res, nil
 	}
 	pf, err := proof.Build(m, variant, path)
 	switch {

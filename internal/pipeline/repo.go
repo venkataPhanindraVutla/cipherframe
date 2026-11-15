@@ -39,8 +39,10 @@ type Repo interface {
 	Complete(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, c db.Completion) (db.Asset, error)
 	// CompleteMasking registers the masked variant's artifacts, replaces the manifest with the
 	// re-signed one and sets masking_state ready with the face count, in ONE transaction. It is a
-	// state conflict (db.ErrStateChanged) unless the asset is still ready.
-	CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, faces int, at time.Time) error
+	// state conflict (db.ErrStateChanged) unless the asset is still ready. base is the payload hash
+	// of the manifest m was built from: if the stored manifest changed meanwhile (a subtitle track
+	// was added or removed), it fails with db.ErrManifestChanged and the caller builds m again.
+	CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, base []byte, faces int, at time.Time) error
 	// SetMasking records the masking state (and the face count, when known) of a masking asset.
 	SetMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, state string, faces *int, at time.Time) error
 }
@@ -96,7 +98,7 @@ func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.Asse
 }
 
 // CompleteMasking implements Repo.
-func (r *DBRepo) CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, faces int, at time.Time) error {
+func (r *DBRepo) CompleteMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, arts []db.Artifact, m db.AssetManifest, base []byte, faces int, at time.Time) error {
 	return inTx(ctx, r.pool, func(rawTx pgx.Tx, tx *db.Repos) error {
 		cur, err := tx.LockAsset(ctx, tenant, asset)
 		if err != nil {
@@ -111,10 +113,7 @@ func (r *DBRepo) CompleteMasking(ctx context.Context, tenant id.TenantID, asset 
 			}
 		}
 		// The manifest is replaced by the one that also covers the masked variant.
-		if _, err := tx.DeleteManifest(ctx, asset); err != nil {
-			return err
-		}
-		if err := tx.InsertManifest(ctx, m); err != nil {
+		if err := tx.ReplaceManifest(ctx, m, base); err != nil {
 			return err
 		}
 		// The new row has no token; the old one went with the old row. Anchor the new payload.

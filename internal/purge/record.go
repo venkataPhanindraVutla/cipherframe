@@ -11,6 +11,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/deletion"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/dsse"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/version"
 )
 
@@ -19,7 +20,7 @@ import (
 // current signing key and returns the row to store. A signer failure is an ordinary error: the
 // caller's transaction rolls back (the keys are not destroyed) and the job retries. Neither the
 // payload nor the signature is ever logged.
-func (p *Purger) sealRecord(ctx context.Context, asset db.Asset, t *tally, destroyed []db.DestroyedKey, manifestRoot []byte, at time.Time) (db.DeletionRecord, error) {
+func (p *Purger) sealRecord(ctx context.Context, signer signing.Signer, asset db.Asset, t *tally, destroyed []db.DestroyedKey, manifestRoot []byte, at time.Time) (db.DeletionRecord, error) {
 	in := deletion.Input{
 		AssetID: asset.ID.String(), TenantID: asset.TenantID.String(),
 		RequestedAt: *asset.DeletionRequestedAt, CompletedAt: at, Reason: asset.DeletionReason,
@@ -37,7 +38,7 @@ func (p *Purger) sealRecord(ctx context.Context, asset db.Asset, t *tally, destr
 	if err != nil {
 		return db.DeletionRecord{}, fmt.Errorf("purge: build the deletion record: %w", err)
 	}
-	keyID, sig, err := p.Signer.Sign(ctx, dsse.PAE(deletion.PayloadType, built.Canonical))
+	keyID, sig, err := signer.Sign(ctx, dsse.PAE(deletion.PayloadType, built.Canonical))
 	if err != nil {
 		return db.DeletionRecord{}, fmt.Errorf("purge: sign the deletion record: %w", err)
 	}

@@ -68,6 +68,8 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/assets` | yes | no | `assets:write` |
 | `GET /v1/assets`, `GET /v1/assets/{asset_id}`, `GET /v1/assets/{asset_id}/deletion-record` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
+| `GET /v1/assets/{asset_id}/subtitles`, `GET /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:read` |
+| `POST /v1/assets/{asset_id}/subtitles`, `POST /v1/assets/{asset_id}/transcripts`, `DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:write` |
 | `POST /v1/playback-sessions` | yes | no | `sessions:write` |
 | `GET /v1/playback-sessions/{session_id}` | yes | no | `sessions:write` |
 | `POST /v1/playback-sessions/{session_id}/revoke`, `POST /v1/playback-sessions/revoke` | yes | no | `sessions:write` |
@@ -75,6 +77,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `GET /v1/privacy-settings`, `PUT /v1/privacy-settings` | yes | no | `admin` |
 | `GET /v1/assets/{asset_id}/access-log`, `GET /v1/playback-sessions/{session_id}/access-log` | yes | no | `assets:read` |
 | `GET /v1/play/{session_id}/master.m3u8`, `GET /v1/play/{session_id}/{rendition}/media.m3u8` | no | yes | playback token (`manifest`) |
+| `GET /v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8`, `.../track.vtt` | no | yes | playback token (`manifest`) |
 | `GET /v1/play/{session_id}/{rendition}/{file}` | no | yes | playback token (`segment`) |
 | `GET /v1/play/{session_id}/key` | no | yes | playback token (`key`) |
 | `POST /v1/play/{session_id}/heartbeat`, `POST /v1/play/{session_id}/end` | no | yes | playback token (`manifest`) |
@@ -314,6 +317,78 @@ CORS: the multipart endpoints answer any origin without credentials, because the
 - Duration and resolution limits are enforced later, by the probe step.
 - An uploader can lie about `content_type`; it is stored as object metadata only.
 
+## Subtitles and transcripts (ADR 0043, 0044)
+
+Names and shapes are flagged for owner review before v1.0.0. An asset has up to 20 subtitle tracks.
+A track is WebVTT, stored unencrypted in the delivery bucket, listed in the asset's signed manifest and
+served only through a playback session.
+
+| Operation | Route | Scope | Answers |
+|---|---|---|---|
+| `createAssetSubtitle` | `POST /v1/assets/{asset_id}/subtitles` | `assets:write` | `201` the track |
+| `importAssetTranscript` | `POST /v1/assets/{asset_id}/transcripts` | `assets:write` | `201` the track |
+| `listAssetSubtitles` | `GET /v1/assets/{asset_id}/subtitles` | `assets:read` | `200` `{"items": [...]}`, oldest first |
+| `getAssetSubtitle` | `GET /v1/assets/{asset_id}/subtitles/{subtitle_id}` | `assets:read` | `200` the track |
+| `deleteAssetSubtitle` | `DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id}` | `assets:write` | `204` |
+
+**Upload.** `multipart/form-data` with `file` (WebVTT or SRT, at most 2 MB; the format is read from the
+content), `language` (a BCP 47 tag such as `en` or `pt-BR`, stored in canonical case), `label` (1 to 100
+characters) and optionally `default` (`true` or `false`). The file name the client sends is ignored and
+never stored. The track is rewritten from the parsed cues, so what is stored is always canonical WebVTT:
+
+```sh
+curl -X POST "$API/v1/assets/$ASSET/subtitles" -H "Authorization: Bearer $KEY" \
+  -F file=@captions.srt -F language=en -F label=English -F default=true
+```
+
+```json
+{
+  "id": "sub_06gxtkpm49t09dtdnztknyq1wg", "asset_id": "ast_...", "language": "en", "label": "English",
+  "default": true, "origin": "upload", "cue_count": 412, "size_bytes": 18302,
+  "sha256": "9f...", "created_at": "2026-11-15T09:12:24Z"
+}
+```
+
+**Import.** `POST /v1/assets/{asset_id}/transcripts` with JSON `language`, `label`, optional `default`, and
+`cues`, a list of `start` and `end` (seconds from the start of the video, decimals allowed, rounded to the
+millisecond), `text` (plain text, never read as markup) and optional `speaker` (written as a `<v>` tag).
+The result is a track with `origin` `import`.
+
+**Rules** (both routes, each breach is `400 invalid_request` with a field error that names the cue and
+never quotes the content):
+
+- At most 2 MB (`413 payload_too_large` above that; the request body may be up to 4 MB), UTF-8, no NUL; a
+  byte order mark and CRLF line endings are accepted.
+- Every cue has a time range in `[hh:]mm:ss.ttt` (SRT: `hh:mm:ss,ttt`), ends after it starts, does not
+  start before the cue before it, and ends no later than the asset's duration plus 2 seconds. Cues may
+  overlap. At most 20000 cues, 1000 characters and 12 lines per cue; a cue with no visible text is refused.
+- Only plain text and the tags `b`, `i`, `u`, `v`, `lang` and `c` are kept. Every other tag, cue setting,
+  identifier, note, style and region is dropped, and `&`, `<` and `>` are written as references.
+- At most 20 tracks (`409 conflict` for the next) and at most one default: a new default replaces the old
+  one, and deleting the default promotes none.
+- Only a `ready` asset takes tracks: `409 asset_not_ready` otherwise, `409 conflict` while it is being
+  deleted, `404 not_found` once deleted and for another tenant's asset or track.
+
+Each add or delete signs the manifest again (see [integrity.md](integrity.md#subtitle-tracks)) and writes
+an audit event (`asset.subtitle.add`, `asset.subtitle.delete`). Responses never carry a storage key.
+
+**Serving.** The master playlist of a session lists the asset's tracks as an `EXT-X-MEDIA` group of type
+`SUBTITLES` (`GROUP-ID="subs"`, one `NAME`, `LANGUAGE`, `DEFAULT` and `URI` each) and names the group on
+every variant. A player follows `URI` (`subtitles/<id>/media.m3u8`), whose one segment is `track.vtt`; with
+`token_in_url` on, both URIs carry `?t=<token>` like the others. Both routes check what the media playlists
+check: a `manifest`-scope token, the session row (a revoked, ended or idle session gets the one `401`),
+the tenant's CORS settings. The track is found by the tenant and asset in the token, so a session never
+reads another asset's track (`404`). Responses are `no-store`.
+
+### What the subtitle endpoints do not protect against
+
+- Tracks are **not encrypted**. Access control is the session: anyone with a valid session can fetch and
+  keep a track, and the content key plays no part. Do not upload subtitles that must stay secret.
+- The label is not signed (it is not in the manifest); the words, language, default flag and origin are.
+- A session that already fetched its master playlist keeps the track list it saw; a deleted track is `404`
+  for it.
+- Cue positioning and styles are dropped, and nothing translates or checks the words.
+
 ## Playback sessions and settings (ADR 0028, 0030)
 
 Endpoint names and shapes are flagged for owner review before v1.0.0. This section covers the
@@ -438,7 +513,7 @@ still applies. The edge segment route keeps working in both modes.
 
 ### Playlists and segments on edge (ADR 0027, 0030)
 
-Four `GET` routes on the edge listener serve a session. The player starts at `manifest_url` and
+Six `GET` routes on the edge listener serve a session. The player starts at `manifest_url` and
 follows the URIs in the playlists; it never builds a URL itself.
 
 | Route | Scope | Returns |
@@ -447,6 +522,8 @@ follows the URIs in the playlists; it never builds a URL itself.
 | `/v1/play/{session_id}/{rendition}/media.m3u8` | `manifest` | One rendition's media playlist. |
 | `/v1/play/{session_id}/{rendition}/{file}` | `segment` | `init.mp4` (`video/mp4`) or `seg-<n>.m4s` (`video/iso.segment`), streamed from the delivery bucket with `Content-Length`. |
 | `/v1/play/{session_id}/key` | `key` | The 16-byte AES-128 content key, raw (`application/octet-stream`). See below. |
+| `/v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8` | `manifest` | One subtitle track's media playlist (one WebVTT segment). See "Subtitles and transcripts". |
+| `/v1/play/{session_id}/subtitles/{subtitle_id}/track.vtt` | `manifest` | The track's WebVTT file (`text/vtt`), unencrypted, `no-store`. |
 
 **Rewriting.** The stored playlists are canonical templates with the placeholder `cipherframe-key`
 as the key URI (ADR 0027). Edge rewrites them per request with a strict line rewriter that touches

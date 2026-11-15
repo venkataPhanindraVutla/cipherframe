@@ -318,8 +318,14 @@ func (p *Purger) sweep(ctx context.Context, asset db.Asset, t *tally) (int, erro
 // is stored and the asset becomes the tombstone. It runs only after storage was verified empty, so a failed purge leaves the keys
 // where they are (the data stays encrypted) and a retry still knows which keys to name.
 func (p *Purger) finish(ctx context.Context, asset db.Asset, t *tally, log *slog.Logger) error {
+	// The record is signed inside the transaction, so the key is opened before it (signing.Prepare).
+	signer, release, err := signing.Prepare(ctx, p.Signer)
+	if err != nil {
+		return err
+	}
+	defer release()
 	var destroyed []db.DestroyedKey
-	err := db.Tx(ctx, p.Pool, func(tx *db.Repos) error {
+	err = db.Tx(ctx, p.Pool, func(tx *db.Repos) error {
 		cur, err := tx.LockAsset(ctx, asset.TenantID, asset.ID)
 		if err != nil {
 			return err
@@ -340,11 +346,14 @@ func (p *Purger) finish(ctx context.Context, asset db.Asset, t *tally, log *slog
 		if _, err := tx.DeleteAssetArtifacts(ctx, asset.ID); err != nil {
 			return err
 		}
+		if _, err := tx.DeleteAssetSubtitles(ctx, asset.ID); err != nil {
+			return err
+		}
 		if _, err := tx.DeleteManifest(ctx, asset.ID); err != nil {
 			return err
 		}
 		now := p.Now().UTC()
-		rec, err := p.sealRecord(ctx, cur, t, destroyed, root, now)
+		rec, err := p.sealRecord(ctx, signer, cur, t, destroyed, root, now)
 		if err != nil {
 			return err
 		}
