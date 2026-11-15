@@ -141,6 +141,12 @@ func (s *Service) add(ctx context.Context, tenant id.TenantID, actor auth.Actor,
 	trackID := id.New[id.SubtitleKind]()
 	key := keys.Subtitle(tenant, assetID, trackID)
 
+	// Signing happens inside the transaction, so the key is opened before it (signing.Prepare).
+	signer, release, err := signing.Prepare(ctx, s.Signer)
+	if err != nil {
+		return db.Subtitle{}, err
+	}
+	defer release()
 	var out db.Subtitle
 	stored := false
 	err = s.inTx(ctx, func(raw pgx.Tx, tx *db.Repos) error {
@@ -174,7 +180,7 @@ func (s *Service) add(ctx context.Context, tenant id.TenantID, actor auth.Actor,
 		}); err != nil {
 			return err
 		}
-		if err := s.resign(ctx, raw, tx, tenant, assetID); err != nil {
+		if err := s.resign(ctx, signer, raw, tx, tenant, assetID); err != nil {
 			return err
 		}
 		return audit(ctx, tx, tenant, actor, AuditSubtitleAdd, assetID)
@@ -222,6 +228,11 @@ func (s *Service) Get(ctx context.Context, tenant id.TenantID, assetID id.AssetI
 // leaves the track as it was and repeating the call finishes the job.
 func (s *Service) Delete(ctx context.Context, tenant id.TenantID, actor auth.Actor, assetID id.AssetID, trackID id.SubtitleID) error {
 	key := keys.Subtitle(tenant, assetID, trackID)
+	signer, release, err := signing.Prepare(ctx, s.Signer)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.inTx(ctx, func(raw pgx.Tx, tx *db.Repos) error {
 		cur, err := tx.LockAsset(ctx, tenant, assetID)
 		if err != nil {
@@ -242,7 +253,7 @@ func (s *Service) Delete(ctx context.Context, tenant id.TenantID, actor auth.Act
 		if err := tx.DeleteArtifact(ctx, assetID, string(keys.Delivery), key); err != nil {
 			return err
 		}
-		if err := s.resign(ctx, raw, tx, tenant, assetID); err != nil {
+		if err := s.resign(ctx, signer, raw, tx, tenant, assetID); err != nil {
 			return err
 		}
 		return audit(ctx, tx, tenant, actor, AuditSubtitleDelete, assetID)
@@ -251,7 +262,7 @@ func (s *Service) Delete(ctx context.Context, tenant id.TenantID, actor auth.Act
 
 // resign rebuilds the asset's manifest with its current track list and stores it in place of the
 // old one, in the caller's transaction. The new payload is queued for timestamping when that is on.
-func (s *Service) resign(ctx context.Context, raw pgx.Tx, tx *db.Repos, tenant id.TenantID, assetID id.AssetID) error {
+func (s *Service) resign(ctx context.Context, signer signing.Signer, raw pgx.Tx, tx *db.Repos, tenant id.TenantID, assetID id.AssetID) error {
 	cur, err := tx.GetManifest(ctx, assetID)
 	if err != nil {
 		return err
@@ -278,7 +289,7 @@ func (s *Service) resign(ctx context.Context, raw pgx.Tx, tx *db.Repos, tenant i
 	if err != nil {
 		return err
 	}
-	row, err := pipeline.SignManifest(ctx, s.Signer, tenant, assetID, built, s.Now().UTC())
+	row, err := pipeline.SignManifest(ctx, signer, tenant, assetID, built, s.Now().UTC())
 	if err != nil {
 		return err
 	}

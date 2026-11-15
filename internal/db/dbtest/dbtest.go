@@ -72,6 +72,10 @@ func NewMigrated(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.Database = name
+	// The pgx default is max(4, CPUs). Pinning the small end makes a test hit, on any machine, the
+	// pool exhaustion a small host (or CI runner) hits: code that waits for a second connection
+	// while a transaction holds one deadlocks here too instead of only in CI.
+	cfg.MaxConns = 4
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("pool: %v", err)

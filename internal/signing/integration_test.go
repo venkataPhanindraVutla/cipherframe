@@ -13,6 +13,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -393,5 +394,55 @@ func TestNoPrivateMaterialInLogsOrErrors(t *testing.T) {
 	}
 	if e.logs.String() == "" {
 		t.Fatal("expected the manager to log the key creation")
+	}
+}
+
+// A prepared signer signs with no database connection: it keeps working while every connection
+// of the pool is taken (as when transactions queued behind a row lock hold them all), where
+// Manager.Sign would wait for a connection forever. Once released it signs nothing.
+func TestPreparedSignsWithThePoolExhausted(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.mgr.EnsureCurrent(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.pool.Config()
+	cfg.MaxConns = 1
+	small, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(small.Close)
+	mgr := NewManager(small, e.reg, slog.New(slog.DiscardHandler))
+	signer, release, err := Prepare(ctx, mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := small.Acquire(ctx) // the pool's only connection
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+
+	short, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, _, err := mgr.Sign(short, []byte("x")); err == nil {
+		t.Fatal("Manager.Sign succeeded with no free connection, so this test proves nothing")
+	}
+	msg := []byte("test-fixture-manifest-bytes")
+	keyID, sig, err := signer.Sign(short, msg)
+	if err != nil {
+		t.Fatalf("prepared Sign with the pool exhausted: %v", err)
+	}
+	row, err := e.repos.GetCurrentSigningKey(ctx, PurposeIntegrity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keyID != row.KeyID || !ed25519.Verify(row.PublicKey, msg, sig) {
+		t.Fatal("the prepared signature does not verify with the current key")
+	}
+	release()
+	if _, _, err := signer.Sign(ctx, msg); err == nil {
+		t.Fatal("a released signer still signs")
 	}
 }
