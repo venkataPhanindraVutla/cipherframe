@@ -2597,6 +2597,133 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/poster.jpg:
+    get:
+      operationId: getPlaybackPoster
+      summary: Session poster image
+      description: |
+        A JPEG poster frame, taken at 10 percent of the video (ADR 0046), at most 640 pixels wide.
+        Requires a token with the `manifest` scope and the session checks of the media playlists (the
+        session row, `token_in_url`, `no-store`, CORS). The image or track is the one of the variant
+        the session is bound to: a session for the masked variant only ever gets images made from
+        the masked output (ADR 0046). It is never a presigned or public URL, whatever the tenant's
+        `delivery` setting is. An asset without thumbnails (processed before they existed, or
+        whose generation was skipped) answers `404`.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The poster image.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/sprite.jpg:
+    get:
+      operationId: getPlaybackSprite
+      summary: Session thumbnail sprite sheet
+      description: |
+        A JPEG sheet of thumbnail tiles, one every 10 seconds or more (ADR 0046), laid out left to
+        right in rows of at most 10. The thumbnail track says which rectangle is which time.
+        Requires a token with the `manifest` scope and the session checks of the media playlists (the
+        session row, `token_in_url`, `no-store`, CORS). The image or track is the one of the variant
+        the session is bound to: a session for the masked variant only ever gets images made from
+        the masked output (ADR 0046). It is never a presigned or public URL, whatever the tenant's
+        `delivery` setting is. An asset without thumbnails (processed before they existed, or
+        whose generation was skipped) answers `404`.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The thumbnail sprite sheet.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/thumbnails.vtt:
+    get:
+      operationId: getPlaybackThumbnails
+      summary: Session thumbnail track
+      description: |
+        The WebVTT thumbnail track (`text/vtt`): one cue per tile whose payload is
+        `sprite.jpg#xywh=x,y,w,h`. The sprite reference is relative, so it resolves to
+        `/v1/play/{session_id}/sprite.jpg`, and carries `?t=<token>` when the tenant allows tokens
+        in URLs.
+        Requires a token with the `manifest` scope and the session checks of the media playlists (the
+        session row, `token_in_url`, `no-store`, CORS). The image or track is the one of the variant
+        the session is bound to: a session for the masked variant only ever gets images made from
+        the masked output (ADR 0046). It is never a presigned or public URL, whatever the tenant's
+        `delivery` setting is. An asset without thumbnails (processed before they existed, or
+        whose generation was skipped) answers `404`.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The thumbnail track.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            text/vtt:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/play/{session_id}/key:
     get:
       operationId: getPlaybackKey
