@@ -56,13 +56,14 @@ var capabilities = []listing{
 		{anyOf: []string{"libdav1d", "libaom-av1"}},
 		one("aac"), one("opus"),
 		{anyOf: []string{"mp3float", "mp3"}},
+		one("rawvideo"), // the brand logo arrives as raw RGBA pixels (ADR 0049)
 	}},
 	{flag: "-muxers", kind: "muxer", need: []requirement{one("mp4"), one("hls"), one("image2")}},
-	{flag: "-demuxers", kind: "demuxer", need: []requirement{one("mov"), one("matroska")}},
+	{flag: "-demuxers", kind: "demuxer", need: []requirement{one("mov"), one("matroska"), one("rawvideo")}},
 	{flag: "-protocols", kind: "protocol", need: []requirement{one("file"), one("pipe")}},
 	{flag: "-filters", kind: "filter", need: []requirement{
 		one("scale"), one("format"), one("aresample"), one("null"), one("anull"), one("setsar"), one("fps"), one("split"),
-		one("trim"), one("setpts"), one("tile"),
+		one("trim"), one("setpts"), one("tile"), one("overlay"), one("colorchannelmixer"),
 	}},
 }
 

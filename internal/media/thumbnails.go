@@ -84,12 +84,21 @@ type ThumbnailSpec struct {
 // streams in and sheetIn (both already at the output frame rate).
 // round=up makes the sheet hold ceil(duration/interval) frames, one per cue: the default rounds to
 // nearest and gives no frame at all for a video shorter than half an interval.
-func (s ThumbnailSpec) graph(posterIn, sheetIn string) string {
+//
+// With a logo, each picture gets it after it is scaled to its own size, from the logo branches
+// posterLogo and sheetLogo (ADR 0049): the poster and every tile show the brand like the video does.
+func (s ThumbnailSpec) graph(posterIn, sheetIn string, logo *LogoSpec, posterLogo, sheetLogo int) string {
 	p := s.Plan
-	return fmt.Sprintf("[%s]trim=start=%s,setpts=PTS-STARTPTS,scale=%d:%d:flags=bicubic,setsar=1,format=yuvj420p[poster];"+
-		"[%s]fps=fps=1/%d:round=up,scale=%d:%d:flags=bicubic,setsar=1,format=yuvj420p,tile=%dx%d[sheet]",
-		posterIn, strconv.FormatFloat(p.PosterAt.Seconds(), 'f', 3, 64), p.PosterWidth, p.PosterHeight,
-		sheetIn, int(p.Interval.Seconds()), p.TileWidth, p.TileHeight, p.Columns, p.Rows)
+	poster := fmt.Sprintf("[%s]trim=start=%s,setpts=PTS-STARTPTS,scale=%d:%d:flags=bicubic,setsar=1",
+		posterIn, strconv.FormatFloat(p.PosterAt.Seconds(), 'f', 3, 64), p.PosterWidth, p.PosterHeight)
+	sheet := fmt.Sprintf("[%s]fps=fps=1/%d:round=up,scale=%d:%d:flags=bicubic,setsar=1",
+		sheetIn, int(p.Interval.Seconds()), p.TileWidth, p.TileHeight)
+	if logo == nil {
+		return poster + ",format=yuvj420p[poster];" + sheet + fmt.Sprintf(",format=yuvj420p,tile=%dx%d[sheet]", p.Columns, p.Rows)
+	}
+	return poster + "[pb];" + logo.overlay(posterLogo, "pb", "pc", p.PosterWidth, p.PosterHeight) + ";[pc]format=yuvj420p[poster];" +
+		sheet + "[sb];" + logo.overlay(sheetLogo, "sb", "sc", p.TileWidth, p.TileHeight) +
+		fmt.Sprintf(";[sc]format=yuvj420p,tile=%dx%d[sheet]", p.Columns, p.Rows)
 }
 
 // args are the two outputs. Each writes one JPEG: -frames:v 1 stops the sheet after its first full
