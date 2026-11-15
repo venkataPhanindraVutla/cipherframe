@@ -36,6 +36,12 @@ var operationScopes = map[string][]db.Scope{
 	"DeleteAsset": {db.ScopeAssetsWrite},
 	"UpdateAsset": {db.ScopeAssetsWrite},
 
+	"CreateAssetSubtitle":   {db.ScopeAssetsWrite},
+	"ImportAssetTranscript": {db.ScopeAssetsWrite},
+	"DeleteAssetSubtitle":   {db.ScopeAssetsWrite},
+	"ListAssetSubtitles":    {db.ScopeAssetsRead},
+	"GetAssetSubtitle":      {db.ScopeAssetsRead},
+
 	"CreatePlaybackSession":  {db.ScopeSessionsWrite},
 	"GetPlaybackSession":     {db.ScopeSessionsWrite},
 	"RevokePlaybackSession":  {db.ScopeSessionsWrite},
@@ -351,4 +357,24 @@ func (g guarded) GetWebhookDelivery(w http.ResponseWriter, r *http.Request, deli
 
 func (g guarded) ReplayWebhookDelivery(w http.ResponseWriter, r *http.Request, deliveryID gen.WebhookDeliveryIdPath) {
 	g.a.run("ReplayWebhookDelivery", w, r, func(r *http.Request) { g.ServerInterface.ReplayWebhookDelivery(w, r, deliveryID) })
+}
+
+func (g guarded) CreateAssetSubtitle(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("CreateAssetSubtitle", w, r, func(r *http.Request) { g.ServerInterface.CreateAssetSubtitle(w, r, assetID) })
+}
+
+func (g guarded) ImportAssetTranscript(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("ImportAssetTranscript", w, r, func(r *http.Request) { g.ServerInterface.ImportAssetTranscript(w, r, assetID) })
+}
+
+func (g guarded) ListAssetSubtitles(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("ListAssetSubtitles", w, r, func(r *http.Request) { g.ServerInterface.ListAssetSubtitles(w, r, assetID) })
+}
+
+func (g guarded) GetAssetSubtitle(w http.ResponseWriter, r *http.Request, assetID gen.AssetId, subtitleID gen.SubtitleIdPath) {
+	g.a.run("GetAssetSubtitle", w, r, func(r *http.Request) { g.ServerInterface.GetAssetSubtitle(w, r, assetID, subtitleID) })
+}
+
+func (g guarded) DeleteAssetSubtitle(w http.ResponseWriter, r *http.Request, assetID gen.AssetId, subtitleID gen.SubtitleIdPath) {
+	g.a.run("DeleteAssetSubtitle", w, r, func(r *http.Request) { g.ServerInterface.DeleteAssetSubtitle(w, r, assetID, subtitleID) })
 }

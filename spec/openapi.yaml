@@ -556,6 +556,234 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/subtitles:
+    post:
+      operationId: createAssetSubtitle
+      summary: Add a subtitle track
+      description: |
+        Adds a subtitle track to a ready asset (M7-1, ADR 0043, ADR 0044). The body is
+        `multipart/form-data` with the member `file` (WebVTT or SRT; the format is read from the
+        content and SRT is converted to WebVTT), `language` (a BCP 47 tag such as `en` or `pt-BR`,
+        stored in canonical case), `label` (the text a player shows, 1 to 100 characters) and the
+        optional `default` (`true` or `false`). The file name the client sends is ignored and never
+        stored.
+
+        The file is checked strictly and rewritten: at most 2 MB, UTF-8, well-formed cues whose
+        start times never go backwards and that end after they start and no later than the asset's
+        duration plus two seconds, at most 20000 cues and 1000 characters and 12 lines per cue. Only
+        plain text and the WebVTT tags `b`, `i`, `u`, `v`, `lang` and `c` are kept; every other tag,
+        cue setting, identifier, note, style and region is dropped. Anything that breaks a rule is
+        `400 invalid_request` with a field error that names the cue and never quotes the file.
+
+        An asset has at most 20 tracks (`409 conflict` beyond that) and at most one default: a new
+        default track replaces the old one. Only a `ready` asset accepts a track (`409
+        asset_not_ready` otherwise, `409 conflict` while it is being deleted, `404` once deleted).
+        The track is stored under the asset's prefix, registered with the purge and added to the
+        asset's signed manifest, which is signed again. It is not encrypted: it is served only
+        through a playback session. Requires the `assets:write` scope. An asset of another tenant
+        is `not_found`.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, language, label]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The WebVTT or SRT file, at most 2 MB.
+                language:
+                  type: string
+                  maxLength: 35
+                  description: A BCP 47 language tag.
+                label:
+                  type: string
+                  maxLength: 100
+                  description: The name a player shows for the track.
+                default:
+                  type: string
+                  enum: ["true", "false"]
+                  description: Whether players should select the track unasked. Default `false`.
+      responses:
+        "201":
+          description: The track.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubtitleTrack"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listAssetSubtitles
+      summary: List an asset's subtitle tracks
+      description: |
+        Returns every track of the asset, oldest first (at most 20, so there is no paging). An
+        asset without tracks gives an empty list. Requires the `assets:read` scope. An asset of
+        another tenant, an unknown one and a deleted one are `not_found`.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: The tracks.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubtitleList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/subtitles/{subtitle_id}:
+    get:
+      operationId: getAssetSubtitle
+      summary: Get a subtitle track's metadata
+      description: |
+        Returns one track's metadata (never the file: viewers read it through a playback session).
+        Requires the `assets:read` scope. A track or asset of another tenant, an unknown one and a
+        deleted asset are `not_found`.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:read]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - $ref: "#/components/parameters/SubtitleIdPath"
+      responses:
+        "200":
+          description: The track.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubtitleTrack"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteAssetSubtitle
+      summary: Delete a subtitle track
+      description: |
+        Removes the track's file, its registry and metadata rows and its entry in the asset's signed
+        manifest, which is signed again. Sessions that already fetched the master playlist may still
+        ask for the track and get `404`. Requires the `assets:write` scope. Only a `ready` asset
+        loses tracks this way (`409` while it is being deleted, where the purge removes them). A
+        track or asset of another tenant and an unknown one are `not_found`.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - $ref: "#/components/parameters/SubtitleIdPath"
+      responses:
+        "204":
+          description: The track was deleted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/transcripts:
+    post:
+      operationId: importAssetTranscript
+      summary: Import a transcript as a subtitle track
+      description: |
+        Builds a WebVTT subtitle track from timed text (M7-1, ADR 0044) under the same rules, limits
+        and storage as `createAssetSubtitle`; the track's `origin` is `import`. `cues` is a list of
+        `start` and `end` (seconds from the start of the video, with millisecond precision), `text`
+        (plain text: it is never read as markup, so `<b>` is shown as typed) and an optional
+        `speaker` (which becomes a `v` tag). The body is at most 4 MB. Requires the `assets:write`
+        scope. An asset of another tenant is `not_found`.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportTranscriptRequest"
+      responses:
+        "201":
+          description: The track.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubtitleTrack"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/assets/{asset_id}/access-log:
     get:
       operationId: getAssetAccessLog
@@ -2089,6 +2317,85 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/subtitles/{subtitle_id}/media.m3u8:
+    get:
+      operationId: getPlaybackSubtitleMedia
+      summary: Session subtitle playlist
+      description: |
+        The WebVTT media playlist of one subtitle track of the session's asset (ADR 0044): a single
+        segment, `track.vtt`, as long as the video. It is what the master playlist's
+        `EXT-X-MEDIA` entry of type `SUBTITLES` points at. Requires a token with the `manifest`
+        scope and the same session check, `token_in_url`, `no-store` and CORS rules as the media
+        playlists. A track that does not exist (or was deleted) is `404`.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlaySubtitleId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The playlist.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/play/{session_id}/subtitles/{subtitle_id}/track.vtt:
+    get:
+      operationId: getPlaybackSubtitleFile
+      summary: Session subtitle file
+      description: |
+        The WebVTT file of one subtitle track (`text/vtt`). Subtitles are not encrypted: access is
+        controlled by the session alone (ADR 0044), so this route checks what the media playlists
+        check, a token with the `manifest` scope and the session row, and a revoked, ended or idle
+        session is refused with the same `401`. The response is `no-store`. A track that does not
+        exist (or was deleted) is `404`.
+      tags: [edge]
+      security:
+        - playbackToken: []
+      parameters:
+        - $ref: "#/components/parameters/PlaySessionId"
+        - $ref: "#/components/parameters/PlaySubtitleId"
+        - $ref: "#/components/parameters/PlayTokenQuery"
+      responses:
+        "200":
+          description: The WebVTT file.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicyNoReferrer"
+          content:
+            text/vtt:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/PlaybackUnauthenticated"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/play/{session_id}/key:
     get:
       operationId: getPlaybackKey
@@ -2606,6 +2913,22 @@ components:
       schema:
         type: string
         maxLength: 1024
+    SubtitleIdPath:
+      name: subtitle_id
+      in: path
+      required: true
+      description: A subtitle track ID (`sub_` followed by 26 characters).
+      schema:
+        type: string
+        maxLength: 64
+    PlaySubtitleId:
+      name: subtitle_id
+      in: path
+      required: true
+      description: A subtitle track ID (`sub_` followed by 26 characters), as listed in the master playlist.
+      schema:
+        type: string
+        pattern: "^sub_[0-9a-hjkmnp-tv-z]{26}$"
     KeyId:
       name: key_id
       in: path
@@ -3317,6 +3640,86 @@ components:
           description: |
             How many faces the masker found. Absent until it has run. `0` means the masked variant
             was published but no face was found; the embedding application may want to warn.
+    SubtitleTrack:
+      type: object
+      additionalProperties: false
+      required: [id, asset_id, language, label, default, origin, cue_count, size_bytes, sha256, created_at]
+      properties:
+        id:
+          type: string
+          description: The track ID (`sub_` followed by 26 characters).
+        asset_id:
+          type: string
+        language:
+          type: string
+          description: The BCP 47 tag, in canonical case.
+        label:
+          type: string
+        default:
+          type: boolean
+        origin:
+          type: string
+          enum: [upload, import]
+          description: "`upload` for a WebVTT or SRT file, `import` for a transcript import."
+        cue_count:
+          type: integer
+        size_bytes:
+          type: integer
+          format: int64
+          description: The size of the stored WebVTT file.
+        sha256:
+          type: string
+          description: SHA-256 of the stored WebVTT file (lowercase hex), as recorded in the signed manifest.
+        created_at:
+          type: string
+          format: date-time
+    SubtitleList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubtitleTrack"
+    ImportTranscriptRequest:
+      type: object
+      additionalProperties: false
+      required: [language, label, cues]
+      properties:
+        language:
+          type: string
+          maxLength: 35
+          description: A BCP 47 language tag.
+        label:
+          type: string
+          maxLength: 100
+        default:
+          type: boolean
+          description: Whether players should select the track unasked. Default `false`.
+        cues:
+          type: array
+          maxItems: 20000
+          items:
+            type: object
+            additionalProperties: false
+            required: [start, end, text]
+            properties:
+              start:
+                type: number
+                format: double
+                description: Seconds from the start of the video.
+              end:
+                type: number
+                format: double
+                description: Seconds from the start of the video; after `start`.
+              text:
+                type: string
+                maxLength: 1000
+                description: Plain text; line breaks are kept.
+              speaker:
+                type: string
+                maxLength: 100
     Asset:
       type: object
       additionalProperties: false

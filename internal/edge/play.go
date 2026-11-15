@@ -107,6 +107,10 @@ type PlaybackDeps struct {
 	// Nil raises nothing. The segments_without_key signal does not go through here: the same
 	// detector is the Recorder's segment sink.
 	Anomalies *anomaly.Detector
+	// Subtitles lists and reads subtitle tracks (ADR 0044). It defaults to Store when that also
+	// implements SubtitleStore (*db.Repos does); without one the master playlist lists no tracks
+	// and the subtitle routes answer 404.
+	Subtitles SubtitleStore
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -122,6 +126,7 @@ type Playback struct {
 	viewer    *ViewerDeps
 	access    *accesslog.Recorder
 	anomalies *anomaly.Detector
+	subtitles SubtitleStore
 	now       func() time.Time
 
 	settings  *ttlCache[string, db.PlaybackSettings]
@@ -145,8 +150,12 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
+	if d.Subtitles == nil {
+		d.Subtitles, _ = d.Store.(SubtitleStore)
+	}
 	return &Playback{
-		keyring: d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, access: d.Access, anomalies: d.Anomalies, now: d.Now,
+		subtitles: d.Subtitles,
+		keyring:   d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, access: d.Access, anomalies: d.Anomalies, now: d.Now,
 		settings:  newTTLCache[string, db.PlaybackSettings](settingsCacheMax, playbackCacheTTL, d.Now),
 		viewerCfg: newTTLCache[string, viewerConfig](settingsCacheMax, playbackCacheTTL, d.Now),
 		sessions:  newTTLCache[[sha256.Size]byte, sessionTenant](sessionCacheMax, playbackCacheTTL, d.Now),
@@ -320,6 +329,13 @@ func (s *server) GetPlaybackMaster(ctx context.Context, _ gen.GetPlaybackMasterR
 	}
 	out, err := hls.RewriteMaster(src, g.urlToken)
 	if err != nil {
+		return nil, rewriteFailed(ctx, g, err)
+	}
+	tracks, err := s.play.subtitleTracks(ctx, g)
+	if err != nil {
+		return nil, err
+	}
+	if out, err = hls.AddSubtitles(out, tracks, g.urlToken); err != nil {
 		return nil, rewriteFailed(ctx, g, err)
 	}
 	// One row per master fetch. Media playlists and segments are not logged one by one (I10).

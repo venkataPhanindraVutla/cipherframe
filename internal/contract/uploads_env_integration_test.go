@@ -459,6 +459,9 @@ func (e *upEnv) assertEveryUploadOperationExercised() {
 			if !strings.HasPrefix(path, "/v1/assets") && !strings.HasPrefix(path, "/v1/uploads/") {
 				continue
 			}
+			if strings.Contains(path, "/subtitles") || strings.HasSuffix(path, "/transcripts") {
+				continue // exercised by TestSubtitleOperationsMatchSpec
+			}
 			if strings.HasSuffix(path, "/access-log") {
 				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
 			}

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 
@@ -609,6 +610,24 @@ func (e SigningKeyState) Valid() bool {
 	}
 }
 
+// Defines values for SubtitleTrackOrigin.
+const (
+	Import SubtitleTrackOrigin = "import"
+	Upload SubtitleTrackOrigin = "upload"
+)
+
+// Valid indicates whether the value is a known member of the SubtitleTrackOrigin enum.
+func (e SubtitleTrackOrigin) Valid() bool {
+	switch e {
+	case Import:
+		return true
+	case Upload:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for UploadMethod.
 const (
 	Multipart UploadMethod = "multipart"
@@ -729,6 +748,24 @@ func (e WebhookEventKind) Valid() bool {
 	case SessionAnomaly:
 		return true
 	case SessionRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateAssetSubtitleMultipartBodyDefault.
+const (
+	False CreateAssetSubtitleMultipartBodyDefault = "false"
+	True  CreateAssetSubtitleMultipartBodyDefault = "true"
+)
+
+// Valid indicates whether the value is a known member of the CreateAssetSubtitleMultipartBodyDefault enum.
+func (e CreateAssetSubtitleMultipartBodyDefault) Valid() bool {
+	switch e {
+	case False:
+		return true
+	case True:
 		return true
 	default:
 		return false
@@ -1136,6 +1173,28 @@ type HealthResponse struct {
 
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
+
+// ImportTranscriptRequest defines model for ImportTranscriptRequest.
+type ImportTranscriptRequest struct {
+	Cues []struct {
+		// End Seconds from the start of the video; after `start`.
+		End     float64 `json:"end"`
+		Speaker *string `json:"speaker,omitempty"`
+
+		// Start Seconds from the start of the video.
+		Start float64 `json:"start"`
+
+		// Text Plain text; line breaks are kept.
+		Text string `json:"text"`
+	} `json:"cues"`
+
+	// Default Whether players should select the track unasked. Default `false`.
+	Default *bool  `json:"default,omitempty"`
+	Label   string `json:"label"`
+
+	// Language A BCP 47 language tag.
+	Language string `json:"language"`
+}
 
 // InclusionProof Proves that the artifact is covered by the manifest's top-level root. For a segment the
 // rendition members prove its hash in the rendition tree (leaf data: the artifact's SHA-256,
@@ -1706,6 +1765,38 @@ type SigningKeySet struct {
 	Keys []PublishedSigningKey `json:"keys"`
 }
 
+// SubtitleList defines model for SubtitleList.
+type SubtitleList struct {
+	Items []SubtitleTrack `json:"items"`
+}
+
+// SubtitleTrack defines model for SubtitleTrack.
+type SubtitleTrack struct {
+	AssetId   string    `json:"asset_id"`
+	CreatedAt time.Time `json:"created_at"`
+	CueCount  int       `json:"cue_count"`
+	Default   bool      `json:"default"`
+
+	// Id The track ID (`sub_` followed by 26 characters).
+	Id    string `json:"id"`
+	Label string `json:"label"`
+
+	// Language The BCP 47 tag, in canonical case.
+	Language string `json:"language"`
+
+	// Origin `upload` for a WebVTT or SRT file, `import` for a transcript import.
+	Origin SubtitleTrackOrigin `json:"origin"`
+
+	// Sha256 SHA-256 of the stored WebVTT file (lowercase hex), as recorded in the signed manifest.
+	Sha256 string `json:"sha256"`
+
+	// SizeBytes The size of the stored WebVTT file.
+	SizeBytes int64 `json:"size_bytes"`
+}
+
+// SubtitleTrackOrigin `upload` for a WebVTT or SRT file, `import` for a transcript import.
+type SubtitleTrackOrigin string
+
 // UpdateAssetRequest A change of the asset's time-to-live: exactly one member, `expires_at` (a date-time or
 // `null`) or `ttl_seconds` (an integer or `null`). `null` clears the expiry. The generated
 // server reads the members raw, so that `null` can be told apart from a missing member.
@@ -1971,6 +2062,9 @@ type SessionIdPath = SessionId
 // SigningKeyIdPath defines model for SigningKeyIdPath.
 type SigningKeyIdPath = string
 
+// SubtitleIdPath defines model for SubtitleIdPath.
+type SubtitleIdPath = string
+
 // WebhookDeliveryEndpointFilter defines model for WebhookDeliveryEndpointFilter.
 type WebhookDeliveryEndpointFilter = string
 
@@ -2022,6 +2116,24 @@ type GetAssetProofParams struct {
 	// Variant The variant to prove (default `original`).
 	Variant *ArtifactVariant `form:"variant,omitempty" json:"variant,omitempty"`
 }
+
+// CreateAssetSubtitleMultipartBody defines parameters for CreateAssetSubtitle.
+type CreateAssetSubtitleMultipartBody struct {
+	// Default Whether players should select the track unasked. Default `false`.
+	Default *CreateAssetSubtitleMultipartBodyDefault `json:"default,omitempty"`
+
+	// File The WebVTT or SRT file, at most 2 MB.
+	File openapi_types.File `json:"file"`
+
+	// Label The name a player shows for the track.
+	Label string `json:"label"`
+
+	// Language A BCP 47 language tag.
+	Language string `json:"language"`
+}
+
+// CreateAssetSubtitleMultipartBodyDefault defines parameters for CreateAssetSubtitle.
+type CreateAssetSubtitleMultipartBodyDefault string
 
 // ListClientsParams defines parameters for ListClients.
 type ListClientsParams struct {
@@ -2103,6 +2215,12 @@ type CreateAssetJSONRequestBody = CreateAssetRequest
 
 // UpdateAssetJSONRequestBody defines body for UpdateAsset for application/json ContentType.
 type UpdateAssetJSONRequestBody = UpdateAssetRequest
+
+// CreateAssetSubtitleMultipartRequestBody defines body for CreateAssetSubtitle for multipart/form-data ContentType.
+type CreateAssetSubtitleMultipartRequestBody CreateAssetSubtitleMultipartBody
+
+// ImportAssetTranscriptJSONRequestBody defines body for ImportAssetTranscript for application/json ContentType.
+type ImportAssetTranscriptJSONRequestBody = ImportTranscriptRequest
 
 // CreateClientJSONRequestBody defines body for CreateClient for application/json ContentType.
 type CreateClientJSONRequestBody = CreateClientRequest
@@ -2374,6 +2492,21 @@ type ServerInterface interface {
 	// GetAssetProof Get an inclusion proof for one artifact
 	// (GET /v1/assets/{asset_id}/proof)
 	GetAssetProof(w http.ResponseWriter, r *http.Request, assetId AssetId, params GetAssetProofParams)
+	// ListAssetSubtitles List an asset's subtitle tracks
+	// (GET /v1/assets/{asset_id}/subtitles)
+	ListAssetSubtitles(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// CreateAssetSubtitle Add a subtitle track
+	// (POST /v1/assets/{asset_id}/subtitles)
+	CreateAssetSubtitle(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// DeleteAssetSubtitle Delete a subtitle track
+	// (DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id})
+	DeleteAssetSubtitle(w http.ResponseWriter, r *http.Request, assetId AssetId, subtitleId SubtitleIdPath)
+	// GetAssetSubtitle Get a subtitle track's metadata
+	// (GET /v1/assets/{asset_id}/subtitles/{subtitle_id})
+	GetAssetSubtitle(w http.ResponseWriter, r *http.Request, assetId AssetId, subtitleId SubtitleIdPath)
+	// ImportAssetTranscript Import a transcript as a subtitle track
+	// (POST /v1/assets/{asset_id}/transcripts)
+	ImportAssetTranscript(w http.ResponseWriter, r *http.Request, assetId AssetId)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(w http.ResponseWriter, r *http.Request, params ListClientsParams)
@@ -2943,6 +3076,154 @@ func (siw *ServerInterfaceWrapper) GetAssetProof(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAssetProof(w, r, assetId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAssetSubtitles operation middleware
+func (siw *ServerInterfaceWrapper) ListAssetSubtitles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAssetSubtitles(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAssetSubtitle operation middleware
+func (siw *ServerInterfaceWrapper) CreateAssetSubtitle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAssetSubtitle(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAssetSubtitle operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAssetSubtitle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "subtitle_id" -------------
+	var subtitleId SubtitleIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "subtitle_id", r.PathValue("subtitle_id"), &subtitleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subtitle_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAssetSubtitle(w, r, assetId, subtitleId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetSubtitle operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetSubtitle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "subtitle_id" -------------
+	var subtitleId SubtitleIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "subtitle_id", r.PathValue("subtitle_id"), &subtitleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subtitle_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetSubtitle(w, r, assetId, subtitleId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportAssetTranscript operation middleware
+func (siw *ServerInterfaceWrapper) ImportAssetTranscript(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportAssetTranscript(w, r, assetId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4059,6 +4340,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.UpdateAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/subtitles", wrapper.ListAssetSubtitles)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/subtitles", wrapper.CreateAssetSubtitle)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/assets/{asset_id}/subtitles/{subtitle_id}", wrapper.DeleteAssetSubtitle)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/subtitles/{subtitle_id}", wrapper.GetAssetSubtitle)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/transcripts", wrapper.ImportAssetTranscript)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/access-log", wrapper.GetAssetAccessLog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/manifest", wrapper.GetAssetManifest)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/manifest/timestamp", wrapper.GetAssetManifestTimestamp)
@@ -5865,6 +6151,816 @@ type GetAssetProofdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetAssetProofdefaultApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetSubtitlesRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type ListAssetSubtitlesResponseObject interface {
+	VisitListAssetSubtitlesResponse(w http.ResponseWriter) error
+}
+
+type ListAssetSubtitles200ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAssetSubtitles200JSONResponse struct {
+	Body    SubtitleList
+	Headers ListAssetSubtitles200ResponseHeaders
+}
+
+func (response ListAssetSubtitles200JSONResponse) VisitListAssetSubtitlesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetSubtitles401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAssetSubtitles401ApplicationProblemPlusJSONResponse) VisitListAssetSubtitlesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetSubtitles403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListAssetSubtitles403ApplicationProblemPlusJSONResponse) VisitListAssetSubtitlesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetSubtitles404ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAssetSubtitles404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ListAssetSubtitles404ResponseHeaders
+}
+
+func (response ListAssetSubtitles404ApplicationProblemPlusJSONResponse) VisitListAssetSubtitlesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetSubtitles503ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAssetSubtitles503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ListAssetSubtitles503ResponseHeaders
+}
+
+func (response ListAssetSubtitles503ApplicationProblemPlusJSONResponse) VisitListAssetSubtitlesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAssetSubtitlesdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAssetSubtitlesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListAssetSubtitlesdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListAssetSubtitlesdefaultApplicationProblemPlusJSONResponse) VisitListAssetSubtitlesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitleRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+	Body    *multipart.Reader
+}
+
+type CreateAssetSubtitleResponseObject interface {
+	VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error
+}
+
+type CreateAssetSubtitle201ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetSubtitle201JSONResponse struct {
+	Body    SubtitleTrack
+	Headers CreateAssetSubtitle201ResponseHeaders
+}
+
+func (response CreateAssetSubtitle201JSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitle400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAssetSubtitle400ApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitle401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAssetSubtitle401ApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitle403ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetSubtitle403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateAssetSubtitle403ResponseHeaders
+}
+
+func (response CreateAssetSubtitle403ApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitle404ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetSubtitle404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateAssetSubtitle404ResponseHeaders
+}
+
+func (response CreateAssetSubtitle404ApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitle409ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetSubtitle409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateAssetSubtitle409ResponseHeaders
+}
+
+func (response CreateAssetSubtitle409ApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitle413ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetSubtitle413ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateAssetSubtitle413ResponseHeaders
+}
+
+func (response CreateAssetSubtitle413ApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitle503ResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetSubtitle503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers CreateAssetSubtitle503ResponseHeaders
+}
+
+func (response CreateAssetSubtitle503ApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAssetSubtitledefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type CreateAssetSubtitledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    CreateAssetSubtitledefaultResponseHeaders
+	StatusCode int
+}
+
+func (response CreateAssetSubtitledefaultApplicationProblemPlusJSONResponse) VisitCreateAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAssetSubtitleRequestObject struct {
+	AssetId    AssetId        `json:"asset_id"`
+	SubtitleId SubtitleIdPath `json:"subtitle_id"`
+}
+
+type DeleteAssetSubtitleResponseObject interface {
+	VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error
+}
+
+type DeleteAssetSubtitle204ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteAssetSubtitle204Response struct {
+	Headers DeleteAssetSubtitle204ResponseHeaders
+}
+
+func (response DeleteAssetSubtitle204Response) VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error {
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAssetSubtitle401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAssetSubtitle401ApplicationProblemPlusJSONResponse) VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAssetSubtitle403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAssetSubtitle403ApplicationProblemPlusJSONResponse) VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAssetSubtitle404ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteAssetSubtitle404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers DeleteAssetSubtitle404ResponseHeaders
+}
+
+func (response DeleteAssetSubtitle404ApplicationProblemPlusJSONResponse) VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAssetSubtitle409ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteAssetSubtitle409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers DeleteAssetSubtitle409ResponseHeaders
+}
+
+func (response DeleteAssetSubtitle409ApplicationProblemPlusJSONResponse) VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAssetSubtitle503ResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteAssetSubtitle503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers DeleteAssetSubtitle503ResponseHeaders
+}
+
+func (response DeleteAssetSubtitle503ApplicationProblemPlusJSONResponse) VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAssetSubtitledefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type DeleteAssetSubtitledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    DeleteAssetSubtitledefaultResponseHeaders
+	StatusCode int
+}
+
+func (response DeleteAssetSubtitledefaultApplicationProblemPlusJSONResponse) VisitDeleteAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetSubtitleRequestObject struct {
+	AssetId    AssetId        `json:"asset_id"`
+	SubtitleId SubtitleIdPath `json:"subtitle_id"`
+}
+
+type GetAssetSubtitleResponseObject interface {
+	VisitGetAssetSubtitleResponse(w http.ResponseWriter) error
+}
+
+type GetAssetSubtitle200ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetSubtitle200JSONResponse struct {
+	Body    SubtitleTrack
+	Headers GetAssetSubtitle200ResponseHeaders
+}
+
+func (response GetAssetSubtitle200JSONResponse) VisitGetAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetSubtitle401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetSubtitle401ApplicationProblemPlusJSONResponse) VisitGetAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetSubtitle403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetAssetSubtitle403ApplicationProblemPlusJSONResponse) VisitGetAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetSubtitle404ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetSubtitle404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetSubtitle404ResponseHeaders
+}
+
+func (response GetAssetSubtitle404ApplicationProblemPlusJSONResponse) VisitGetAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetSubtitle503ResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetSubtitle503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers GetAssetSubtitle503ResponseHeaders
+}
+
+func (response GetAssetSubtitle503ApplicationProblemPlusJSONResponse) VisitGetAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetSubtitledefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type GetAssetSubtitledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    GetAssetSubtitledefaultResponseHeaders
+	StatusCode int
+}
+
+func (response GetAssetSubtitledefaultApplicationProblemPlusJSONResponse) VisitGetAssetSubtitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscriptRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+	Body    *ImportAssetTranscriptJSONRequestBody
+}
+
+type ImportAssetTranscriptResponseObject interface {
+	VisitImportAssetTranscriptResponse(w http.ResponseWriter) error
+}
+
+type ImportAssetTranscript201ResponseHeaders struct {
+	XRequestId string
+}
+
+type ImportAssetTranscript201JSONResponse struct {
+	Body    SubtitleTrack
+	Headers ImportAssetTranscript201ResponseHeaders
+}
+
+func (response ImportAssetTranscript201JSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscript400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ImportAssetTranscript400ApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscript401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ImportAssetTranscript401ApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscript403ResponseHeaders struct {
+	XRequestId string
+}
+
+type ImportAssetTranscript403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ImportAssetTranscript403ResponseHeaders
+}
+
+func (response ImportAssetTranscript403ApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscript404ResponseHeaders struct {
+	XRequestId string
+}
+
+type ImportAssetTranscript404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ImportAssetTranscript404ResponseHeaders
+}
+
+func (response ImportAssetTranscript404ApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscript409ResponseHeaders struct {
+	XRequestId string
+}
+
+type ImportAssetTranscript409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ImportAssetTranscript409ResponseHeaders
+}
+
+func (response ImportAssetTranscript409ApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscript413ResponseHeaders struct {
+	XRequestId string
+}
+
+type ImportAssetTranscript413ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ImportAssetTranscript413ResponseHeaders
+}
+
+func (response ImportAssetTranscript413ApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscript503ResponseHeaders struct {
+	XRequestId string
+}
+
+type ImportAssetTranscript503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ImportAssetTranscript503ResponseHeaders
+}
+
+func (response ImportAssetTranscript503ApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportAssetTranscriptdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ImportAssetTranscriptdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ImportAssetTranscriptdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ImportAssetTranscriptdefaultApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -10014,6 +11110,21 @@ type StrictServerInterface interface {
 	// GetAssetProof Get an inclusion proof for one artifact
 	// (GET /v1/assets/{asset_id}/proof)
 	GetAssetProof(ctx context.Context, request GetAssetProofRequestObject) (GetAssetProofResponseObject, error)
+	// ListAssetSubtitles List an asset's subtitle tracks
+	// (GET /v1/assets/{asset_id}/subtitles)
+	ListAssetSubtitles(ctx context.Context, request ListAssetSubtitlesRequestObject) (ListAssetSubtitlesResponseObject, error)
+	// CreateAssetSubtitle Add a subtitle track
+	// (POST /v1/assets/{asset_id}/subtitles)
+	CreateAssetSubtitle(ctx context.Context, request CreateAssetSubtitleRequestObject) (CreateAssetSubtitleResponseObject, error)
+	// DeleteAssetSubtitle Delete a subtitle track
+	// (DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id})
+	DeleteAssetSubtitle(ctx context.Context, request DeleteAssetSubtitleRequestObject) (DeleteAssetSubtitleResponseObject, error)
+	// GetAssetSubtitle Get a subtitle track's metadata
+	// (GET /v1/assets/{asset_id}/subtitles/{subtitle_id})
+	GetAssetSubtitle(ctx context.Context, request GetAssetSubtitleRequestObject) (GetAssetSubtitleResponseObject, error)
+	// ImportAssetTranscript Import a transcript as a subtitle track
+	// (POST /v1/assets/{asset_id}/transcripts)
+	ImportAssetTranscript(ctx context.Context, request ImportAssetTranscriptRequestObject) (ImportAssetTranscriptResponseObject, error)
 	// ListClients List clients
 	// (GET /v1/clients)
 	ListClients(ctx context.Context, request ListClientsRequestObject) (ListClientsResponseObject, error)
@@ -10554,6 +11665,152 @@ func (sh *strictHandler) GetAssetProof(w http.ResponseWriter, r *http.Request, a
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetAssetProofResponseObject); ok {
 		if err := validResponse.VisitGetAssetProofResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAssetSubtitles operation middleware
+func (sh *strictHandler) ListAssetSubtitles(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request ListAssetSubtitlesRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAssetSubtitles(ctx, request.(ListAssetSubtitlesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAssetSubtitles")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAssetSubtitlesResponseObject); ok {
+		if err := validResponse.VisitListAssetSubtitlesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateAssetSubtitle operation middleware
+func (sh *strictHandler) CreateAssetSubtitle(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request CreateAssetSubtitleRequestObject
+
+	request.AssetId = assetId
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateAssetSubtitle(ctx, request.(CreateAssetSubtitleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateAssetSubtitle")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateAssetSubtitleResponseObject); ok {
+		if err := validResponse.VisitCreateAssetSubtitleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAssetSubtitle operation middleware
+func (sh *strictHandler) DeleteAssetSubtitle(w http.ResponseWriter, r *http.Request, assetId AssetId, subtitleId SubtitleIdPath) {
+	var request DeleteAssetSubtitleRequestObject
+
+	request.AssetId = assetId
+	request.SubtitleId = subtitleId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAssetSubtitle(ctx, request.(DeleteAssetSubtitleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAssetSubtitle")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAssetSubtitleResponseObject); ok {
+		if err := validResponse.VisitDeleteAssetSubtitleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetSubtitle operation middleware
+func (sh *strictHandler) GetAssetSubtitle(w http.ResponseWriter, r *http.Request, assetId AssetId, subtitleId SubtitleIdPath) {
+	var request GetAssetSubtitleRequestObject
+
+	request.AssetId = assetId
+	request.SubtitleId = subtitleId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetSubtitle(ctx, request.(GetAssetSubtitleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetSubtitle")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetSubtitleResponseObject); ok {
+		if err := validResponse.VisitGetAssetSubtitleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ImportAssetTranscript operation middleware
+func (sh *strictHandler) ImportAssetTranscript(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request ImportAssetTranscriptRequestObject
+
+	request.AssetId = assetId
+
+	var body ImportAssetTranscriptJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ImportAssetTranscript(ctx, request.(ImportAssetTranscriptRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ImportAssetTranscript")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ImportAssetTranscriptResponseObject); ok {
+		if err := validResponse.VisitImportAssetTranscriptResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

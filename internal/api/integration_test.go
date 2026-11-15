@@ -84,7 +84,11 @@ type harness struct {
 // testEdgeURL is the edge public URL the playback service is built with.
 const testEdgeURL = "https://media.example.com"
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
+
+// newHarnessWith is newHarness with a hook that may add dependencies to the API before it is built.
+// The harness it receives has everything but the server.
+func newHarnessWith(t *testing.T, extend func(*api.Deps, *harness)) *harness {
 	t.Helper()
 	pool := dbtest.NewMigrated(t)
 	clk := &clock{t: time.Now().UTC().Truncate(time.Microsecond)}
@@ -131,18 +135,22 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	requester.Now = clk.Now
+	h := &harness{t: t, pool: pool, repos: repos, clk: clk, mgr: mgr, logs: logs, keyring: keyring, kms: faulty, signing: signer, reg: reg}
 	hooks, err := webhook.NewService(webhook.ServiceDeps{Pool: pool, KMS: reg, Now: clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := api.New(api.Deps{
+	deps := api.Deps{
 		Webhooks: hooks,
 		Log:      log, Verifier: auth.NewVerifier(repos, peppers, log, clk.Now), Manager: mgr, Playback: pb,
 		Signing: signer, KeySet: signing.NewKeySet(repos, 0, clk.Now), Repos: repos, Purge: requester,
-	})
-	srv := httptest.NewServer(a.Handler())
-	t.Cleanup(srv.Close)
-	return &harness{t: t, pool: pool, repos: repos, srv: srv, clk: clk, mgr: mgr, logs: logs, keyring: keyring, kms: faulty, signing: signer, reg: reg}
+	}
+	if extend != nil {
+		extend(&deps, h)
+	}
+	h.srv = httptest.NewServer(api.New(deps).Handler())
+	t.Cleanup(h.srv.Close)
+	return h
 }
 
 // bootstrap creates a tenant with an admin key and returns the full key.

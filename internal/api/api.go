@@ -18,6 +18,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
 )
@@ -55,6 +56,8 @@ type Deps struct {
 	Purge *purge.Requester
 	// Webhooks serves the webhook endpoints and deliveries (M7-5). Without it they answer 503.
 	Webhooks *webhook.Service
+	// Subtitles serves the subtitle and transcript endpoints (M7-1). Without it they answer 503.
+	Subtitles *subtitles.Service
 }
 
 // API is the control-plane HTTP handler.
@@ -71,7 +74,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks, subtitles: d.Subtitles}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})
@@ -80,7 +83,7 @@ func New(d Deps) *API {
 		BaseRouter:       router,
 		ErrorHandlerFunc: httpx.RequestErrorHandler,
 	})
-	mw := append(httpx.Standard(d.Log), httpx.LimitBody(maxBodyBytes))
+	mw := append(httpx.Standard(d.Log), bodyLimit)
 	return &API{router: router, handler: httpx.Chain(router, mw...)}
 }
 

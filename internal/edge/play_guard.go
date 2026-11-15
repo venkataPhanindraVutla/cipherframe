@@ -12,6 +12,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/hls"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
@@ -89,6 +90,10 @@ func playRouteSession(path string) (id.SessionID, bool) {
 			return id.SessionID{}, false
 		}
 		if parts[2] != "media.m3u8" && parts[2] != "init.mp4" && !reSegmentFile.MatchString(parts[2]) {
+			return id.SessionID{}, false
+		}
+	case len(parts) == 4: // subtitles/<track>/media.m3u8 and subtitles/<track>/track.vtt
+		if parts[1] != "subtitles" || !reSubtitleID.MatchString(parts[2]) || (parts[3] != hls.SubtitlePlaylistName && parts[3] != hls.SubtitleFileName) {
 			return id.SessionID{}, false
 		}
 	default:

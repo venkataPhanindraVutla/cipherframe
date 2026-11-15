@@ -165,7 +165,7 @@ func TestAnchoringRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CompleteMasking(ctx, res.Tenant.ID, asset.ID, nil, h.sealed(res, asset, mb), 2, time.Now().UTC()); err != nil {
+	if err := repo.CompleteMasking(ctx, res.Tenant.ID, asset.ID, nil, h.sealed(res, asset, mb), stored.PayloadSHA256, 2, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	h.wantStatus(h.do(key, "GET", "/v1/assets/"+aid+"/manifest/timestamp", nil), 404, "not_anchored")
