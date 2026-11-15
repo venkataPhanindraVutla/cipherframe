@@ -84,9 +84,9 @@ RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-comp
 #   input   protocols file,pipe; demuxers mov (MP4/MOV), matroska (MKV/WebM), rawvideo (the face masker
 #           pipes raw frames in, ADR 0036)
 #   decode  h264 hevc vp8 vp9 libdav1d(av1) aac opus mp3 (+ parsers)
-#   encode  libx264, aac
-#   output  muxers mp4 and hls (fMP4 segments); null (decode checks and tests)
-#   filters scale format aresample null anull setsar fps split; transpose hflip vflip apply the display
+#   encode  libx264, aac; mjpeg (poster and sprite JPEGs, ADR 0046)
+#   output  muxers mp4 and hls (fMP4 segments); null (decode checks and tests); image2 (JPEG files)
+#   filters scale format aresample null anull setsar fps split trim setpts tile; transpose hflip vflip apply the display
 #           matrix rotation (FFmpeg's autorotate inserts them); ffmpeg adds aformat/trim/etc itself.
 # Not built: network protocols, devices, every other codec, container and filter, zlib/bzlib/iconv
 # (so compressed MP4 headers and Matroska header compression are rejected).
@@ -107,9 +107,9 @@ RUN ./configure \
         --enable-demuxer=mov,matroska,rawvideo \
         --enable-decoder=h264,hevc,vp8,vp9,libdav1d,aac,opus,mp3,mp3float,rawvideo \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
-        --enable-encoder=libx264,aac \
-        --enable-muxer=mp4,hls,null \
-        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip \
+        --enable-encoder=libx264,aac,mjpeg \
+        --enable-muxer=mp4,hls,null,image2 \
+        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe \
