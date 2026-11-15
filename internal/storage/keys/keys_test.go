@@ -159,3 +159,24 @@ func TestVariantLayout(t *testing.T) {
 		t.Error("Variant.Valid is wrong")
 	}
 }
+
+func TestBrandLogoKeysAreTheTenantsAndOutsideEveryAssetPrefix(t *testing.T) {
+	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
+	v := id.New[id.LogoVersionKind]()
+	key := keys.BrandLogo(tn, v)
+	if want := "t/" + tn.String() + "/branding/logo/" + v.String() + ".png"; key != want {
+		t.Fatalf("key = %q, want %q", key, want)
+	}
+	if !strings.HasPrefix(key, keys.BrandLogoPrefix(tn)) {
+		t.Error("the key is not under the branding prefix")
+	}
+	for _, p := range keys.AssetPrefixes(tn, a) {
+		if strings.HasPrefix(key, p.Prefix) {
+			t.Errorf("a logo key falls under the asset prefix %q", p.Prefix)
+		}
+	}
+	other := id.New[id.TenantKind]()
+	if strings.HasPrefix(keys.BrandLogo(other, v), keys.BrandLogoPrefix(tn)) {
+		t.Error("two tenants share a branding prefix")
+	}
+}

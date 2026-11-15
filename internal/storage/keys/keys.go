@@ -199,6 +199,25 @@ func Subtitle(t id.TenantID, a id.AssetID, track id.SubtitleID) string {
 	return DeliveryPrefix(t, a) + "subtitles/" + track.String() + ".vtt"
 }
 
+// BrandLogoPrefix is the prefix of every version of the tenant's brand logo in the delivery bucket
+// (ADR 0049). It is the tenant's, not an asset's: it lies outside every AssetPrefixes entry, so
+// deleting an asset never reaches a logo.
+func BrandLogoPrefix(t id.TenantID) string {
+	if t.IsZero() {
+		panic("keys: zero tenant ID")
+	}
+	return "t/" + t.String() + "/branding/logo/"
+}
+
+// BrandLogo is the key of one immutable version of the tenant's brand logo, a PNG that Cipherframe
+// itself encoded. The version ID is system-made; the name the tenant uploaded never reaches a key.
+func BrandLogo(t id.TenantID, v id.LogoVersionID) string {
+	if v.IsZero() {
+		panic("keys: zero logo version ID")
+	}
+	return BrandLogoPrefix(t) + v.String() + ".png"
+}
+
 // AssetPrefixes returns every (bucket, prefix) pair that deleting the asset must enumerate. Anything
 // the system stores for the asset lies under one of them.
 func AssetPrefixes(t id.TenantID, a id.AssetID) []Prefix {
