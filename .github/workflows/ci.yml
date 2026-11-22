@@ -174,7 +174,7 @@ jobs:
   compose:
     name: compose (development stack)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       COMPOSE_FILE: deploy/compose/compose.yaml
     steps:
@@ -215,12 +215,47 @@ jobs:
           bad="cf_000000000000_$(printf 'x%.0s' $(seq 1 43))"
           test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${bad}" http://127.0.0.1:8080/v1/whoami)" = "401"
           echo "whoami OK; missing and wrong keys rejected with 401"
+      # The command line tool end to end (ADR 0051). Processing needs the worker image with FFmpeg,
+      # built from the same cached layers as the media job, and a tiny test video made with the
+      # test-only FFmpeg (the shipped one cannot generate sources).
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: build the worker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: build/worker.Dockerfile
+          load: true
+          tags: cipherframe-worker:dev
+          cache-from: type=gha,scope=worker-image
+          cache-to: type=gha,scope=worker-image,mode=max
+      - name: export the test-only FFmpeg
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: build/worker.Dockerfile
+          target: tools
+          outputs: type=local,dest=out/tools
+          cache-from: type=gha,scope=worker-image
+      - name: start the worker
+        run: docker compose --profile worker up -d --no-build worker
+      - name: cipherframe CLI end to end
+        run: |
+          go build -o "${RUNNER_TEMP}/cipherframe" ./cmd/cipherframe
+          chmod +x out/tools/ffmpeg-fixtures
+          out/tools/ffmpeg-fixtures -hide_banner -loglevel error -f lavfi -i testsrc2=size=320x240:rate=25 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
+            -shortest "${RUNNER_TEMP}/test.mp4"
+          deploy/compose/cli-e2e.sh "${RUNNER_TEMP}/cipherframe" "${RUNNER_TEMP}/test.mp4"
       - name: compose logs
         if: failure()
-        run: docker compose logs --no-color
+        run: docker compose --profile worker logs --no-color
       - name: tear down
         if: always()
-        run: docker compose down -v
+        run: docker compose --profile worker down -v
 
   media:
     name: media (worker image and FFmpeg tests)
