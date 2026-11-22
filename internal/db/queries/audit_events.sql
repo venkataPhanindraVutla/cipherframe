@@ -4,9 +4,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: ListAuditEventsByTenant :many
--- Oldest first, keyset-paginated: pass the last (created_at, id) seen as the cursor.
+-- Oldest first, keyset-paginated: pass the last (created_at, id) seen as the cursor. since is
+-- inclusive, until exclusive.
 SELECT * FROM audit_events
 WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND created_at >= sqlc.arg(since)::timestamptz
+  AND created_at < sqlc.arg(until)::timestamptz
   AND (
       sqlc.narg(after_id)::uuid IS NULL
       OR (created_at, id) > (sqlc.narg(after_created_at)::timestamptz, sqlc.narg(after_id)::uuid)

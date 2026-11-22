@@ -31,7 +31,7 @@ func (h *harness) rowOf(res auth.BootstrapResult, sid string) db.PlaybackSession
 
 func (h *harness) auditActions(res auth.BootstrapResult) []db.AuditEvent {
 	h.t.Helper()
-	events, err := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, nil, 100)
+	events, _, err := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, db.AuditQuery{Limit: 100})
 	if err != nil {
 		h.t.Fatal(err)
 	}

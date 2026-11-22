@@ -217,7 +217,7 @@ func TestRepoInputValidationWithoutDatabase(t *testing.T) {
 	check("bad state", err, errs.InvalidRequest)
 	_, err = r.ListClients(ctx, tid, 0, 0)
 	check("bad page", err, errs.InvalidRequest)
-	_, err = r.ListAuditEvents(ctx, tid, nil, maxPage+1)
+	_, _, err = r.ListAuditEvents(ctx, tid, AuditQuery{Limit: maxPage + 1})
 	check("bad audit page", err, errs.InvalidRequest)
 	_, err = r.InsertAuditEvent(ctx, NewAuditEvent{TenantID: tid})
 	check("missing action", err, errs.InvalidRequest)

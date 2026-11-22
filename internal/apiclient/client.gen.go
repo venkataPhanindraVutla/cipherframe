@@ -1097,6 +1097,34 @@ type AssetList struct {
 // Lists leave deleted assets out.
 type AssetState string
 
+// AuditEvent defines model for AuditEvent.
+type AuditEvent struct {
+	// Action What happened, for example `key.rotate` or `asset.delete`.
+	Action    string    `json:"action"`
+	ClientId  *ClientId `json:"client_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// Id The event's ID, unique and time-ordered.
+	Id openapi_types.UUID `json:"id"`
+
+	// KeyId The API key that made the request. Absent for events the system raised.
+	KeyId *string `json:"key_id,omitempty"`
+
+	// RequestId The `X-Request-Id` of the request that caused the event.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// Target What it happened to, if anything (an ID, a label or a short summary).
+	Target *string `json:"target,omitempty"`
+}
+
+// AuditEventList defines model for AuditEventList.
+type AuditEventList struct {
+	Items []AuditEvent `json:"items"`
+
+	// NextCursor Present when there are more events. Pass it as `after`.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // BrandLogo A tenant's current brand logo (ADR 0049): the stored image's identity and how it is placed.
 // `version`, `sha256` and the placement are what the signed manifest of an asset made with
 // this logo records.
@@ -2375,6 +2403,15 @@ type AccessLogTo = time.Time
 // AssetId defines model for AssetId.
 type AssetId = string
 
+// AuditAfter defines model for AuditAfter.
+type AuditAfter = string
+
+// AuditSince defines model for AuditSince.
+type AuditSince = time.Time
+
+// AuditUntil defines model for AuditUntil.
+type AuditUntil = time.Time
+
 // ClientIdPath defines model for ClientIdPath.
 type ClientIdPath = string
 
@@ -2502,6 +2539,21 @@ type CreateAssetSubtitleMultipartBody struct {
 
 // CreateAssetSubtitleMultipartBodyDefault defines parameters for CreateAssetSubtitle.
 type CreateAssetSubtitleMultipartBodyDefault string
+
+// ListAuditEventsParams defines parameters for ListAuditEvents.
+type ListAuditEventsParams struct {
+	// After The `next_cursor` of the previous page. Treat it as opaque.
+	After *AuditAfter `form:"after,omitempty" json:"after,omitempty"`
+
+	// Limit Page size, 1 to 500 (default 100).
+	Limit *AccessLogLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Since Only events at or after this time (RFC 3339).
+	Since *AuditSince `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only events before this time (RFC 3339). Must be after `since`.
+	Until *AuditUntil `form:"until,omitempty" json:"until,omitempty"`
+}
 
 // PutBrandLogoMultipartBody defines parameters for PutBrandLogo.
 type PutBrandLogoMultipartBody struct {
@@ -3239,6 +3291,23 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/assets/{asset_id}/transcripts (the `ImportAssetTranscript` operationId).
 	ImportAssetTranscript(ctx context.Context, assetId AssetId, body ImportAssetTranscriptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAuditEvents Export the audit log
+	//
+	// Returns the audit events of the caller's tenant as structured objects, oldest first, with
+	// a stable order (event time, then ID), an optional half-open `since`/`until` range on the
+	// event time and cursor pagination (`limit` up to 500, default 100). Follow `next_cursor`
+	// (as `after`) until it is absent to read everything. A page never repeats or skips a row,
+	// and an event written while you read appears on the last page. Requires the `admin` scope.
+	//
+	// An event records what was done (`action`), to what (`target`), by whom (`client_id`,
+	// `api_key_id`; absent for events the system raises on its own) and under which request
+	// (`request_id`). A `target` is an ID, a label or a short `key=value` summary; the audit log
+	// never stores a token, a key secret, a signed URL, a session ID (only a short fingerprint of
+	// one) or a source object key.
+	//
+	// Corresponds with GET /v1/audit-events (the `ListAuditEvents` operationId).
+	ListAuditEvents(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteBrandLogo Remove the tenant's brand logo
 	//
@@ -4624,6 +4693,33 @@ func (c *HTTPClient) ImportAssetTranscriptWithBody(ctx context.Context, assetId 
 // Corresponds with POST /v1/assets/{asset_id}/transcripts (the `ImportAssetTranscript` operationId).
 func (c *HTTPClient) ImportAssetTranscript(ctx context.Context, assetId AssetId, body ImportAssetTranscriptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewImportAssetTranscriptRequest(c.Server, assetId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAuditEvents Export the audit log
+//
+// Returns the audit events of the caller's tenant as structured objects, oldest first, with
+// a stable order (event time, then ID), an optional half-open `since`/`until` range on the
+// event time and cursor pagination (`limit` up to 500, default 100). Follow `next_cursor`
+// (as `after`) until it is absent to read everything. A page never repeats or skips a row,
+// and an event written while you read appears on the last page. Requires the `admin` scope.
+//
+// An event records what was done (`action`), to what (`target`), by whom (`client_id`,
+// `api_key_id`; absent for events the system raises on its own) and under which request
+// (`request_id`). A `target` is an ID, a label or a short `key=value` summary; the audit log
+// never stores a token, a key secret, a signed URL, a session ID (only a short fingerprint of
+// one) or a source object key.
+//
+// Corresponds with GET /v1/audit-events (the `ListAuditEvents` operationId).
+func (c *HTTPClient) ListAuditEvents(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAuditEventsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6985,6 +7081,96 @@ func NewImportAssetTranscriptRequestWithBody(server string, assetId AssetId, con
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListAuditEventsRequest constructs an http.Request for the ListAuditEvents method
+func NewListAuditEventsRequest(server string, params *ListAuditEventsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/audit-events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Until != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -9362,6 +9548,25 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/assets/{asset_id}/transcripts (the `ImportAssetTranscript` operationId).
 	ImportAssetTranscriptWithResponse(ctx context.Context, assetId AssetId, body ImportAssetTranscriptJSONRequestBody, reqEditors ...RequestEditorFn) (*ImportAssetTranscriptResponse, error)
+
+	// ListAuditEventsWithResponse Export the audit log
+	//
+	// Returns the audit events of the caller's tenant as structured objects, oldest first, with
+	// a stable order (event time, then ID), an optional half-open `since`/`until` range on the
+	// event time and cursor pagination (`limit` up to 500, default 100). Follow `next_cursor`
+	// (as `after`) until it is absent to read everything. A page never repeats or skips a row,
+	// and an event written while you read appears on the last page. Requires the `admin` scope.
+	//
+	// An event records what was done (`action`), to what (`target`), by whom (`client_id`,
+	// `api_key_id`; absent for events the system raises on its own) and under which request
+	// (`request_id`). A `target` is an ID, a label or a short `key=value` summary; the audit log
+	// never stores a token, a key secret, a signed URL, a session ID (only a short fingerprint of
+	// one) or a source object key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/audit-events (the `ListAuditEvents` operationId).
+	ListAuditEventsWithResponse(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*ListAuditEventsResponse, error)
 
 	// DeleteBrandLogoWithResponse Remove the tenant's brand logo
 	//
@@ -12588,6 +12793,112 @@ func (r ImportAssetTranscriptResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ImportAssetTranscriptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAuditEventsResponse200Headers the declared response headers of an HTTP 200 response for ListAuditEvents
+type ListAuditEventsResponse200Headers struct {
+	CacheControl string
+	XRequestId   string
+}
+
+// ListAuditEventsResponse400Headers the declared response headers of an HTTP 400 response for ListAuditEvents
+type ListAuditEventsResponse400Headers struct {
+	XRequestId string
+}
+
+// ListAuditEventsResponse401Headers the declared response headers of an HTTP 401 response for ListAuditEvents
+type ListAuditEventsResponse401Headers struct {
+	WWWAuthenticate string
+	XRequestId      string
+}
+
+// ListAuditEventsResponse403Headers the declared response headers of an HTTP 403 response for ListAuditEvents
+type ListAuditEventsResponse403Headers struct {
+	XRequestId string
+}
+
+// ListAuditEventsResponseDefaultHeaders the declared response headers of an HTTP default response for ListAuditEvents
+type ListAuditEventsResponseDefaultHeaders struct {
+	XRequestId string
+}
+
+type ListAuditEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AuditEventList
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthenticated
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListAuditEventsResponse200Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ListAuditEventsResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAuditEventsResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ListAuditEventsResponse403Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ListAuditEventsResponseDefaultHeaders
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAuditEventsResponse) GetJSON200() *AuditEventList {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationproblemJSON401() *Unauthenticated {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAuditEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAuditEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAuditEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAuditEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -18420,6 +18731,31 @@ func (c *ClientWithResponses) ImportAssetTranscriptWithResponse(ctx context.Cont
 	return ParseImportAssetTranscriptResponse(rsp)
 }
 
+// ListAuditEventsWithResponse Export the audit log
+//
+// Returns the audit events of the caller's tenant as structured objects, oldest first, with
+// a stable order (event time, then ID), an optional half-open `since`/`until` range on the
+// event time and cursor pagination (`limit` up to 500, default 100). Follow `next_cursor`
+// (as `after`) until it is absent to read everything. A page never repeats or skips a row,
+// and an event written while you read appears on the last page. Requires the `admin` scope.
+//
+// An event records what was done (`action`), to what (`target`), by whom (`client_id`,
+// `api_key_id`; absent for events the system raises on its own) and under which request
+// (`request_id`). A `target` is an ID, a label or a short `key=value` summary; the audit log
+// never stores a token, a key secret, a signed URL, a session ID (only a short fingerprint of
+// one) or a source object key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/audit-events (the `ListAuditEvents` operationId).
+func (c *ClientWithResponses) ListAuditEventsWithResponse(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*ListAuditEventsResponse, error) {
+	rsp, err := c.ListAuditEvents(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAuditEventsResponse(rsp)
+}
+
 // DeleteBrandLogoWithResponse Remove the tenant's brand logo
 //
 // Removes the tenant's logo setting and the stored versions that no asset in processing still
@@ -22264,6 +22600,127 @@ func ParseImportAssetTranscriptResponse(rsp *http.Response) (*ImportAssetTranscr
 		response.Headers503 = &headers
 	case true:
 		var headers ImportAssetTranscriptResponseDefaultHeaders
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListAuditEventsResponse parses an HTTP response from a ListAuditEventsWithResponse call
+func ParseListAuditEventsResponse(rsp *http.Response) (*ListAuditEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAuditEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuditEventList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListAuditEventsResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = value
+		}
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 400:
+		var headers ListAuditEventsResponse400Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ListAuditEventsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = value
+		}
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ListAuditEventsResponse403Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers403 = &headers
+	case true:
+		var headers ListAuditEventsResponseDefaultHeaders
 		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

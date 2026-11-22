@@ -72,6 +72,8 @@ var operationScopes = map[string][]db.Scope{
 	"DeletePlaybackJwtKey":         {db.ScopeAdmin},
 	"RotatePlaybackCallbackSecret": {db.ScopeAdmin},
 
+	"ListAuditEvents": {db.ScopeAdmin},
+
 	"ListSigningKeys":  {db.ScopeAdmin},
 	"RotateSigningKey": {db.ScopeAdmin},
 	"RetireSigningKey": {db.ScopeAdmin},
@@ -313,6 +315,10 @@ func (g guarded) GetPrivacySettings(w http.ResponseWriter, r *http.Request) {
 
 func (g guarded) UpdatePrivacySettings(w http.ResponseWriter, r *http.Request) {
 	g.a.run("UpdatePrivacySettings", w, r, func(r *http.Request) { g.ServerInterface.UpdatePrivacySettings(w, r) })
+}
+
+func (g guarded) ListAuditEvents(w http.ResponseWriter, r *http.Request, params gen.ListAuditEventsParams) {
+	g.a.run("ListAuditEvents", w, r, func(r *http.Request) { g.ServerInterface.ListAuditEvents(w, r, params) })
 }
 
 func (g guarded) ListSigningKeys(w http.ResponseWriter, r *http.Request) {
