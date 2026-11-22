@@ -548,6 +548,13 @@ identity per server role with least-privilege storage access, and the KMS key fo
 README has the role to permission table and maps the outputs to the `CIPHERFRAME_S3_*` and
 `CIPHERFRAME_KMS_*` variables below. CI only formats and validates them; the project never applies them.
 
+## Releases and verifying them (M9-6, ADR 0060)
+
+Tagged releases publish the `cipherframe` CLI and the server as archives, and the `cipherframe-server`,
+`cipherframe-worker` and `cipherframe-ml` images on ghcr.io, all signed with cosign (keyless) and carrying
+build provenance and SBOMs. [releasing.md](releasing.md) has the versioning policy, the `cosign verify`
+and `gh attestation verify` commands and the licensing note for the worker image.
+
 ## Configuration
 
 Cipherframe reads only `CIPHERFRAME_*` environment variables (ADR 0013). They are parsed once at
