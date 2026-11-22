@@ -107,7 +107,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 - [ ] M9-2 Helm chart
 - [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
 - [ ] M9-4 Load tests with published method and numbers
-- [ ] M9-5 Security review: threat model update, fuzz tests for playlist rewriting and token parsing
+- [x] M9-5 Security review: threat model update, fuzz tests for playlist rewriting, token, key and subtitle parsing (CI `fuzz` job on pushes to main), [disaster recovery](disaster-recovery.md)
 - [ ] M9-6 Release automation: signed images, SBOM, changelog
 
 ### M10 v1 extras
@@ -170,3 +170,11 @@ Smaller items found while building, not yet scheduled:
 - Rate-limit the viewer-authorization callback and re-wrap its stored secrets on key rotation.
 - Let the published key set mark a key "revoked as compromised", not only "retired"
   ([integrity.md](integrity.md)).
+- Recover signing when the wrapped signing-key seeds are lost but the database survives: today the
+  service creates a key only when none exists, so signing fails closed until a key is added by hand
+  ([disaster-recovery.md](disaster-recovery.md#losing-the-signing-keys)).
+- Make restoring a backup safe for deletions: after a restore, replay the signed deletion records so
+  assets deleted since the backup are deleted again ([disaster-recovery.md](disaster-recovery.md)).
+- Re-check the metrics and OTLP section of the threat model against the code when M9-1 lands.
+- Fuzz the tus library's `Upload-Metadata` handling at the edge request level (Cipherframe discards the
+  values, but the third-party parser runs first).
