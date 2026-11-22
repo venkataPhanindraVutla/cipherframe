@@ -18,12 +18,20 @@ Usage:
                      [--path P] [--root DIR] [--json] [--timestamp ts.json [--tsa-ca ca.pem]] <file-or-dir>...
   cipherframe verify --manifest m.json (--keys keys.json | --keys-url URL) --proof p.json <file>
   cipherframe verify --deletion-record r.json (--keys keys.json | --keys-url URL) [--json]
+  cipherframe upload FILE [--wait] [--mask-faces] [--ttl 30d]
+  cipherframe status ASSET_ID | inspect ASSET_ID | list [--limit N] [--cursor C]
+  cipherframe process ASSET_ID [--wait]
+  cipherframe delete ASSET_ID [--wait] | deletion-record ASSET_ID
   cipherframe version
-  cipherframe help
+  cipherframe help [command]
+
+Commands that call the server take --server (or CIPHERFRAME_SERVER), the API key from
+CIPHERFRAME_API_KEY or --api-key-file (never a flag value), --json and --timeout; flags may
+follow the arguments. Run cipherframe help COMMAND for a command's flags.
 
 Exit codes for verify: 0 all ours, 1 any modified, 2 any cannot say (none modified), 3 usage error.
 A deletion record is ours (exit 0) when a trusted key signed it, otherwise cannot say (exit 2).
-`
+` + exitCodeHelp
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
@@ -40,9 +48,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stdout, "cipherframe %s %s\n", info.Version, info.GoVersion)
 		return 0
 	case "help", "-h", "--help":
+		if len(args) == 2 {
+			if cmd, ok := serverCommands()[args[1]]; ok {
+				return cmd.run([]string{"-h"}, stdout, stderr)
+			}
+		}
 		_, _ = fmt.Fprint(stdout, usage)
 		return 0
 	}
+	if cmd, ok := serverCommands()[args[0]]; ok {
+		return cmd.run(args[1:], stdout, stderr)
+	}
 	_, _ = fmt.Fprintf(stderr, "cipherframe: unknown command %q\n\n%s", args[0], usage)
 	return exitUsage
+}
+
+func serverCommands() map[string]command {
+	m := map[string]command{uploadCommand.name: uploadCommand}
+	for _, c := range assetCommands {
+		m[c.name] = c
+	}
+	return m
 }
