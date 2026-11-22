@@ -57,6 +57,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0049](0049-brand-logo.md) | Per-tenant brand logo burned in at transcode | none (M7-4) | Accepted (flagged for owner review) | 2026-11-15 |
 | [0050](0050-reference-player-approach.md) | Reference player approach | P13 | Accepted | 2026-11-22 |
 | [0051](0051-cli-conventions.md) | Command line tool conventions: generated client, auth input, output, exit codes, tus | none (M8-1a) | Accepted (flagged for owner review) | 2026-11-22 |
+| [0052](0052-reference-player-implementation.md) | Reference player implementation choices | none (M8-2) | Accepted (flagged for owner review) | 2026-11-22 |
 
 ## Open gates
 

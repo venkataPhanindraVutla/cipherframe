@@ -10,7 +10,7 @@
 3. Upload a source video (S3 multipart or tus) and commit it.
 4. Wait for the asset to become `ready`.
 5. From your server, create a playback session for a viewer you have authorized.
-6. Load the returned manifest URL in the reference player.
+6. Hand the session response to the reference player ([`player/`](../player/README.md), M8-2).
 7. Revoke the session to stop playback at the key endpoint.
 8. Delete the asset and fetch its signed deletion record.
 9. Verify the record with the public-key-only verifier.
@@ -59,6 +59,29 @@ cipherframe verify --deletion-record record.json \
 
 The remaining commands (sessions, subtitles, brand, keys, webhooks, `verify-file`, `proof`) arrive
 with M8-1b. CI runs `deploy/compose/cli-e2e.sh` against the development stack.
+
+## Reference player (M8-2, ADR 0052)
+
+`player/` holds `<cipherframe-player>`, a framework-free custom element on hls.js. Your backend creates the
+session (the API key never goes to a browser) and gives the JSON answer to the page:
+
+```html
+<cipherframe-player id="p"></cipherframe-player>
+<script type="module">
+  import "@cipherframe/player"; // or the built dist/cipherframe-player.js
+  p.load(await (await fetch("/my-backend/play/ast_...")).json()); // the session response, unchanged
+</script>
+```
+
+The player sends the token on every playlist, key and segment request, heartbeats on the session's
+interval (each heartbeat returns the next token), stops when the edge answers `401` or `403`, and draws the
+overlay watermark ([ADR 0048](adr/0048-overlay-watermark-policy.md)). The tenant must list the page's origin
+in `allowed_origins` ([api.md](api.md#playlists-and-segments-on-edge-adr-0027-0030)). Usage, events and styling
+are in [player/README.md](../player/README.md).
+
+To try it on the development stack: build the demo (`pnpm build:demo`, then `pnpm preview:demo`, port 4173),
+add `http://localhost:4173` to `allowed_origins`, create a session and open
+`http://localhost:4173/#<base64url of the session JSON>`.
 
 ## Verifying files offline
 

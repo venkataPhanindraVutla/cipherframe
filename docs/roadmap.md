@@ -98,7 +98,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 ### M8 CLI and reference player
 
 - [ ] M8-1 `cipherframe` CLI in Go, a single static binary (partly done: M8-1a has the framework and `upload`, `status`, `inspect`, `list`, `process`, `delete`, `deletion-record` ([ADR 0051](adr/0051-cli-conventions.md)); M8-1b adds sessions, subtitles, brand, keys, webhooks, `verify-file` and `proof`)
-- [ ] M8-2 Reference player in TypeScript on hls.js
+- [x] M8-2 Reference player in TypeScript on hls.js ([ADR 0052](adr/0052-reference-player-implementation.md), `player/`)
 
 ### M9 Operations and release
 
