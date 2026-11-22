@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cipherframe player demo</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 56rem; padding: 0 1rem; }
+      cipherframe-player { --cf-accent: #6ea8fe; max-width: 48rem; }
+      cipherframe-player::part(play) { font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <h1>Cipherframe player demo</h1>
+    <p>
+      Your backend creates the session and passes the response to the player. For a manual try, open this page
+      with <code>#</code> followed by the base64url of the session JSON, or call
+      <code>document.querySelector('cipherframe-player').load(session)</code> from the console.
+    </p>
+    <cipherframe-player id="player"></cipherframe-player>
+    <script type="module" src="/demo/main.ts"></script>
+  </body>
+</html>
