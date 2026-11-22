@@ -371,16 +371,18 @@ jobs:
             deploy/compose/cli-e2e.sh "${RUNNER_TEMP}/cipherframe" "${RUNNER_TEMP}/test.mp4"
       - name: Prometheus scrapes the services and Grafana has the dashboard
         run: |
-          ok=""
+          # Retried together: a metric only appears once Prometheus has scraped after the e2e run.
+          q() { curl -fsS "http://127.0.0.1:9090/api/v1/query?query=$1" | jq -r "$2"; }
           for _ in $(seq 1 40); do
-            n="$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=count(up%7Bjob%3D~%22cipherframe-.*%22%7D%3D%3D1)' | jq -r '.data.result[0].value[1] // "0"')"
-            if [ "${n}" = "3" ]; then ok=1; break; fi
+            up="$(q 'count(up%7Bjob%3D~%22cipherframe-.*%22%7D%3D%3D1)' '.data.result[0].value[1] // "0"')"
+            http="$(q cipherframe_http_request_duration_seconds_count '.data.result | length')"
+            transcode="$(q cipherframe_transcode_duration_seconds_count '.data.result | length')"
+            dash="$(curl -fsS -u admin:dev-placeholder-grafana 'http://127.0.0.1:3000/api/search?query=Cipherframe' | jq -r 'length')" # gitleaks:allow (development placeholder password)
+            if [ "${up}" = "3" ] && [ "${http}" -gt 0 ] && [ "${transcode}" -gt 0 ] && [ "${dash}" = "1" ]; then exit 0; fi
             sleep 3
           done
-          [ -n "${ok}" ] || { echo "Prometheus does not scrape the api, edge and worker (up targets: ${n})"; exit 1; }
-          curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=cipherframe_http_request_duration_seconds_count' | jq -e '.data.result | length > 0' >/dev/null
-          curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=cipherframe_transcode_duration_seconds_count' | jq -e '.data.result | length > 0' >/dev/null
-          curl -fsS -u admin:dev-placeholder-grafana 'http://127.0.0.1:3000/api/search?query=Cipherframe' | jq -e 'length == 1' >/dev/null
+          echo "not ready: up targets ${up}/3, http series ${http}, transcode series ${transcode}, dashboards ${dash}"
+          exit 1
       - name: secret scan of the spans and the container logs
         run: |
           # Batch exporters send every few seconds; stopping the collector flushes its file.
