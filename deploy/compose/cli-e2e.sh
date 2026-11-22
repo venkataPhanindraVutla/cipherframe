@@ -28,7 +28,8 @@ case "${CIPHERFRAME_API_KEY}" in cf_*_*) ;; *) echo "bootstrap did not print a k
 export CIPHERFRAME_API_KEY
 export CIPHERFRAME_SERVER=http://127.0.0.1:8080
 record api-key "${CIPHERFRAME_API_KEY}"
-record api-key-secret-part "${CIPHERFRAME_API_KEY##*_}"
+# By position (cf_ + 12-character prefix + _): the base64url secret may itself contain underscores.
+record api-key-secret-part "$(printf '%s' "${CIPHERFRAME_API_KEY}" | cut -c17-)"
 record metrics-scrape-token "$(cat "$(dirname "$0")/../observability/dev/metrics-token")"
 
 id="$("${cf}" upload "${video}" --wait --wait-timeout 10m)"
