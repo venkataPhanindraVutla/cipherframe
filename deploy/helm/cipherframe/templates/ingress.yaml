@@ -1,0 +1,38 @@
+{{- /* Explicit prefixes only: /metrics, /healthz and /readyz are never routed (docs/observability.md). */ -}}
+{{- $paths := dict "api" (list "/v1") "edge" (list "/v1/play" "/v1/uploads" "/.well-known") }}
+{{- range $role := list "api" "edge" }}
+{{- $i := get $.Values.ingress $role }}
+{{- if and $i.enabled (get $.Values $role).enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "cipherframe.labels" (dict "root" $ "role" $role) | nindent 4 }}
+  {{- with $i.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $i.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $i.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ $i.host | quote }}
+      http:
+        paths:
+          {{- range get $paths $role }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+                port: { name: http }
+          {{- end }}
+{{- end }}
+{{- end }}

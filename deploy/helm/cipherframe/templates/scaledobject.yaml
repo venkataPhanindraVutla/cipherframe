@@ -1,0 +1,22 @@
+{{- if and .Values.worker.enabled .Values.worker.keda.enabled }}
+{{- $k := .Values.worker.keda }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "cipherframe.fullname" . }}-worker
+  labels:
+    {{- include "cipherframe.labels" (dict "root" . "role" "worker") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "cipherframe.fullname" . }}-worker
+  minReplicaCount: {{ $k.minReplicaCount }}
+  maxReplicaCount: {{ $k.maxReplicaCount }}
+  pollingInterval: {{ $k.pollingInterval }}
+  cooldownPeriod: {{ $k.cooldownPeriod }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $k.serverAddress | quote }}
+        query: {{ default (printf `max(sum by (pod) (cipherframe_jobs{namespace="%s",state="available"}))` .Release.Namespace) $k.query | quote }}
+        threshold: {{ $k.threshold | quote }}
+{{- end }}

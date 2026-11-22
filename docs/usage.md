@@ -548,6 +548,13 @@ identity per server role with least-privilege storage access, and the KMS key fo
 README has the role to permission table and maps the outputs to the `CIPHERFRAME_S3_*` and
 `CIPHERFRAME_KMS_*` variables below. CI only formats and validates them; the project never applies them.
 
+## Helm chart (M9-2, ADR 0059)
+
+`deploy/helm/cipherframe` runs the api, edge and worker roles on Kubernetes against an external
+Postgres, with the migration as a hook Job, secrets mounted as `_FILE` files and optional Ingress,
+ServiceMonitor, autoscaling and NetworkPolicy. Its README has the values reference, upgrade notes and
+the cloud IAM each role needs. CI only renders and validates it; the project never installs it.
+
 ## Configuration
 
 Cipherframe reads only `CIPHERFRAME_*` environment variables (ADR 0013). They are parsed once at

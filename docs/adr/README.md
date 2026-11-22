@@ -62,6 +62,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0054](0054-operations-and-release-tooling.md) | Operations and release tooling: Terraform for AWS and GCP, Helm with external Postgres, GoReleaser and cosign keyless, a Go load tool | none (M9) | Accepted | 2026-11-22 |
 | [0055](0055-telemetry-implementation.md) | Telemetry implementation choices: hand-rolled HTTP middleware, one global registry, OTLP exporters by environment, metric label sets | none (M9-1a) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0056](0056-terraform-example-choices.md) | Terraform example choices: trust policy as input, SSE-S3 default, custom GCS roles, opt-in HMAC keys, fmt and validate in CI | none (M9-3) | Accepted (flagged for owner review) | 2026-11-22 |
+| [0059](0059-helm-chart-choices.md) | Helm chart choices: secrets as mounted files, flat config map, masker as a worker sidecar, queue-depth KEDA query, fixed ingress prefixes | none (M9-2) | Accepted (flagged for owner review) | 2026-11-22 |
 
 ## Open gates
 
