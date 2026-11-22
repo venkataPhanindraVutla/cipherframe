@@ -1,0 +1,146 @@
+# GoReleaser configuration (ADR 0054, ADR 0060). Run by .github/workflows/release.yml on a v* tag;
+# the release-check job in ci.yml runs `goreleaser check` and a binaries-only snapshot build.
+# Needs GITHUB_REPOSITORY and GITHUB_REPOSITORY_OWNER in the environment (GitHub Actions sets both).
+version: 2
+
+project_name: cipherframe
+
+before:
+  hooks:
+    - go mod download
+
+report_sizes: true
+
+builds:
+  - id: cli
+    main: ./cmd/cipherframe
+    binary: cipherframe
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/venkataPhanindraVutla/cipherframe/internal/version.Version={{ .Tag }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  - id: server
+    main: ./cmd/cipherframe-server
+    binary: cipherframe-server
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/venkataPhanindraVutla/cipherframe/internal/version.Version={{ .Tag }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: cli
+    ids: [cli]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "cipherframe_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, NOTICE, README.md]
+  - id: server
+    ids: [server]
+    formats: [tar.gz]
+    name_template: "cipherframe-server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, NOTICE, README.md]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# SPDX SBOM per archive (needs the syft binary on PATH).
+sboms:
+  - id: archives
+    artifacts: archive
+    documents: ["${artifact}.spdx.json"]
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+# Keyless (Sigstore, GitHub OIDC) signature bundle over the checksum file.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--yes", "--bundle=${signature}", "${artifact}"]
+    output: true
+
+# The images are built from the repository's own Dockerfiles, which compile the Go binary inside the
+# image build (the prebuilt binaries in the context are not used), so only the paths those builds
+# read go into the context. One multi-platform buildx build per image. The worker image builds
+# FFmpeg and x264 (GPL) from pinned source, so its licence expression includes GPL-2.0-or-later
+# (see build/worker-SOURCE.md.in and docs/releasing.md).
+dockers_v2:
+  - id: server
+    ids: [server]
+    dockerfile: build/Dockerfile
+    images:
+      - "ghcr.io/{{ tolower .Env.GITHUB_REPOSITORY_OWNER }}/cipherframe-server"
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    build_args:
+      VERSION: "{{ .Tag }}"
+    labels: &labels
+      org.opencontainers.image.source: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.licenses: "Apache-2.0"
+    extra_files: &source_files
+      - go.mod
+      - go.sum
+      - cmd
+      - internal
+      - spec
+      - build/worker-SOURCE.md.in
+  - id: worker
+    ids: [server]
+    dockerfile: build/worker.Dockerfile
+    images:
+      - "ghcr.io/{{ tolower .Env.GITHUB_REPOSITORY_OWNER }}/cipherframe-worker"
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    build_args:
+      VERSION: "{{ .Tag }}"
+    labels:
+      <<: *labels
+      org.opencontainers.image.licenses: "Apache-2.0 AND GPL-2.0-or-later"
+    extra_files: *source_files
+
+# Keyless signature of each pushed image, by digest.
+docker_signs:
+  - id: images
+    cmd: cosign
+    artifacts: all
+    args: ["sign", "--yes", "${artifact}@${digest}"]
+    output: true
+
+# Release notes: commit titles since the previous tag (the PR title when a PR is squash-merged),
+# grouped by prefix. The first matching group wins.
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^Merge (pull request|branch)'
+  groups:
+    - title: Breaking changes
+      regexp: '^[^:]+!:|BREAKING CHANGE'
+      order: 0
+    - title: Features and milestones
+      regexp: '^(M\d+-\d+|feat)'
+      order: 1
+    - title: Fixes
+      regexp: '^fix'
+      order: 2
+    - title: Documentation
+      regexp: '^(docs|ADR)'
+      order: 3
+    - title: Other changes
+      order: 9999
+
+release:
+  prerelease: auto

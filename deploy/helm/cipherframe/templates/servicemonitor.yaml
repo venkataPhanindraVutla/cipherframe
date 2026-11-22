@@ -1,0 +1,28 @@
+{{- if .Values.serviceMonitor.enabled }}
+{{- $token := .Values.secrets.CIPHERFRAME_METRICS_TOKEN | required "serviceMonitor.enabled needs secrets.CIPHERFRAME_METRICS_TOKEN: the scrape token Secret" }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cipherframe.fullname" . }}
+  labels:
+    {{- include "cipherframe.labels" (dict "root" . "role" "metrics") | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ default .Chart.Name .Values.nameOverride }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [api, edge, worker] }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ $token.name | quote }}
+          key: {{ $token.key | quote }}
+{{- end }}

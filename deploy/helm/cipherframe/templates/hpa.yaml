@@ -1,0 +1,26 @@
+{{- range $role := list "api" "edge" }}
+{{- $r := get $.Values $role }}
+{{- if and $r.enabled $r.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "cipherframe.labels" (dict "root" $ "role" $role) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+  minReplicas: {{ $r.autoscaling.minReplicas }}
+  maxReplicas: {{ $r.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $r.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,160 @@
+name: release
+
+# Runs on version tags only (ADR 0054, ADR 0060). No secret besides the job's GITHUB_TOKEN is used;
+# signatures and attestations come from the run's OIDC identity. See docs/releasing.md.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.27.4"
+
+jobs:
+  release:
+    name: binaries and images (GoReleaser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # the worker image compiles FFmpeg for two architectures
+    permissions:
+      contents: write # create the release and upload assets
+      packages: write # push to ghcr.io
+      id-token: write # keyless signing (Sigstore) and attestations
+      attestations: write
+    outputs:
+      server_digest: ${{ steps.digests.outputs.server }}
+      worker_digest: ${{ steps.digests.outputs.worker }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: the tag must be on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: image digests
+        id: digests
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          version="${GITHUB_REF_NAME#v}"
+          echo "owner=${owner}" >> "${GITHUB_OUTPUT}"
+          for name in server worker; do
+            digest="$(docker buildx imagetools inspect "ghcr.io/${owner}/cipherframe-${name}:${version}" --format '{{.Manifest.Digest}}')"
+            echo "${name}=${digest}" >> "${GITHUB_OUTPUT}"
+          done
+
+      - name: provenance for the binaries
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+      - name: provenance for the server image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.digests.outputs.owner }}/cipherframe-server
+          subject-digest: ${{ steps.digests.outputs.server }}
+          push-to-registry: true
+      - name: provenance for the worker image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.digests.outputs.owner }}/cipherframe-worker
+          subject-digest: ${{ steps.digests.outputs.worker }}
+          push-to-registry: true
+
+      - name: SPDX SBOMs attached to the images (cosign attestations)
+        env:
+          SERVER_DIGEST: ${{ steps.digests.outputs.server }}
+          WORKER_DIGEST: ${{ steps.digests.outputs.worker }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          for pair in "server ${SERVER_DIGEST}" "worker ${WORKER_DIGEST}"; do
+            set -- ${pair}
+            ref="ghcr.io/${owner}/cipherframe-$1@$2"
+            syft "${ref}" --output "spdx-json=cipherframe-$1.spdx.json"
+            cosign attest --yes --type spdxjson --predicate "cipherframe-$1.spdx.json" "${ref}"
+            gh release upload "${GITHUB_REF_NAME}" "cipherframe-$1.spdx.json"
+          done
+
+  masker:
+    name: masker image
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: names
+        id: names
+        run: |
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "${GITHUB_OUTPUT}"
+          echo "version=${GITHUB_REF_NAME#v}" >> "${GITHUB_OUTPUT}"
+      # The masker copies FFmpeg out of the worker image built above, pinned by its digest.
+      - name: build and push
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ml
+          file: ml/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            FFMPEG_IMAGE=ghcr.io/${{ steps.names.outputs.owner }}/cipherframe-worker@${{ needs.release.outputs.worker_digest }}
+          tags: |
+            ghcr.io/${{ steps.names.outputs.owner }}/cipherframe-ml:${{ steps.names.outputs.version }}
+            ghcr.io/${{ steps.names.outputs.owner }}/cipherframe-ml:latest
+          labels: |
+            org.opencontainers.image.title=cipherframe-ml
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.names.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0 AND GPL-2.0-or-later
+      - name: sign the image
+        env:
+          REF: ghcr.io/${{ steps.names.outputs.owner }}/cipherframe-ml@${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${REF}"
+      - name: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.names.outputs.owner }}/cipherframe-ml
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

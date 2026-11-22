@@ -1,0 +1,95 @@
+# Every optional feature switched on, as an example and for CI. Nothing here is a secret: the
+# Secrets named below must already exist in the namespace.
+image:
+  server: { tag: ci }
+  worker: { tag: ci }
+  masker: { tag: ci }
+imagePullSecrets:
+  - name: registry-credentials
+
+config:
+  CIPHERFRAME_EDGE_PUBLIC_URL: https://media.example.com
+  CIPHERFRAME_S3_SOURCE_BUCKET: example-cipherframe-source
+  CIPHERFRAME_S3_DELIVERY_BUCKET: example-cipherframe-delivery
+  CIPHERFRAME_S3_REGION: eu-west-1
+  CIPHERFRAME_KMS_PROVIDER: awskms
+  CIPHERFRAME_KMS_AWS_KEY_ID: alias/example-cipherframe-kek
+  CIPHERFRAME_KMS_AWS_REGION: eu-west-1
+  CIPHERFRAME_S3_ACCESS_KEY_ID: ""
+  CIPHERFRAME_S3_SECRET_ACCESS_KEY: ""
+  CIPHERFRAME_KMS_AWS_ACCESS_KEY_ID: ""
+  CIPHERFRAME_KMS_AWS_SECRET_ACCESS_KEY: ""
+  CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS: "90"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.monitoring.svc:4318
+
+secrets:
+  CIPHERFRAME_DATABASE_URL: { name: cipherframe-database, key: url }
+  CIPHERFRAME_API_KEY_PEPPERS: { name: cipherframe-peppers, key: peppers }
+  CIPHERFRAME_METRICS_TOKEN: { name: cipherframe-metrics, key: token }
+
+api:
+  replicas: 2
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/example-cipherframe-api
+  pdb: { enabled: true, minAvailable: 1 }
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70 }
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: api
+
+edge:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/example-cipherframe-edge
+  pdb: { enabled: true, minAvailable: 1 }
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+
+worker:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/example-cipherframe-worker
+  pdb: { enabled: true, minAvailable: 1 }
+  nodeSelector: { workload: transcode }
+  tolerations:
+    - { key: workload, operator: Equal, value: transcode, effect: NoSchedule }
+  masker:
+    enabled: true
+    env:
+      CIPHERFRAME_ML_DETECT_EVERY: "2"
+  keda:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 8
+
+ingress:
+  api:
+    enabled: true
+    className: nginx
+    host: api.example.com
+    tls:
+      - { secretName: cipherframe-api-tls, hosts: [api.example.com] }
+  edge:
+    enabled: true
+    className: nginx
+    host: media.example.com
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    tls:
+      - { secretName: cipherframe-edge-tls, hosts: [media.example.com] }
+
+serviceMonitor:
+  enabled: true
+  labels: { release: prometheus }
+
+networkPolicy:
+  enabled: true
+  egress:
+    - ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 443 }

@@ -1,0 +1,17 @@
+{{- range $role := list "api" "edge" "worker" }}
+{{- $r := get $.Values $role }}
+{{- if and $r.enabled $r.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "cipherframe.labels" (dict "root" $ "role" $role) | nindent 4 }}
+spec:
+  minAvailable: {{ $r.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "cipherframe.selector" (dict "root" $ "role" $role) | nindent 6 }}
+{{- end }}
+{{- end }}

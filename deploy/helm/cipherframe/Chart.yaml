@@ -1,0 +1,8 @@
+apiVersion: v2
+name: cipherframe
+description: Cipherframe encrypted video delivery, with one Deployment each for the api, edge and worker roles.
+type: application
+version: 0.1.0
+# The default image tag. Set image.*.tag explicitly until a release publishes images (M9-6).
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"

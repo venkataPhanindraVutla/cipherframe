@@ -552,6 +552,20 @@ identity per server role with least-privilege storage access, and the KMS key fo
 README has the role to permission table and maps the outputs to the `CIPHERFRAME_S3_*` and
 `CIPHERFRAME_KMS_*` variables below. CI only formats and validates them; the project never applies them.
 
+## Helm chart (M9-2, ADR 0059)
+
+`deploy/helm/cipherframe` runs the api, edge and worker roles on Kubernetes against an external
+Postgres, with the migration as a hook Job, secrets mounted as `_FILE` files and optional Ingress,
+ServiceMonitor, autoscaling and NetworkPolicy. Its README has the values reference, upgrade notes and
+the cloud IAM each role needs. CI only renders and validates it; the project never installs it.
+
+## Releases and verifying them (M9-6, ADR 0060)
+
+Tagged releases publish the `cipherframe` CLI and the server as archives, and the `cipherframe-server`,
+`cipherframe-worker` and `cipherframe-ml` images on ghcr.io, all signed with cosign (keyless) and carrying
+build provenance and SBOMs. [releasing.md](releasing.md) has the versioning policy, the `cosign verify`
+and `gh attestation verify` commands and the licensing note for the worker image.
+
 ## Configuration
 
 Cipherframe reads only `CIPHERFRAME_*` environment variables (ADR 0013). They are parsed once at
@@ -690,6 +704,11 @@ function address, not the value. Compare secrets with `Equal`, not `==`.
   can still be printed by careless code.
 - Placeholder detection is a prefix check. It stops the shipped development values from reaching
   production, not a weak value an operator chose.
+
+## Backups and key loss
+
+See [disaster-recovery.md](disaster-recovery.md): what to back up, the restore order, and why losing
+the KEK (or access to the KMS key) makes every asset permanently unreadable.
 
 ## What this does not protect against
 

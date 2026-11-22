@@ -105,11 +105,11 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 - [x] M9-1 Observability: traces and metrics across api, edge and worker
   - [x] M9-1a: telemetry core, [observability.md](observability.md), [ADR 0055](adr/0055-telemetry-implementation.md)
   - [x] M9-1b: Grafana dashboard, alert rules with `promtool` tests, the `observability` compose profile, `GET /v1/audit-events` and `cipherframe audit export`, the end-to-end secret scan ([ADR 0058](adr/0058-observability-tooling-and-audit-export.md), `deploy/observability/`)
-- [ ] M9-2 Helm chart
+- [x] M9-2 Helm chart ([ADR 0059](adr/0059-helm-chart-choices.md), `deploy/helm/cipherframe/`; external Postgres only per [ADR 0054](adr/0054-operations-and-release-tooling.md); rendered and schema-checked in CI, no cluster install test)
 - [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
 - [ ] M9-4 Load tests with published method and numbers
-- [ ] M9-5 Security review: threat model update, fuzz tests for playlist rewriting and token parsing
-- [ ] M9-6 Release automation: signed images, SBOM, changelog
+- [x] M9-5 Security review: threat model update, fuzz tests for playlist rewriting, token, key and subtitle parsing (CI `fuzz` job on pushes to main), [disaster recovery](disaster-recovery.md)
+- [x] M9-6 Release automation: signed images, SBOM, changelog ([ADR 0060](adr/0060-release-automation-choices.md), [releasing.md](releasing.md), `.goreleaser.yaml`)
 
 ### M10 v1 extras
 
@@ -167,3 +167,11 @@ Smaller items found while building, not yet scheduled:
 - Rate-limit the viewer-authorization callback and re-wrap its stored secrets on key rotation.
 - Let the published key set mark a key "revoked as compromised", not only "retired"
   ([integrity.md](integrity.md)).
+- Recover signing when the wrapped signing-key seeds are lost but the database survives: today the
+  service creates a key only when none exists, so signing fails closed until a key is added by hand
+  ([disaster-recovery.md](disaster-recovery.md#losing-the-signing-keys)).
+- Make restoring a backup safe for deletions: after a restore, replay the signed deletion records so
+  assets deleted since the backup are deleted again ([disaster-recovery.md](disaster-recovery.md)).
+- Re-check the metrics and OTLP section of the threat model against the code when M9-1 lands.
+- Fuzz the tus library's `Upload-Metadata` handling at the edge request level (Cipherframe discards the
+  values, but the third-party parser runs first).

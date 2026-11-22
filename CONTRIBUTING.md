@@ -80,6 +80,16 @@ gitleaks git --config .gitleaks.toml --redact --log-opts="origin/main..HEAD" .
 sqlc diff               # generated code in internal/db/dbgen must be current
 ```
 
+Parsers that read attacker-controlled input have fuzz targets (`FuzzXxx`). They run on their seed
+corpus in `go test`; to fuzz one for a minute, one at a time:
+
+```sh
+go test ./internal/hls -run '^$' -fuzz '^FuzzRewriteMedia$' -fuzztime 60s -parallel 2
+```
+
+A failing input is saved under `testdata/fuzz/<Target>/`; commit it with the fix as a regression
+seed. CI runs every target for 20 seconds on pushes to `main`.
+
 Database tests need Docker and run with the `integration` build tag. They start Postgres through
 testcontainers; set `CIPHERFRAME_TEST_PG_IMAGE` (default `postgres:18.6`) to test another version:
 
