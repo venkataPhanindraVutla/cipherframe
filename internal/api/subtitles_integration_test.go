@@ -308,7 +308,7 @@ func TestSubtitleLifecycle(t *testing.T) {
 	}
 
 	// Each change was audited, without content.
-	events, _ := r.repos.ListAuditEvents(context.Background(), res.Tenant.ID, nil, 100)
+	events, _, _ := r.repos.ListAuditEvents(context.Background(), res.Tenant.ID, db.AuditQuery{Limit: 100})
 	adds, dels := 0, 0
 	for _, e := range events {
 		switch e.Action {

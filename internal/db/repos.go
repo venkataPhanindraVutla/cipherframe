@@ -322,29 +322,51 @@ func (r *Repos) InsertAuditEvent(ctx context.Context, in NewAuditEvent) (AuditEv
 	return auditFromRow(row), nil
 }
 
-// ListAuditEvents returns up to limit of the tenant's events, oldest first, starting after
-// after (nil for the beginning).
-func (r *Repos) ListAuditEvents(ctx context.Context, tenantID id.TenantID, after *AuditCursor, limit int) ([]AuditEvent, error) {
+// AuditQuery pages a read of a tenant's audit events. Zero Since and Until mean unbounded (Since
+// inclusive, Until exclusive); After is nil for the beginning. Limit is 1 to maxPage.
+type AuditQuery struct {
+	Since, Until time.Time
+	After        *AuditCursor
+	Limit        int
+}
+
+// ListAuditEvents returns the tenant's events, oldest first, and the cursor of the next page (nil
+// on the last page).
+func (r *Repos) ListAuditEvents(ctx context.Context, tenantID id.TenantID, q AuditQuery) ([]AuditEvent, *AuditCursor, error) {
 	tid, err := requirePG(tenantID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if limit < 1 || limit > maxPage {
-		return nil, errs.New(errs.InvalidRequest, "invalid page size")
+	if q.Limit < 1 || q.Limit > maxPage {
+		return nil, nil, errs.New(errs.InvalidRequest, "invalid page size")
 	}
-	p := dbgen.ListAuditEventsByTenantParams{TenantID: tid, MaxRows: int32(limit)} //nolint:gosec // bounded by maxPage
-	if after != nil {
-		t := after.CreatedAt
-		p.AfterID = rawToPG(after.ID)
+	p := dbgen.ListAuditEventsByTenantParams{
+		TenantID: tid, Since: time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC), Until: time.Date(9000, 1, 1, 0, 0, 0, 0, time.UTC),
+		MaxRows: int32(q.Limit + 1), //nolint:gosec // bounded by maxPage
+	}
+	if !q.Since.IsZero() {
+		p.Since = q.Since
+	}
+	if !q.Until.IsZero() {
+		p.Until = q.Until
+	}
+	if q.After != nil {
+		t := q.After.CreatedAt
+		p.AfterID = rawToPG(q.After.ID)
 		p.AfterCreatedAt = &t
 	}
 	rows, err := r.q.ListAuditEventsByTenant(ctx, p)
 	if err != nil {
-		return nil, mapError(err)
+		return nil, nil, mapError(err)
 	}
 	out := make([]AuditEvent, len(rows))
 	for i, row := range rows {
 		out[i] = auditFromRow(row)
 	}
-	return out, nil
+	if len(out) <= q.Limit {
+		return out, nil, nil
+	}
+	out = out[:q.Limit]
+	last := out[len(out)-1]
+	return out, &AuditCursor{CreatedAt: last.CreatedAt, ID: last.ID}, nil
 }

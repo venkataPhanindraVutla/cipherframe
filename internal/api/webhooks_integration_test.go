@@ -291,7 +291,7 @@ func TestWebhookEndpointsAPI(t *testing.T) {
 	h.wantStatus(h.do(key, "GET", "/v1/webhook-endpoints/"+eid, nil), 404, "not_found")
 
 	actions := map[string]bool{}
-	evs, err := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, nil, 100)
+	evs, _, err := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, db.AuditQuery{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

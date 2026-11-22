@@ -36,6 +36,7 @@ type restFake struct {
 	filename  string
 	verify    func(req map[string]any) map[string]any
 	proof     *proof.Proof
+	query     url.Values // of the last audit export request
 }
 
 func newRest(t *testing.T) *restFake {
@@ -137,8 +138,18 @@ func (r *restFake) route2(w http.ResponseWriter, req *http.Request, body []byte)
 			"scopes": []string{"admin"}, "created_at": "2026-11-22T10:00:00Z", "key": newKey,
 			"previous_valid_until": "2026-11-22T10:10:00Z",
 		}, true)
+	case m == "GET" && p == "/v1/audit-events":
+		r.query = req.URL.Query()
+		ev := func(n string) map[string]any {
+			return map[string]any{"id": "0195c8a2-7b1e-7c3d-9a4f-2e6d8b1c0f3" + n, "action": "key.rotate", "created_at": "2026-11-22T10:00:00Z"}
+		}
+		if req.URL.Query().Get("after") == "" {
+			r.reply(w, 200, map[string]any{"items": []any{ev("1"), ev("2")}, "next_cursor": "c2"}, true)
+		} else {
+			r.reply(w, 200, map[string]any{"items": []any{ev("3")}}, true)
+		}
 	case m == "GET" && p == "/v1/webhook-deliveries":
-		r.reply(w, 200, map[string]any{"items": []any{delivery}, "next_cursor": "c2"}, false)
+		r.reply(w, 200, map[string]any{"items": []any{delivery}, "next_cursor": "c2"}, true)
 	case m == "POST" && p == "/v1/webhook-deliveries/"+testDelivery+"/replay":
 		r.reply(w, 202, delivery, false)
 	case m == "POST" && p == "/v1/webhook-endpoints/"+testEndpoint+"/replay-dead":
@@ -521,4 +532,25 @@ func TestMissingCredentialsAreUsageErrors(t *testing.T) {
 	if code := run([]string{"session", "create", testAsset}, &out, &errb); code != 3 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
+}
+
+func TestAuditExport(t *testing.T) {
+	r := newRest(t)
+	code, out, errb := runCLI(t, r.fakeServer, "audit", "export", "--since", "2026-11-01T00:00:00Z", "--until", "2026-12-01T00:00:00Z")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if code != 0 || len(lines) != 3 || errb != "" {
+		t.Fatalf("export: %d\n%s\n%s", code, out, errb)
+	}
+	for _, l := range lines {
+		if !json.Valid([]byte(l)) || strings.Contains(l, " ") {
+			t.Fatalf("not one compact JSON object per line: %q", l)
+		}
+	}
+	if r.query.Get("after") != "c2" || r.query.Get("limit") != "500" || r.query.Get("since") == "" || r.query.Get("until") == "" {
+		t.Fatalf("last query = %v", r.query)
+	}
+	usageCases(t, r.fakeServer, map[string][]string{
+		"bad since": {"audit", "export", "--since", "yesterday"},
+		"argument":  {"audit", "export", "x"},
+	})
 }

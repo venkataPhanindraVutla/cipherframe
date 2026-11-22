@@ -55,25 +55,32 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 const listAuditEventsByTenant = `-- name: ListAuditEventsByTenant :many
 SELECT id, tenant_id, client_id, api_key_id, action, target, request_id, created_at FROM audit_events
 WHERE tenant_id = $1::uuid
+  AND created_at >= $2::timestamptz
+  AND created_at < $3::timestamptz
   AND (
-      $2::uuid IS NULL
-      OR (created_at, id) > ($3::timestamptz, $2::uuid)
+      $4::uuid IS NULL
+      OR (created_at, id) > ($5::timestamptz, $4::uuid)
   )
 ORDER BY created_at, id
-LIMIT $4::integer
+LIMIT $6::integer
 `
 
 type ListAuditEventsByTenantParams struct {
 	TenantID       pgtype.UUID
+	Since          time.Time
+	Until          time.Time
 	AfterID        pgtype.UUID
 	AfterCreatedAt *time.Time
 	MaxRows        int32
 }
 
-// Oldest first, keyset-paginated: pass the last (created_at, id) seen as the cursor.
+// Oldest first, keyset-paginated: pass the last (created_at, id) seen as the cursor. since is
+// inclusive, until exclusive.
 func (q *Queries) ListAuditEventsByTenant(ctx context.Context, arg ListAuditEventsByTenantParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listAuditEventsByTenant,
 		arg.TenantID,
+		arg.Since,
+		arg.Until,
 		arg.AfterID,
 		arg.AfterCreatedAt,
 		arg.MaxRows,

@@ -272,7 +272,7 @@ func TestBootstrapThenWhoami(t *testing.T) {
 		t.Fatalf("lowercase scheme: %d", rs.StatusCode)
 	}
 
-	events, err := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, nil, 10)
+	events, _, err := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, db.AuditQuery{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestRotationInPlace(t *testing.T) {
 	if err != nil || got.CreatedByClientID != cliID {
 		t.Fatalf("asset owner changed: %+v %v", got, err)
 	}
-	events, err := h.repos.ListAuditEvents(ctx, res.Tenant.ID, nil, 100)
+	events, _, err := h.repos.ListAuditEvents(ctx, res.Tenant.ID, db.AuditQuery{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

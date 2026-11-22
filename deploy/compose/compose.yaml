@@ -191,7 +191,50 @@ services:
       work-init:
         condition: service_completed_successfully
 
+  # Observability (M9-1b, ADR 0058): optional, development only. Not started by a plain
+  # `docker compose up`. To also make the services send traces and serve /metrics, merge
+  # compose.observability.yaml (see ../observability/README.md):
+  #   docker compose -f compose.yaml -f compose.observability.yaml --profile observability up
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
+    profiles: ["observability"]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    # The image has no shell and runs as an unprivileged user that cannot write a new named volume.
+    user: "0:0"
+    ports:
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - ../observability/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+      - otel-out:/otel-out
+
+  prometheus:
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    profiles: ["observability"]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ../observability/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - ../observability/dev/metrics-token:/etc/prometheus/cipherframe-metrics-token:ro
+
+  grafana:
+    image: grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: dev-placeholder-grafana
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/cipherframe.json:/var/lib/grafana/dashboards/cipherframe.json:ro
+    depends_on:
+      - prometheus
+
 volumes:
   postgres-data:
   seaweedfs-data:
   work:
+  otel-out:

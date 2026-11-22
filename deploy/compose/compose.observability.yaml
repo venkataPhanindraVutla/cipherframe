@@ -1,0 +1,24 @@
+# Turns telemetry on in the development stack (M9-1b, ADR 0058). Merge it with compose.yaml and
+# enable the profile that starts the collector, Prometheus and Grafana:
+#
+#   docker compose -f compose.yaml -f compose.observability.yaml --profile observability up
+#
+# A plain `docker compose up` (without this file) is unchanged: no collector, no /metrics, no spans.
+# Development only: the scrape token is a public placeholder.
+
+x-telemetry-env: &telemetry-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  CIPHERFRAME_METRICS_TOKEN_FILE: /run/cipherframe/metrics-token
+
+x-metrics-token: &metrics-token ../observability/dev/metrics-token:/run/cipherframe/metrics-token:ro
+
+services:
+  server:
+    environment: *telemetry-env
+    volumes:
+      - *metrics-token
+
+  worker:
+    environment: *telemetry-env
+    volumes:
+      - *metrics-token

@@ -247,14 +247,53 @@ jobs:
             if grep -E 'path: (/|/metrics|/healthz|/readyz)$' ingress.yaml; then exit 1; fi
           done
 
+  observability:
+    name: observability (alert rules, dashboard, secret scanner)
+    runs-on: ubuntu-latest
+    env:
+      # The same pinned image the development stack runs; promtool ships in it.
+      PROMETHEUS_IMAGE: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: promtool check rules and test rules
+        run: |
+          for cmd in "check rules alerts.yaml" "test rules alerts_test.yaml"; do
+            docker run --rm --entrypoint promtool -v "${PWD}/deploy/observability/prometheus:/rules:ro" -w /rules "${PROMETHEUS_IMAGE}" ${cmd}
+          done
+      - name: promtool check config (scrape configuration)
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "${PWD}/deploy/observability/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml:ro" \
+            -v "${PWD}/deploy/observability/prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro" \
+            -v "${PWD}/deploy/observability/dev/metrics-token:/etc/prometheus/cipherframe-metrics-token:ro" \
+            "${PROMETHEUS_IMAGE}" check config /etc/prometheus/prometheus.yml
+      - name: the dashboard is valid JSON and pins no data source UID
+        run: |
+          f=deploy/observability/grafana/cipherframe.json
+          jq -e '.panels | length > 0' "${f}" >/dev/null
+          test "$(jq -r '[.. | objects | select(has("uid") and (.type? == "prometheus")) | .uid] | unique | .[]' "${f}")" = '${DS_PROMETHEUS}'
+      - name: secret scanner self-test
+        run: deploy/compose/secret-scan-test.sh
+
   compose:
     name: compose (development stack)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      COMPOSE_FILE: deploy/compose/compose.yaml
+      # The services send traces to the collector and serve /metrics (ADR 0058): the scan below reads
+      # what that produced.
+      COMPOSE_FILE: deploy/compose/compose.yaml:deploy/compose/compose.observability.yaml
+      COMPOSE_PROFILES: observability
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: a plain "docker compose up" does not start the observability services
+        run: |
+          services="$(COMPOSE_PROFILES= COMPOSE_FILE=deploy/compose/compose.yaml docker compose config --services)"
+          echo "${services}"
+          for s in otel-collector prometheus grafana; do
+            if echo "${services}" | grep -qx "${s}"; then echo "${s} is part of the default stack"; exit 1; fi
+          done
+          ! COMPOSE_PROFILES= COMPOSE_FILE=deploy/compose/compose.yaml docker compose config | grep -q 'OTEL_\|METRICS_TOKEN'
       - name: build the image and start the stack
         run: docker compose up -d --build --wait --wait-timeout 180
       - name: readiness and liveness
@@ -317,7 +356,7 @@ jobs:
           outputs: type=local,dest=out/tools
           cache-from: type=gha,scope=worker-image
       - name: start the worker
-        run: docker compose --profile worker up -d --no-build worker
+        run: docker compose --profile worker --profile observability up -d --no-build worker
       - name: cipherframe CLI end to end
         run: |
           go build -o "${RUNNER_TEMP}/cipherframe" ./cmd/cipherframe
@@ -325,13 +364,46 @@ jobs:
           out/tools/ffmpeg-fixtures -hide_banner -loglevel error -f lavfi -i testsrc2=size=320x240:rate=25 \
             -f lavfi -i sine=frequency=440:sample_rate=48000 -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
             -shortest "${RUNNER_TEMP}/test.mp4"
-          deploy/compose/cli-e2e.sh "${RUNNER_TEMP}/cipherframe" "${RUNNER_TEMP}/test.mp4"
+          # The secrets the run handles go to a file in a private directory, never to the job log.
+          scan="$(mktemp -d "${RUNNER_TEMP}/scan.XXXXXX")"
+          echo "SCAN_DIR=${scan}" >> "${GITHUB_ENV}"
+          CIPHERFRAME_SCAN_SECRETS_FILE="${scan}/secrets" \
+            deploy/compose/cli-e2e.sh "${RUNNER_TEMP}/cipherframe" "${RUNNER_TEMP}/test.mp4"
+      - name: Prometheus scrapes the services and Grafana has the dashboard
+        run: |
+          # Retried together: a metric only appears once Prometheus has scraped after the e2e run.
+          q() { curl -fsS "http://127.0.0.1:9090/api/v1/query?query=$1" | jq -r "$2"; }
+          for _ in $(seq 1 40); do
+            up="$(q 'count(up%7Bjob%3D~%22cipherframe-.*%22%7D%3D%3D1)' '.data.result[0].value[1] // "0"')"
+            http="$(q cipherframe_http_request_duration_seconds_count '.data.result | length')"
+            transcode="$(q cipherframe_transcode_duration_seconds_count '.data.result | length')"
+            dash="$(curl -fsS -u admin:dev-placeholder-grafana 'http://127.0.0.1:3000/api/search?query=Cipherframe' | jq -r 'length')" # gitleaks:allow (development placeholder password)
+            if [ "${up}" = "3" ] && [ "${http}" -gt 0 ] && [ "${transcode}" -gt 0 ] && [ "${dash}" = "1" ]; then exit 0; fi
+            sleep 3
+          done
+          echo "not ready: up targets ${up}/3, http series ${http}, transcode series ${transcode}, dashboards ${dash}"
+          exit 1
+      - name: secret scan of the spans and the container logs
+        run: |
+          # Batch exporters send every few seconds; stopping the collector flushes its file.
+          sleep 10
+          docker compose --profile worker --profile observability stop otel-collector
+          out="${SCAN_DIR}/out"
+          mkdir -p "${out}/logs"
+          docker compose --profile worker --profile observability cp otel-collector:/otel-out "${out}/spans"
+          for svc in $(docker compose --profile worker --profile observability config --services); do
+            docker compose --profile worker --profile observability logs --no-color --no-log-prefix "${svc}" > "${out}/logs/${svc}.log" 2>&1
+          done
+          # The scan means nothing if no spans arrived.
+          grep -q 'ffmpeg transcode' "${out}/spans/traces.jsonl"
+          grep -q 'GET /v1/play/{session_id}/key' "${out}/spans/traces.jsonl"
+          deploy/compose/secret-scan.sh "${SCAN_DIR}/secrets" "${out}"
       - name: compose logs
         if: failure()
-        run: docker compose --profile worker logs --no-color
+        run: docker compose --profile worker --profile observability logs --no-color
       - name: tear down
         if: always()
-        run: docker compose --profile worker down -v
+        run: docker compose --profile worker --profile observability down -v
 
   player:
     name: player (TypeScript checks, unit tests, end-to-end)

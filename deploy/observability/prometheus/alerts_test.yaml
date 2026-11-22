@@ -1,0 +1,149 @@
+# promtool test rules alerts_test.yaml
+rule_files:
+  - alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: target down
+    input_series:
+      - series: 'up{job="cipherframe-edge", instance="edge:8081"}'
+        values: "1 1 1 0x10"
+      - series: 'up{job="cipherframe-api", instance="api:8080"}'
+        values: "1x14"
+      - series: 'up{job="node", instance="n:9100"}'
+        values: "0x14"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CipherframeTargetDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: cipherframe-edge, instance: "edge:8081" }
+            exp_annotations:
+              summary: "cipherframe-edge (edge:8081) cannot be scraped"
+              description: "Prometheus has not scraped edge:8081 for 5 minutes. Check the process, the network path and the scrape token."
+      - eval_time: 4m
+        alertname: CipherframeTargetDown
+        exp_alerts: []
+
+  - interval: 1m
+    name: queue backlog growing, and a steady or small queue does not alert
+    input_series:
+      - series: 'cipherframe_jobs{kind="media.process", state="available"}'
+        values: "0+10x60"
+      - series: 'cipherframe_jobs{kind="webhook.deliver", state="available"}'
+        values: "200x60"
+      - series: 'cipherframe_jobs{kind="purge", state="available"}'
+        values: "0+0.5x60"
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: CipherframeQueueBacklogGrowing
+        exp_alerts:
+          - exp_labels: { severity: warning, kind: media.process }
+            exp_annotations:
+              summary: "Queue of media.process jobs is growing"
+              description: "More than 50 media.process jobs are waiting, more than 30 minutes ago. Workers are down, stuck or too few."
+
+  - interval: 1m
+    name: job failure rate
+    input_series:
+      - series: 'cipherframe_job_duration_seconds_count{kind="media.process", outcome="failed"}'
+        values: "0+3x40"
+      - series: 'cipherframe_job_duration_seconds_count{kind="media.process", outcome="succeeded"}'
+        values: "0+1x40"
+      - series: 'cipherframe_job_duration_seconds_count{kind="webhook.deliver", outcome="failed"}'
+        values: "0+1x40"
+      - series: 'cipherframe_job_duration_seconds_count{kind="webhook.deliver", outcome="succeeded"}'
+        values: "0+20x40"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: CipherframeJobFailureRate
+        exp_alerts:
+          - exp_labels: { severity: warning, kind: media.process }
+            exp_annotations:
+              summary: "More than 25% of media.process job attempts fail"
+              description: "A failed attempt is retried, so this is a rate of attempts, not of lost jobs. Look at the worker logs and the job table."
+
+  - interval: 1m
+    name: 5xx rate on api and edge, not on a quiet service
+    input_series:
+      - series: 'cipherframe_http_request_duration_seconds_count{service="edge", route="GET /v1/play/{session_id}/key", method="GET", status_class="5xx"}'
+        values: "0+30x30"
+      - series: 'cipherframe_http_request_duration_seconds_count{service="edge", route="GET /v1/play/{session_id}/key", method="GET", status_class="2xx"}'
+        values: "0+270x30"
+      - series: 'cipherframe_http_request_duration_seconds_count{service="api", route="GET /v1/whoami", method="GET", status_class="5xx"}'
+        values: "0+1x30"
+      - series: 'cipherframe_http_request_duration_seconds_count{service="api", route="GET /v1/whoami", method="GET", status_class="2xx"}'
+        values: "0+0x30"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CipherframeHTTP5xxRate
+        exp_alerts:
+          - exp_labels: { severity: critical, service: edge }
+            exp_annotations:
+              summary: "More than 5% of edge responses are 5xx"
+              description: "Check the database, the object store and the key provider the service depends on."
+
+  - interval: 1m
+    name: key endpoint p99
+    input_series:
+      - series: 'cipherframe_key_request_duration_seconds_bucket{outcome="served", le="0.5"}'
+        values: "0+1x30"
+      - series: 'cipherframe_key_request_duration_seconds_bucket{outcome="served", le="1"}'
+        values: "0+100x30"
+      - series: 'cipherframe_key_request_duration_seconds_bucket{outcome="served", le="+Inf"}'
+        values: "0+100x30"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CipherframeKeyEndpointSlow
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Content key requests: p99 above 500 ms"
+              description: "Viewers wait for the key before the first frame. Check the key provider (KMS) latency and the database."
+
+  - interval: 1m
+    name: key endpoint fast
+    input_series:
+      - series: 'cipherframe_key_request_duration_seconds_bucket{outcome="served", le="0.5"}'
+        values: "0+100x30"
+      - series: 'cipherframe_key_request_duration_seconds_bucket{outcome="served", le="1"}'
+        values: "0+100x30"
+      - series: 'cipherframe_key_request_duration_seconds_bucket{outcome="served", le="+Inf"}'
+        values: "0+100x30"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CipherframeKeyEndpointSlow
+        exp_alerts: []
+
+  - interval: 1m
+    name: anomaly spike
+    input_series:
+      - series: 'cipherframe_anomalies_total{kind="key_replay"}'
+        values: "0+5x30"
+      - series: 'cipherframe_anomalies_total{kind="key_rate"}'
+        values: "0+0.1x30"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CipherframeAnomalySpike
+        exp_alerts:
+          - exp_labels: { severity: warning, kind: key_replay }
+            exp_annotations:
+              summary: "Many key_replay anomaly events"
+              description: "A burst of playback anomaly events: possible token sharing or scraping. Read them with GET /v1/playback-events."
+
+  - interval: 1m
+    name: refusals spike
+    input_series:
+      - series: 'cipherframe_refusals_total{reason="rate_limited"}'
+        values: "0+10x30"
+      - series: 'cipherframe_refusals_total{reason="quota_exceeded"}'
+        values: "0+0x30"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CipherframeRefusalsSpike
+        exp_alerts:
+          - exp_labels: { severity: warning, reason: rate_limited }
+            exp_annotations:
+              summary: "Many requests refused: rate_limited"
+              description: "A tenant is hitting a quota or a rate limit. See the usage API, or enable the tenant_id label to see which."

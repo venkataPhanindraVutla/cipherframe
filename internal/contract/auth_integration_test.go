@@ -39,6 +39,7 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 		Log:      log,
 		Verifier: auth.NewVerifier(repos, onePepper{}, log, nil),
 		Manager:  auth.NewManager(pool, onePepper{}, nil),
+		Repos:    repos,
 	})
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)
@@ -72,6 +73,8 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 	}
 
 	call(admin, "GET", "/v1/whoami", nil, 200)
+	call(admin, "GET", "/v1/audit-events", nil, 200)
+	call(admin, "GET", "/v1/audit-events?limit=1&since=2000-01-01T00:00:00Z&until=2999-01-01T00:00:00Z", nil, 200)
 	cli := call(admin, "POST", "/v1/clients", map[string]any{"name": "svc"}, 201)
 	call(admin, "GET", "/v1/clients", nil, 200)
 	call(admin, "GET", "/v1/clients?limit=1", nil, 200)
@@ -107,8 +110,10 @@ func TestManagementOperationsMatchSpec(t *testing.T) {
 	call(map[string]string{"Authorization": "Bearer cf_bad"}, "GET", "/v1/whoami", nil, 401)
 	call(reader, "POST", "/v1/clients", map[string]any{"name": "x"}, 403)
 	call(reader, "GET", "/v1/keys", nil, 403)
+	call(reader, "GET", "/v1/audit-events", nil, 403)
 	bad("POST", "/v1/clients", map[string]any{"name": ""})
 	bad("GET", "/v1/clients?limit=0", nil)
+	bad("GET", "/v1/audit-events?after=garbage", nil)
 	bad("POST", "/v1/keys", map[string]any{"client_id": cli["id"], "name": "x", "scopes": []string{"admin", "admin"}})
 	call(admin, "POST", "/v1/keys", map[string]any{"client_id": id.New[id.ClientKind]().String(), "name": "x"}, 404)
 	call(admin, "POST", "/v1/keys/key_"+strings.Repeat("0", 26)+"/rotate", nil, 404)

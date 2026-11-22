@@ -13,7 +13,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/apiclient"
 )
 
-var restCommands = []command{sessionCommand, verifyFileCommand, proofCommand, subtitlesCommand, brandCommand, keysCommand, webhooksCommand}
+var restCommands = []command{sessionCommand, verifyFileCommand, proofCommand, subtitlesCommand, brandCommand, keysCommand, webhooksCommand, auditCommand}
 
 func checkVariant(v string) error {
 	if v != "" && v != "original" && v != "masked" {

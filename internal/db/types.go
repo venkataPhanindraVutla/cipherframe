@@ -1,9 +1,11 @@
 package db
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"time"
 	"uuid"
 
@@ -240,4 +242,16 @@ type NewAuditEvent struct {
 type AuditCursor struct {
 	CreatedAt time.Time
 	ID        uuid.UUID
+}
+
+// Encode returns the opaque text form of the cursor.
+func (c AuditCursor) Encode() string {
+	raw := "1." + strconv.FormatInt(c.CreatedAt.UnixMicro(), 10) + "." + c.ID.String()
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// ParseAuditCursor decodes a cursor made by Encode. Malformed text is an invalid_request error.
+func ParseAuditCursor(s string) (AuditCursor, error) {
+	c, err := ParseEventCursor(s)
+	return AuditCursor{CreatedAt: c.At, ID: c.ID}, err
 }

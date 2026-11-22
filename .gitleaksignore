@@ -35,3 +35,6 @@ b8b3ef87570e302de73457e4edd388f6efb016a5:cmd/cipherframe/cli_test.go:generic-api
 
 # internal/config metrics test: the fake "dev-placeholder-metrics-token" that production must refuse.
 0fa459b29ee49c2ddbf1d54af63a777408c64921:internal/config/metrics_test.go:generic-api-key:38
+
+# CI compose job: a curl to the local Prometheus query API (127.0.0.1:9090); no user or password in it.
+b8ed2247ee18dcf7b89f21301024cdf344b6f7f1:.github/workflows/ci.yml:curl-auth-user:323
