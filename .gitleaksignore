@@ -32,3 +32,6 @@ fcb428fde29ef91f72b1f1e6a25e5df7822ce477:internal/config/kms_vault_test.go:gener
 # cmd/cipherframe CLI test: a made-up upload token in the cfu_ format, used to prove the CLI never prints
 # it; it opens nothing.
 b8b3ef87570e302de73457e4edd388f6efb016a5:cmd/cipherframe/cli_test.go:generic-api-key:29
+
+# internal/config metrics test: the fake "dev-placeholder-metrics-token" that production must refuse.
+0fa459b29ee49c2ddbf1d54af63a777408c64921:internal/config/metrics_test.go:generic-api-key:38
