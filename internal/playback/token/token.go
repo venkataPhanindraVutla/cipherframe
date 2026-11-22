@@ -238,6 +238,11 @@ func (k *Keyring) verify(tok string, now time.Time, need Scope, assetID *string)
 	if k == nil || len(tok) > MaxTokenLen || !need.valid() {
 		return Claims{}, false
 	}
+	// encoding/base64 skips CR and LF, so a MAC with one inserted would still decode and verify:
+	// one token, many accepted spellings. Only the canonical spelling is a token.
+	if strings.ContainsAny(tok, "\r\n") {
+		return Claims{}, false
+	}
 	parts := strings.Split(tok, ".")
 	if len(parts) != 4 || parts[0] != Version {
 		return Claims{}, false
