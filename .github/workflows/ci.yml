@@ -132,6 +132,29 @@ jobs:
       - run: go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
       - run: govulncheck -tags=integration,media ./...
 
+  fuzz:
+    name: fuzz (parsers, 20 s each, pushes to main only)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      # One -fuzz target per go test run; "package:Target". A crash writes its input under
+      # testdata/fuzz, which stays in the job's workspace, so the log names it.
+      - name: fuzz each target for 20 seconds
+        run: |
+          for t in \
+            hls:FuzzRewriteMaster hls:FuzzRewriteMedia hls:FuzzRewrite hls:FuzzAddSubtitles hls:FuzzRewriteThumbnailTrack \
+            playback/token:FuzzVerify playback/token:FuzzOpen playback/token:FuzzTamper \
+            auth:FuzzParseKey auth:FuzzBearerToken uploads:FuzzHashToken subtitles:FuzzParse \
+            integrity/jcs:FuzzCanonicalize integrity/dsse:FuzzDSSEDecode integrity/merkle:FuzzVerifyInclusion; do
+            echo "== ${t}"
+            go test "./internal/${t%%:*}" -run '^$' -fuzz "^${t##*:}\$" -fuzztime 20s -parallel 2
+          done
+
   licenses:
     name: licence check (go-licenses)
     runs-on: ubuntu-latest
