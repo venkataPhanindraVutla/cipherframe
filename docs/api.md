@@ -1408,6 +1408,34 @@ the code of sessions older than the window. A malformed code is `400 invalid_req
 - **A code seen only in part.** Eight characters are shown; a partly legible code can match no session or,
   rarely, several.
 
+## Audit log export (ADR 0058)
+
+`GET /v1/audit-events` (scope `admin`) returns the audit events of the caller's tenant as structured
+objects, oldest first, for shipping to a log store.
+
+| Query | Meaning |
+| --- | --- |
+| `limit` | Page size, 1 to 500 (default 100). |
+| `after` | The `next_cursor` of the previous page. Opaque; a bad one is a 400. |
+| `since`, `until` | RFC 3339 time range on the event time: `since` inclusive, `until` exclusive, `until` after `since`. |
+
+```json
+{"items": [{"id": "0195c8a2-7b1e-7c3d-9a4f-2e6d8b1c0f36", "action": "key.rotate", "target": "key_...",
+            "client_id": "cli_...", "key_id": "key_...", "request_id": "01...", "created_at": "2026-11-22T10:00:00Z"}],
+ "next_cursor": "..."}
+```
+
+Follow `next_cursor` (pass it as `after`) until it is absent. Order is `(created_at, id)`, so a page
+never repeats or skips a row that was committed before you began. `target`, `client_id`, `key_id`
+and `request_id` are absent when the event has none (events the system raises on its own have no
+client or key). The log holds IDs, labels and short summaries only: never a token, a key secret, a
+signed URL, a session ID (a short fingerprint of one at most) or a source object key.
+
+One limit: an event is stamped when its transaction starts, so one that commits late can carry an
+older time than events you already read. When you export on a schedule, start each run a little
+before the end of the previous one and drop duplicates by `id`. The command line tool does the
+paging: `cipherframe audit export` ([usage.md](usage.md)).
+
 ## Integrity signing keys (ADR 0033)
 
 Manifests and deletion records are signed with Ed25519 keys that belong to the deployment, not to a

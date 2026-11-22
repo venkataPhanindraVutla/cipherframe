@@ -298,7 +298,7 @@ jobs:
           outputs: type=local,dest=out/tools
           cache-from: type=gha,scope=worker-image
       - name: start the worker
-        run: docker compose --profile worker up -d --no-build worker
+        run: docker compose --profile worker --profile observability up -d --no-build worker
       - name: cipherframe CLI end to end
         run: |
           go build -o "${RUNNER_TEMP}/cipherframe" ./cmd/cipherframe
@@ -327,12 +327,12 @@ jobs:
         run: |
           # Batch exporters send every few seconds; stopping the collector flushes its file.
           sleep 10
-          docker compose --profile worker stop otel-collector
+          docker compose --profile worker --profile observability stop otel-collector
           out="${SCAN_DIR}/out"
           mkdir -p "${out}/logs"
-          docker compose --profile worker cp otel-collector:/otel-out "${out}/spans"
-          for svc in $(docker compose --profile worker config --services); do
-            docker compose --profile worker logs --no-color --no-log-prefix "${svc}" > "${out}/logs/${svc}.log" 2>&1
+          docker compose --profile worker --profile observability cp otel-collector:/otel-out "${out}/spans"
+          for svc in $(docker compose --profile worker --profile observability config --services); do
+            docker compose --profile worker --profile observability logs --no-color --no-log-prefix "${svc}" > "${out}/logs/${svc}.log" 2>&1
           done
           # The scan means nothing if no spans arrived.
           grep -q 'ffmpeg transcode' "${out}/spans/traces.jsonl"
@@ -340,10 +340,10 @@ jobs:
           deploy/compose/secret-scan.sh "${SCAN_DIR}/secrets" "${out}"
       - name: compose logs
         if: failure()
-        run: docker compose --profile worker logs --no-color
+        run: docker compose --profile worker --profile observability logs --no-color
       - name: tear down
         if: always()
-        run: docker compose --profile worker down -v
+        run: docker compose --profile worker --profile observability down -v
 
   player:
     name: player (TypeScript checks, unit tests, end-to-end)

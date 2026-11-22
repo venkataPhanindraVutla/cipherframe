@@ -66,6 +66,12 @@ printf '%s' "${sess}" | jq -e '.heartbeat_interval_seconds > 0' >/dev/null
 rend="$(curl -fsS -H "Authorization: Bearer ${token}" "${murl}" | grep -v '^#' | head -n 1 | cut -d/ -f1)"
 seg="${rend}/seg-0.m4s"
 curl -fsS -H "Authorization: Bearer ${token}" "${murl%/master.m3u8}/${seg}" -o "${tmp}/seg.m4s"
+# The content key itself, through the key endpoint: it must reach no span and no log, in any form.
+kuri="$(curl -fsS -H "Authorization: Bearer ${token}" "${murl%/master.m3u8}/${rend}/media.m3u8" | sed -n 's/^#EXT-X-KEY:.*URI="\([^"]*\)".*/\1/p')"
+curl -fsS -H "Authorization: Bearer ${token}" "${murl%/master.m3u8}/${rend}/${kuri}" -o "${tmp}/key.bin"
+test "$(wc -c < "${tmp}/key.bin" | tr -d ' ')" = 16
+record content-key-hex "$(od -An -tx1 "${tmp}/key.bin" | tr -d ' \n')"
+record content-key-base64 "$(base64 < "${tmp}/key.bin" | tr -d '\n')"
 curl -fsS -H "Authorization: Bearer ${CIPHERFRAME_API_KEY}" "${CIPHERFRAME_SERVER}/v1/assets/${id}/manifest" > "${tmp}/manifest.json"
 "${cf}" proof "${id}" "${seg}" > "${tmp}/proof.json"
 "${cf}" verify --manifest "${tmp}/manifest.json" --proof "${tmp}/proof.json" \

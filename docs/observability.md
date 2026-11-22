@@ -91,4 +91,41 @@ export OTEL_METRICS_EXPORTER=otlp                              # also push metri
 export OTEL_EXPORTER_OTLP_PROTOCOL=grpc OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 ```
 
-Dashboards, alert rules, audit export and a bundled collector are not part of this page yet (M9-1b).
+## Dashboard and alerts
+
+`deploy/observability/` holds a Grafana dashboard (`grafana/cipherframe.json`, data source chosen on
+import) and Prometheus alert rules with unit tests (`prometheus/alerts.yaml`). The alerts cover a
+growing queue, a high job failure ratio, 5xx on api and edge, a slow key endpoint (p99), an anomaly
+spike, a refusal spike and a target that cannot be scraped. Thresholds are starting points. Import,
+scrape configuration and the checks are in
+[deploy/observability/README.md](../deploy/observability/README.md).
+
+## Trying it in the development stack
+
+```sh
+cd deploy/compose
+docker compose -f compose.yaml -f compose.observability.yaml --profile worker --profile observability up --build
+```
+
+The `observability` profile adds an OpenTelemetry Collector, Prometheus (scraping api, edge and
+worker with a placeholder token read from a file) and Grafana with the dashboard provisioned.
+`compose.observability.yaml` points the services at the collector and gives them the scrape token.
+A plain `docker compose up` starts none of this. Development only.
+
+## Audit log export
+
+`GET /v1/audit-events` (scope `admin`) returns your tenant's audit events oldest first, as
+structured JSON, in pages. `cipherframe audit export [--since T] [--until T]` writes them all as
+NDJSON. See [api.md](api.md#audit-log-export-adr-0058) and [usage.md](usage.md). Feed the NDJSON to
+your log store on a schedule, with an overlap (re-export from a little before the last time you
+read), because an event can commit slightly after one with a later timestamp.
+
+## The end-to-end secret scan
+
+CI runs the stack with traces going to a collector that writes them to a file, runs the CLI end to
+end, then searches the spans and the logs of every container for each secret the run handled: the
+API key, the playback token, the session ID, the content key (raw, hex, base64), the source object
+key, the upload ID and the scrape token, and for the signed-URL parameters `X-Amz-Signature`,
+`X-Amz-Credential` and `X-Amz-Security-Token`. The job fails on any hit and prints only the kind
+of secret and the file, never the value (`deploy/compose/secret-scan.sh`, ADR 0058). It can only
+find what it was told about; it is a regression net.
