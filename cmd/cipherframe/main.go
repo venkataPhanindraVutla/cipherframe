@@ -28,6 +28,7 @@ Usage:
   cipherframe brand set-logo FILE [--corner C] [--opacity N] | show | remove
   cipherframe keys rotate-api-key KEY_ID [--overlap 10m]
   cipherframe webhooks list [--endpoint ID] [--status S] | replay DELIVERY_ID | replay --endpoint ID --dead
+  cipherframe audit export [--since T] [--until T]
   cipherframe version
   cipherframe help [command]
 
