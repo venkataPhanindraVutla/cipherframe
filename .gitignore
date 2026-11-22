@@ -31,3 +31,11 @@ coverage.*
 # Output of build/test-media.sh (the FFmpeg test binaries)
 /out/
 /cmd/cipherframe/cipherframe
+
+# Terraform: never commit state, plugins, lock files or real variable files (example.tfvars is the template)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!example.tfvars
+.terraform.lock.hcl

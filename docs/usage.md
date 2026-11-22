@@ -538,6 +538,13 @@ are committed.
 - The worker image is GPL-licensed software (FFmpeg and x264) next to Apache-2.0 Cipherframe code.
   See `NOTICE` and the licence texts in the image.
 
+## Terraform examples (M9-3, ADR 0056)
+
+`deploy/terraform/aws` and `deploy/terraform/gcp` are example modules that create the buckets, one
+identity per server role with least-privilege storage access, and the KMS key for the KEK. Each
+README has the role to permission table and maps the outputs to the `CIPHERFRAME_S3_*` and
+`CIPHERFRAME_KMS_*` variables below. CI only formats and validates them; the project never applies them.
+
 ## Configuration
 
 Cipherframe reads only `CIPHERFRAME_*` environment variables (ADR 0013). They are parsed once at
