@@ -12,7 +12,7 @@ image:
   # tag defaults to the chart's appVersion; digest, when set, wins over the tag.
   server: { repository: ghcr.io/venkataphanindravutla/cipherframe-server, tag: "", digest: "" }
   worker: { repository: ghcr.io/venkataphanindravutla/cipherframe-worker, tag: "", digest: "" }
-  masker: { repository: ghcr.io/venkataphanindravutla/cipherframe-masker, tag: "", digest: "" }
+  masker: { repository: ghcr.io/venkataphanindravutla/cipherframe-ml, tag: "", digest: "" }
 
 # Non-secret CIPHERFRAME_* settings for every role and the migration Job: any variable of
 # docs/usage.md that is not a secret. Quote every value. An empty string is passed as an empty

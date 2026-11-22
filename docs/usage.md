@@ -555,6 +555,13 @@ Postgres, with the migration as a hook Job, secrets mounted as `_FILE` files and
 ServiceMonitor, autoscaling and NetworkPolicy. Its README has the values reference, upgrade notes and
 the cloud IAM each role needs. CI only renders and validates it; the project never installs it.
 
+## Releases and verifying them (M9-6, ADR 0060)
+
+Tagged releases publish the `cipherframe` CLI and the server as archives, and the `cipherframe-server`,
+`cipherframe-worker` and `cipherframe-ml` images on ghcr.io, all signed with cosign (keyless) and carrying
+build provenance and SBOMs. [releasing.md](releasing.md) has the versioning policy, the `cosign verify`
+and `gh attestation verify` commands and the licensing note for the worker image.
+
 ## Configuration
 
 Cipherframe reads only `CIPHERFRAME_*` environment variables (ADR 0013). They are parsed once at

@@ -108,7 +108,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 - [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
 - [ ] M9-4 Load tests with published method and numbers
 - [x] M9-5 Security review: threat model update, fuzz tests for playlist rewriting, token, key and subtitle parsing (CI `fuzz` job on pushes to main), [disaster recovery](disaster-recovery.md)
-- [ ] M9-6 Release automation: signed images, SBOM, changelog
+- [x] M9-6 Release automation: signed images, SBOM, changelog ([ADR 0060](adr/0060-release-automation-choices.md), [releasing.md](releasing.md), `.goreleaser.yaml`)
 
 ### M10 v1 extras
 
