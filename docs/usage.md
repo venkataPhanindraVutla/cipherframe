@@ -123,6 +123,9 @@ cipherframe verify --manifest manifest.json --keys keys.json ./download/   # exi
 cipherframe verify --manifest manifest.json --keys keys.json --timestamp ts.json --tsa-ca ca.pem ./download/   # also checks the RFC 3161 token
 ```
 
+Traces and OTLP metrics are configured with the standard `OTEL_EXPORTER_OTLP_*` variables, not
+`CIPHERFRAME_*` ones; see [observability.md](observability.md).
+
 ## Running the server
 
 `cipherframe-server` is one binary with three roles (ADR 0008). Choose the roles with `--role`, a
@@ -557,6 +560,9 @@ variable, never its value.
 | `CIPHERFRAME_LOG_LEVEL` | `info` | no | no | `debug`, `info`, `warn` or `error`. |
 | `CIPHERFRAME_API_LISTEN` | `:8080` | no | no | `host:port`, port 1-65535. |
 | `CIPHERFRAME_EDGE_LISTEN` | `:8081` | no | no | `host:port`, port 1-65535. |
+| `CIPHERFRAME_WORKER_LISTEN` | `:8082` | no | no | `host:port`. Used only by a process that runs the `worker` role without `api` or `edge`: it serves `/healthz`, `/readyz` and, with a scrape token, `/metrics` there. |
+| `CIPHERFRAME_METRICS_TOKEN` | unset (`/metrics` off) | no | yes | Bearer token a scraper presents on `/metrics`, at least 16 bytes. Set it directly or with `CIPHERFRAME_METRICS_TOKEN_FILE`. Without it the route is not served and startup logs that once. See [observability.md](observability.md). |
+| `CIPHERFRAME_METRICS_TENANT_LABEL` | `false` | no | no | `true` adds a `tenant_id` label to `cipherframe_refusals_total` (ADR 0053). See the trade-off in [observability.md](observability.md#the-tenant-label). |
 | `CIPHERFRAME_DATABASE_URL` | none | yes | yes | `postgres://` or `postgresql://` URL. |
 | `CIPHERFRAME_S3_ENDPOINT` | empty (provider default) | no | no | Absolute `http(s)` URL. |
 | `CIPHERFRAME_S3_PUBLIC_ENDPOINT` | the endpoint | no | no | Absolute `http(s)` URL a browser can reach. Used only to sign presigned URLs (the `presigned` delivery setting, and uploads); server-side calls always use the endpoint. |
