@@ -257,6 +257,90 @@ jobs:
         if: always()
         run: docker compose --profile worker down -v
 
+  player:
+    name: player (TypeScript checks, unit tests, end-to-end)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPOSE_FILE: deploy/compose/compose.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.1
+      - name: install (pnpm from the packageManager pin, lockfile frozen)
+        working-directory: player
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: type check (tsc, strict)
+        working-directory: player
+        run: pnpm typecheck
+      - name: unit tests
+        working-directory: player
+        run: pnpm test
+      - name: build the library
+        working-directory: player
+        run: pnpm build
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The worker image (FFmpeg) and the test-only generator FFmpeg come from the same cached layers
+      # as the media job, so only a change to the pins in build/worker.Dockerfile pays for the compile.
+      - name: build the worker image for the stack
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: build/worker.Dockerfile
+          load: true
+          tags: cipherframe-worker:dev
+          cache-from: type=gha,scope=worker-image
+      - name: export the generator FFmpeg
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: build/worker.Dockerfile
+          target: tools
+          outputs: type=local,dest=out/tools
+          cache-from: type=gha,scope=worker-image
+      - name: start the stack (server and worker)
+        run: docker compose --profile worker up -d --wait --wait-timeout 240 server worker
+      - name: wait for readiness
+        run: |
+          for port in 8080 8081; do
+            ok=""
+            for _ in $(seq 1 60); do
+              if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/readyz")" = "200" ]; then ok=1; break; fi
+              sleep 2
+            done
+            [ -n "$ok" ] || { echo "readyz on port ${port} did not return 200 within 2 minutes"; exit 1; }
+          done
+      - name: bootstrap an API key and prepare a test asset
+        run: |
+          key="$(docker compose run --rm -T --no-deps server admin bootstrap --tenant-name ci --client-name ci)"
+          echo "::add-mask::${key}"
+          case "${key}" in cf_*_*) ;; *) echo "bootstrap did not print a key"; exit 1 ;; esac
+          echo "CIPHERFRAME_API_KEY=${key}" >> "$GITHUB_ENV"
+          export CIPHERFRAME_API_KEY="${key}" FIXTURE_FFMPEG="${PWD}/out/tools/ffmpeg-fixtures"
+          echo "CIPHERFRAME_ASSET_ID=$(sh player/e2e/prepare-asset.sh)" >> "$GITHUB_ENV"
+      - name: install Chromium
+        working-directory: player
+        run: pnpm exec playwright install --with-deps chromium
+      - name: end-to-end (Chromium against the stack)
+        working-directory: player
+        run: pnpm e2e
+      - name: upload the Playwright trace
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: player-playwright-trace
+          path: player/test-results/
+          if-no-files-found: ignore
+      - name: compose logs
+        if: failure()
+        run: docker compose --profile worker logs --no-color
+      - name: tear down
+        if: always()
+        run: docker compose --profile worker down -v
+
   media:
     name: media (worker image and FFmpeg tests)
     runs-on: ubuntu-latest
