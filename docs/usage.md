@@ -694,6 +694,11 @@ function address, not the value. Compare secrets with `Equal`, not `==`.
 - Placeholder detection is a prefix check. It stops the shipped development values from reaching
   production, not a weak value an operator chose.
 
+## Backups and key loss
+
+See [disaster-recovery.md](disaster-recovery.md): what to back up, the restore order, and why losing
+the KEK (or access to the KMS key) makes every asset permanently unreadable.
+
 ## What this does not protect against
 
 See [threat-model.md](threat-model.md#out-of-scope).

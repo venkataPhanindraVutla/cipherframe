@@ -1,0 +1,3 @@
+go test fuzz v1
+string("v1.eyJzIjoic2VzX2VjMGYxcmZ4N3c2dHFwNXkxZjI5bnNleDNuenE3OWhzMms3ZzV2dmZneTBlOWtkc3AyM2ciLCJhIjoiYXN0XzA2aDA1OGh0eXN2czM4MmZnaHNyNnRkc2M0IiwibiI6InRlbl8wNmgwNThodHlzdnNrZGhrdmpoemZ2cHRwciIsIm0iOjcsImkiOjE3OTQzOTg0MDAsImUiOjE3OTQzOTkwMDB9.1.4dTEIRykb4Ttpz_Kv7pb\rNdzs48rsQvvlK6-w6hQUFQY")
+byte('\x01')
