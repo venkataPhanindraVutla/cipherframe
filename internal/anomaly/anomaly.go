@@ -35,6 +35,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // Window is the duplicate-suppression window, and the sliding window of rapid_session_creation.
@@ -197,6 +198,9 @@ func (d *Detector) Raise(ctx context.Context, sig Signal) Outcome {
 	}
 	for _, ref := range revoked {
 		d.recordRevoked(ctx, ref, sig.At)
+	}
+	if out.Recorded {
+		telemetry.Anomaly(sig.Kind)
 	}
 	if out.Recorded || out.Revoked > 0 {
 		d.log.LogAttrs(ctx, slog.LevelWarn, "playback anomaly",

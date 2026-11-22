@@ -103,6 +103,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 ### M9 Operations and release
 
 - [ ] M9-1 Observability: traces and metrics across api, edge and worker
+  - [x] M9-1a done: telemetry core, [observability.md](observability.md), [ADR 0055](adr/0055-telemetry-implementation.md). Dashboards, alert rules, audit export, the compose collector and the end-to-end secret scan are M9-1b.
 - [ ] M9-2 Helm chart
 - [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
 - [ ] M9-4 Load tests with published method and numbers

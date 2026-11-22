@@ -36,6 +36,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/viewerauth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
@@ -53,6 +54,8 @@ const (
 	startupTimeout = 30 * time.Second
 	// accessLogFlushTimeout bounds the final write of the access trail at shutdown.
 	accessLogFlushTimeout = 5 * time.Second
+	// telemetryFlushTimeout bounds the final export of spans and metrics at shutdown.
+	telemetryFlushTimeout = 5 * time.Second
 )
 
 // Options are the parsed command-line options of the serve command.
@@ -88,6 +91,25 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			return err
 		}
 	}
+	// Telemetry (ADR 0053): spans and metrics. Without an OTLP endpoint nothing is exported; the
+	// Prometheus registry is always live, and /metrics is mounted only with a scrape token.
+	tel, err := telemetry.Setup(ctx, telemetry.Options{
+		Roles: rolesText(opts.Roles), MetricsToken: cfg.Metrics.Token.Reveal(), TenantLabel: cfg.Metrics.TenantLabel,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), telemetryFlushTimeout)
+		defer cancel()
+		if err := tel.Shutdown(fctx); err != nil {
+			log.WarnContext(ctx, "telemetry did not flush cleanly")
+		}
+	}()
+	if !tel.MetricsEnabled() {
+		log.InfoContext(ctx, "metrics endpoint disabled: "+config.EnvMetricsToken+" is not set")
+	}
+
 	// Only the worker role runs FFmpeg. Check it first, before any connection is opened, so a
 	// worker with a missing or limited FFmpeg stops with a message that says what is missing.
 	if Has(opts.Roles, RoleWorker) {
@@ -110,6 +132,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		if err := migrate(ctx, pool, log); err != nil {
 			return err
 		}
+	}
+	if err := tel.RegisterJobs(pool); err != nil {
+		return fmt.Errorf("telemetry: %w", err)
 	}
 
 	// Refuse to serve when an active key was hashed with a pepper that is no longer configured
@@ -230,7 +255,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			Branding:    brandingSvc,
 			Limiter:     quota.NewLimiter(repos, log, nil),
 		}).Handler()
-		s, err := newHTTPService("api", cfg.APIListen, handler, log)
+		s, err := newHTTPService("api", cfg.APIListen, tel.Mount(handler), log)
 		if err != nil {
 			cleanup()
 			return err
@@ -249,7 +274,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
-		s, err := newHTTPService("edge", cfg.EdgeListen, edge.New(edge.Deps{Log: log, Ready: ready, Uploads: up, Playback: play, KeySet: keySet}).Handler(), log)
+		s, err := newHTTPService("edge", cfg.EdgeListen, tel.Mount(edge.New(edge.Deps{Log: log, Ready: ready, Uploads: up, Playback: play, KeySet: keySet}).Handler()), log)
 		if err != nil {
 			cleanup()
 			return err
@@ -267,6 +292,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
+		// A process with neither api nor edge has no listener; it gets one for health and /metrics.
+		if !Has(opts.Roles, RoleAPI) && !Has(opts.Roles, RoleEdge) {
+			s, err := newHTTPService("worker", cfg.WorkerListen, tel.Mount(workerHandler(ready)), log)
+			if err != nil {
+				cleanup()
+				return err
+			}
+			services = append(services, s)
+		}
 		services = append(services, workerService{w: w}, ret, webhookService{d: &webhook.Dispatcher{
 			Pool: pool, Secrets: viewerauth.NewSecretBox(kmsReg), Client: outbound.New(outbound.Options{Timeout: webhook.AttemptTimeout}), Log: log,
 		}})
@@ -276,6 +310,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 	err = runServices(ctx, services)
 	log.InfoContext(ctx, "stopped")
 	return err
+}
+
+// rolesText returns the role names, for the telemetry service name.
+func rolesText(roles []Role) []string {
+	out := make([]string, len(roles))
+	for i, r := range roles {
+		out[i] = string(r)
+	}
+	return out
 }
 
 // lockPoolConns caps the connections that hold tus upload locks (one per active upload request).

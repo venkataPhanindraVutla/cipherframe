@@ -18,6 +18,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // The limit names, as they appear in the API and in a quota_exceeded problem's `limit` member.
@@ -101,7 +102,7 @@ func CheckStorage(ctx context.Context, r *db.Repos, tenant id.TenantID, client i
 			return err
 		}
 		if Exceeds(used, add, *t.StorageBytes) {
-			return errs.Quota(LimitStorageBytes, "The tenant's storage quota would be exceeded.")
+			return refuse(tenant, errs.Quota(LimitStorageBytes, "The tenant's storage quota would be exceeded."))
 		}
 	}
 	if c.StorageBytes != nil {
@@ -110,7 +111,7 @@ func CheckStorage(ctx context.Context, r *db.Repos, tenant id.TenantID, client i
 			return err
 		}
 		if Exceeds(used, add, *c.StorageBytes) {
-			return errs.Quota(LimitStorageBytes, "The client's storage quota would be exceeded.")
+			return refuse(tenant, errs.Quota(LimitStorageBytes, "The client's storage quota would be exceeded."))
 		}
 	}
 	return nil
@@ -133,7 +134,7 @@ func CheckSessions(ctx context.Context, r *db.Repos, tenant id.TenantID, client 
 			return err
 		}
 		if Exceeds(int64(n), 1, int64(*t.ConcurrentSessions)) {
-			return errs.Quota(LimitConcurrentSessions, "The tenant has the maximum number of concurrent playback sessions.")
+			return refuse(tenant, errs.Quota(LimitConcurrentSessions, "The tenant has the maximum number of concurrent playback sessions."))
 		}
 	}
 	if c.ConcurrentSessions != nil {
@@ -142,10 +143,16 @@ func CheckSessions(ctx context.Context, r *db.Repos, tenant id.TenantID, client 
 			return err
 		}
 		if Exceeds(int64(n), 1, int64(*c.ConcurrentSessions)) {
-			return errs.Quota(LimitConcurrentSessions, "The client has the maximum number of concurrent playback sessions.")
+			return refuse(tenant, errs.Quota(LimitConcurrentSessions, "The client has the maximum number of concurrent playback sessions."))
 		}
 	}
 	return nil
+}
+
+// refuse counts a quota refusal for the metrics and returns err.
+func refuse(tenant id.TenantID, err error) error {
+	telemetry.Refusal(telemetry.ReasonQuotaExceeded, tenant.String())
+	return err
 }
 
 // Service charges transcode minutes, reports usage and stores limits. Safe for concurrent use.
@@ -194,7 +201,7 @@ func (s *Service) ChargeTranscode(ctx context.Context, tenant id.TenantID, asset
 				return err
 			}
 			if ms > int64(*t.TranscodeMinutesPerMonth)*60_000 {
-				return errs.Quota(LimitTranscodeMinutes, "The tenant's transcode minutes for this month are used up.")
+				return refuse(tenant, errs.Quota(LimitTranscodeMinutes, "The tenant's transcode minutes for this month are used up."))
 			}
 		}
 		if c.TranscodeMinutesPerMonth != nil {
@@ -203,7 +210,7 @@ func (s *Service) ChargeTranscode(ctx context.Context, tenant id.TenantID, asset
 				return err
 			}
 			if ms > int64(*c.TranscodeMinutesPerMonth)*60_000 {
-				return errs.Quota(LimitTranscodeMinutes, "The client's transcode minutes for this month are used up.")
+				return refuse(tenant, errs.Quota(LimitTranscodeMinutes, "The client's transcode minutes for this month are used up."))
 			}
 		}
 		return nil

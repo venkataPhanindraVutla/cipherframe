@@ -60,19 +60,23 @@ type S3 struct {
 // never print their value. Fields are exported so fmt can reach their
 // formatters.
 type Config struct {
-	Env         Environment
-	LogLevel    slog.Level
-	APIListen   string
-	EdgeListen  string
-	DatabaseURL Secret
-	S3          S3
-	Uploads     Uploads
-	Peppers     Peppers
-	Playback    PlaybackKeys
-	KMS         KMS
-	Media       Media
-	TSA         TSA
-	Retention   Retention
+	Env        Environment
+	LogLevel   slog.Level
+	APIListen  string
+	EdgeListen string
+	// WorkerListen is the health and /metrics listener of a process that runs the worker role
+	// without api or edge.
+	WorkerListen string
+	DatabaseURL  Secret
+	S3           S3
+	Uploads      Uploads
+	Peppers      Peppers
+	Playback     PlaybackKeys
+	KMS          KMS
+	Media        Media
+	TSA          TSA
+	Retention    Retention
+	Metrics      Metrics
 }
 
 // LogValue implements slog.LogValuer. It shows the effective configuration
@@ -91,6 +95,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("log_level", c.LogLevel.String()),
 		slog.String("api_listen", c.APIListen),
 		slog.String("edge_listen", c.EdgeListen),
+		slog.String("worker_listen", c.WorkerListen),
 		slog.Any("database_url", c.DatabaseURL),
 		slog.Group("s3",
 			slog.String("endpoint", c.S3.Endpoint),
@@ -117,6 +122,10 @@ func (c *Config) LogValue() slog.Value {
 			slog.String("versions", versionList(c.Playback.Versions())),
 			slog.Int("current", c.Playback.current),
 			slog.String("values", Redacted),
+		),
+		slog.Group("metrics",
+			slog.Any("token", c.Metrics.Token),
+			slog.Bool("tenant_label", c.Metrics.TenantLabel),
 		),
 		slog.Group("retention",
 			slog.Int("access_log_days", c.Retention.AccessLogDays),
