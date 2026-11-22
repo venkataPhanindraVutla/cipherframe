@@ -104,7 +104,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 
 - [ ] M9-1 Observability: traces and metrics across api, edge and worker
   - [x] M9-1a done: telemetry core, [observability.md](observability.md), [ADR 0055](adr/0055-telemetry-implementation.md). Dashboards, alert rules, audit export, the compose collector and the end-to-end secret scan are M9-1b.
-- [ ] M9-2 Helm chart
+- [x] M9-2 Helm chart ([ADR 0059](adr/0059-helm-chart-choices.md), `deploy/helm/cipherframe/`; external Postgres only per [ADR 0054](adr/0054-operations-and-release-tooling.md); rendered and schema-checked in CI, no cluster install test)
 - [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
 - [ ] M9-4 Load tests with published method and numbers
 - [ ] M9-5 Security review: threat model update, fuzz tests for playlist rewriting and token parsing
