@@ -189,6 +189,41 @@ jobs:
             terraform -chdir="$module" validate
           done
 
+  helm:
+    name: helm (lint, template, kubeconform)
+    runs-on: ubuntu-latest
+    env:
+      HELM_VERSION: v4.3.2
+      HELM_SHA256: d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983
+      KUBECONFORM_VERSION: v0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install helm and kubeconform (pinned by SHA-256)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_SHA256}  helm.tgz" | sha256sum -c -
+          tar -xzf helm.tgz -C "$RUNNER_TEMP/bin" --strip-components=1 linux-amd64/helm
+          curl -fsSL -o kubeconform.tgz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tgz" | sha256sum -c -
+          tar -xzf kubeconform.tgz -C "$RUNNER_TEMP/bin" kubeconform
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Every values file is linted, rendered and validated against the Kubernetes 1.30 schemas.
+      # ServiceMonitor and ScaledObject are CRDs of operators the chart does not install, and no
+      # pinned schema source is used for them, so they are skipped.
+      - name: lint, template, kubeconform
+        run: |
+          chart=deploy/helm/cipherframe
+          for values in "$chart"/ci/*-values.yaml; do
+            helm lint "$chart" -f "$values"
+            helm template ci "$chart" -f "$values" > rendered.yaml
+            kubeconform -strict -summary -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject rendered.yaml
+            # The ingress must never route /metrics, /healthz or /readyz (docs/observability.md).
+            helm template ci "$chart" -f "$values" --show-only templates/ingress.yaml > ingress.yaml || true
+            if grep -E 'path: (/|/metrics|/healthz|/readyz)$' ingress.yaml; then exit 1; fi
+          done
+
   compose:
     name: compose (development stack)
     runs-on: ubuntu-latest
