@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // Router is an http.ServeMux that remembers the patterns registered on it and answers requests
@@ -73,6 +74,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h, pattern := rt.mux.Handler(r)
 	if pattern != "" {
 		rt.mux.ServeHTTP(w, r) // also sets r.Pattern and path values
+		telemetry.SetRoute(r.Context(), r.Pattern)
 		return
 	}
 	// No pattern matched. The mux's own handler decides between 404, 405 and a clean-path

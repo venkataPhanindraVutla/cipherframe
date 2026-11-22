@@ -21,6 +21,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/uploads"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/webhook"
 )
@@ -91,7 +92,7 @@ func New(d Deps) *API {
 		BaseRouter:       router,
 		ErrorHandlerFunc: httpx.RequestErrorHandler,
 	})
-	mw := append(httpx.Standard(d.Log), bodyLimit)
+	mw := append(append([]httpx.Middleware{telemetry.Middleware("api")}, httpx.Standard(d.Log)...), bodyLimit)
 	return &API{router: router, handler: httpx.Chain(router, mw...)}
 }
 

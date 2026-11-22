@@ -10,6 +10,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // bucket is a token bucket: it holds up to burst tokens and refills at rate tokens per second.
@@ -131,7 +132,11 @@ func (l *Limiter) Allow(ctx context.Context, p auth.Principal) (bool, time.Durat
 	if st.b == nil {
 		return true, 0
 	}
-	return st.b.take(now)
+	ok, wait := st.b.take(now)
+	if !ok {
+		telemetry.Refusal(telemetry.ReasonRateLimited, p.TenantID.String())
+	}
+	return ok, wait
 }
 
 // load returns the key's effective requests_per_minute, 0 for unlimited.

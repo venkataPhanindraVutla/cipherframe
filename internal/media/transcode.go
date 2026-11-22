@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // Packaging constants of ADR 0024. Segments are cut at keyframes, so a segment is a whole number
@@ -260,7 +261,15 @@ func (t Tools) Transcode(ctx context.Context, spec TranscodeSpec, progress func(
 			return errs.Wrap(errs.InternalError, "", fmt.Errorf("media: create thumbnail directory: %w", err))
 		}
 	}
-	stderr, err := runStreaming(ctx, t.FFmpeg, args, progressWriter(progress))
+	spanCtx, endSpan := telemetry.StartFFmpeg(ctx, "transcode")
+	began := time.Now()
+	stderr, err := runStreaming(spanCtx, t.FFmpeg, args, progressWriter(progress))
+	endSpan(err)
+	outcome := telemetry.OutcomeSucceeded
+	if err != nil {
+		outcome = telemetry.OutcomeFailed
+	}
+	telemetry.ObserveTranscode(outcome, time.Since(began), spec.Info.Duration)
 	switch {
 	case err == nil:
 		return nil

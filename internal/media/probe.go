@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // Probe limits.
@@ -85,6 +86,7 @@ func (t Tools) Probe(ctx context.Context, path string) (Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, DefaultProbeTimeout)
 	defer cancel()
 
+	ctx, endSpan := telemetry.StartFFmpeg(ctx, "probe")
 	res, err := run(ctx, t.FFprobe, []string{
 		"-hide_banner",
 		"-v", "error",
@@ -94,6 +96,7 @@ func (t Tools) Probe(ctx context.Context, path string) (Info, error) {
 		"-show_streams",
 		"-i", src,
 	}, maxProbeOutput)
+	endSpan(err)
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return Info{}, errs.Wrap(errs.Timeout, "Inspecting the media file took too long.", err)

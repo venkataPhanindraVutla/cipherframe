@@ -14,6 +14,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/health"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/httpx"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // Deps are the collaborators of the edge handlers.
@@ -53,7 +54,7 @@ func New(d Deps) *Edge {
 		ErrorHandlerFunc: httpx.RequestErrorHandler,
 	})
 	router.Mount(TusMount, tusHandler(d.Uploads))
-	mw := append(httpx.Standard(d.Log), accesslog.Middleware(), playGate(d.Playback), uploadCORS)
+	mw := append(append([]httpx.Middleware{telemetry.Middleware("edge")}, httpx.Standard(d.Log)...), accesslog.Middleware(), playGate(d.Playback), uploadCORS)
 	return &Edge{router: router, handler: httpx.Chain(router, mw...)}
 }
 

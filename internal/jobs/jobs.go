@@ -30,9 +30,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // DefaultMaxAttempts is the attempt limit of a kind that does not configure one. It counts the
@@ -297,7 +299,8 @@ func (q *Queue) Enqueue(ctx context.Context, tx pgx.Tx, args Args, opts *Enqueue
 		return 0, errs.New(errs.InvalidRequest, "a transaction and job arguments are required")
 	}
 	kc := q.registry.config(args.Kind())
-	io := &river.InsertOpts{MaxAttempts: kc.MaxAttempts, Queue: kc.Queue}
+	// The trace context travels with the job, so the worker's span continues this request's trace.
+	io := &river.InsertOpts{MaxAttempts: kc.MaxAttempts, Queue: kc.Queue, Metadata: telemetry.JobMetadata(ctx)}
 	if opts != nil {
 		if opts.MaxAttempts > 0 {
 			io.MaxAttempts = opts.MaxAttempts
@@ -331,10 +334,30 @@ func (w *worker[A]) Work(ctx context.Context, job *river.Job[A]) (err error) {
 			err = failure{code: string(errs.InternalError)}
 		}
 	}()
-	return classify(w.handler(ctx, Job[A]{
+	ctx, end := telemetry.StartJob(ctx, job.Args.Kind(), job.Metadata, job.Attempt)
+	outcome := telemetry.OutcomeFailed // a panic leaves it so
+	defer func() { end(outcome) }()
+	err = classify(w.handler(ctx, Job[A]{
 		ID:          job.ID,
 		Args:        job.Args,
 		Attempt:     job.Attempt,
 		MaxAttempts: job.MaxAttempts,
 	}))
+	outcome = jobOutcome(err)
+	return err
+}
+
+// jobOutcome names what classify decided, for the job span and metric.
+func jobOutcome(err error) string {
+	var snooze *rivertype.JobSnoozeError
+	var cancel *rivertype.JobCancelError
+	switch {
+	case err == nil:
+		return telemetry.OutcomeSucceeded
+	case errors.As(err, &snooze):
+		return telemetry.OutcomeSnoozed
+	case errors.As(err, &cancel):
+		return telemetry.OutcomeCancelled
+	}
+	return telemetry.OutcomeFailed
 }
