@@ -58,8 +58,10 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0050](0050-reference-player-approach.md) | Reference player approach | P13 | Accepted | 2026-11-22 |
 | [0051](0051-cli-conventions.md) | Command line tool conventions: generated client, auth input, output, exit codes, tus | none (M8-1a, M8-1b) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0052](0052-reference-player-implementation.md) | Reference player implementation choices | none (M8-2) | Accepted (flagged for owner review) | 2026-11-22 |
+| [0053](0053-observability-stack.md) | Observability stack: OpenTelemetry traces, Prometheus metrics with OTLP push, token-protected `/metrics`, opt-in tenant label | P14 | Accepted | 2026-11-22 |
+| [0054](0054-operations-and-release-tooling.md) | Operations and release tooling: Terraform for AWS and GCP, Helm with external Postgres, GoReleaser and cosign keyless, a Go load tool | none (M9) | Accepted | 2026-11-22 |
 
 ## Open gates
 
-P14, P16 to P20, P21 (worker). See the build plan's
+P16 to P20, P21 (worker). See the build plan's
 decision register.
