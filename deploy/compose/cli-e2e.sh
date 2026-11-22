@@ -1,7 +1,9 @@
 #!/bin/sh
 # End to end check of the cipherframe command line tool against the running development stack
 # (ADR 0051): upload a small video, wait for it to be ready, list it, delete it with --wait and
-# verify the printed deletion record against the server's published keys.
+# verify the printed deletion record against the server's published keys. Before the delete it also
+# runs the M8-1b commands: a playback session, an inclusion proof and verify-file on one fetched
+# segment, a subtitle import and the session revoke.
 #
 # Usage: deploy/compose/cli-e2e.sh CIPHERFRAME_BINARY VIDEO_FILE
 # Needs: the stack and the worker running (docker compose --profile worker), curl and jq.
@@ -26,6 +28,40 @@ test "$("${cf}" status "${id}" --json | jq -r .state)" = ready
 "${cf}" inspect "${id}" | jq -e --arg id "${id}" '.id == $id and .state == "ready"' >/dev/null
 "${cf}" list --json | jq -e --arg id "${id}" '[.items[].id] | index($id) != null' >/dev/null
 echo "listed ${id}"
+
+# M8-1b: a session, one segment fetched through it, its proof and a verify-file of it.
+sess="$("${cf}" session create "${id}" --show-token --json)"
+sid="$(printf '%s' "${sess}" | jq -r .session_id)"
+token="$(printf '%s' "${sess}" | jq -r .token)"
+murl="$(printf '%s' "${sess}" | jq -r .manifest_url)"
+echo "::add-mask::${token}"
+echo "::add-mask::${sid}"
+printf '%s' "${sess}" | jq -e '.heartbeat_interval_seconds > 0' >/dev/null
+"${cf}" session show "${sid}" --json | jq -e '.state == "active"' >/dev/null
+rend="$(curl -fsS -H "Authorization: Bearer ${token}" "${murl}" | grep -v '^#' | head -n 1 | cut -d/ -f1)"
+seg="${rend}/seg-0.m4s"
+curl -fsS -H "Authorization: Bearer ${token}" "${murl%/master.m3u8}/${seg}" -o "${tmp}/seg.m4s"
+curl -fsS -H "Authorization: Bearer ${CIPHERFRAME_API_KEY}" "${CIPHERFRAME_SERVER}/v1/assets/${id}/manifest" > "${tmp}/manifest.json"
+"${cf}" proof "${id}" "${seg}" > "${tmp}/proof.json"
+"${cf}" verify --manifest "${tmp}/manifest.json" --proof "${tmp}/proof.json" \
+  --keys-url "${CIPHERFRAME_SERVER}/.well-known/cipherframe-keys.json" "${tmp}/seg.m4s" >/dev/null
+"${cf}" verify-file "${id}" "${tmp}/seg.m4s" --path "${seg}" --json | jq -e '.outcome == "ours"' >/dev/null
+cp "${tmp}/seg.m4s" "${tmp}/bad.m4s"
+printf x >> "${tmp}/bad.m4s"
+code=0
+"${cf}" verify-file "${id}" "${tmp}/bad.m4s" --path "${seg}" >/dev/null || code=$?
+test "${code}" = 1
+echo "session, proof and verify-file of ${seg} OK"
+
+printf 'WEBVTT\n\n00:00.000 --> 00:01.500\nhello\n' > "${tmp}/en.vtt"
+"${cf}" subtitles import "${id}" "${tmp}/en.vtt" --language en --label English --default --json |
+  jq -e '.language == "en" and .default == true' >/dev/null
+test "$("${cf}" subtitles list "${id}" --json | jq '.items | length')" = 1
+echo "subtitle imported"
+
+"${cf}" session revoke "${sid}" --reason cli-e2e --json | jq -e '.state == "revoked"' >/dev/null
+test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${token}" "${murl}")" = 401
+echo "session revoked"
 
 "${cf}" delete "${id}" --wait > "${tmp}/record.json"
 "${cf}" verify --deletion-record "${tmp}/record.json" --json \

@@ -2,7 +2,7 @@
 
 - Status: Accepted (flagged for owner review)
 - Date: 2026-11-22
-- Gate: none (M8-1a)
+- Gate: none (M8-1a, M8-1b)
 - Deciders: project owner (the M8-1 scope); the choices below are flagged for review
 
 ## Context
@@ -80,3 +80,48 @@ framework. Conventions that every later command inherits are fixed here.
   the spec, and check that neither secret reaches any output.
 - Not covered: cross-process upload resume, a configuration file or profiles, shell completion,
   coloured output, and multipart uploads (the CLI uses tus only). Revisit if operators ask.
+
+## M8-1b additions
+
+The remaining commands, on the same framework. Subcommand groups (`session`, `subtitles`, `brand`,
+`keys`, `webhooks`) dispatch on their second word; `cipherframe help GROUP [SUB]` shows the group or
+the subcommand.
+
+- **Commands and calls.** `session create|show|revoke` (`POST /v1/playback-sessions`, `GET`
+  `/v1/playback-sessions/{id}`, the two revoke calls), `verify-file` (`POST /v1/verify`), `proof`
+  (`GET /v1/assets/{id}/proof`), `subtitles import|list|delete` (the subtitle calls, and the
+  transcript call for a `.json` file), `brand set-logo|show|remove`, `keys rotate-api-key`,
+  `webhooks list|replay`. Every command uses the generated client, `--json` prints the server's
+  document unchanged (except as noted for sessions), and the exit codes are those above.
+- **Gaps, documented rather than faked.** The API has no call that lists playback sessions, so there is
+  no `session list`; the command is refused with that explanation (exit 3), and `session show` plus
+  revoke by `--viewer` or `--asset` cover the need. Re-wrapping content keys exists only as the server
+  administration job `cipherframe-server admin kms-rewrap`, with no HTTP call, so there is no
+  `keys rewrap`; the CLI says where to run it. Brand has no placement-only command although the API
+  has `PATCH /v1/brand/logo`: `set-logo` with the same file covers it, and a `brand set` can be added
+  when asked for. The CLI never talks to the edge itself: the edge URL appears only inside the manifest
+  URL the API returns, which `session create` prints.
+- **Session secrets.** The playback token is printed only with `--show-token`, on stdout. Without the
+  flag it is removed from the `--json` document, and from the manifest URL when the tenant sends
+  tokens in URLs (`token_transport` `url`), where a hint on stderr says how to get it. Because of that
+  `--json` for `session create` is the server's document minus those two values, not byte for byte.
+  A session ID is a capability but is the result an integrator needs, so it is printed on stdout;
+  it is added to the scrubbed values when given as an argument, so it never reaches an error.
+- **Default viewer.** The API requires a viewer ID and counts sessions per viewer, so without
+  `--viewer` the CLI makes a random `cli-` ID: a fixed one would use up the per-viewer limit.
+- **`verify-file` and exit codes.** It follows `verify`: 0 ours, 1 modified, 2 cannot say, and prints
+  the verdict itself (no error object). With `--path` the hash is compared with that artifact and
+  can be `modified`. Without `--path` the tenant's artifacts are searched by hash (a hash alone can
+  never be `modified`), and a match that belongs to another asset than the one named is reported as
+  cannot say. Only the hash leaves the machine.
+- **`proof`** prints the server's proof document, indented without `--json`, which is the format
+  `verify --proof` reads; a test feeds one to the other.
+- **Subtitles.** A `.json` file is a transcript, `{"cues":[...]}` or a bare list; any other file is
+  sent as WebVTT or SRT and the server decides the format from the content. Multipart parts carry a
+  fixed file name: the local name is never sent. The label defaults to the language tag.
+- **`keys rotate-api-key`.** The new key is on stdout and nowhere else (the whole response with
+  `--json`); a warning and the end of the overlap go to stderr. `--overlap` takes a duration up to 24h.
+  The new key is added to the scrubbed values.
+- **`webhooks replay`** takes one delivery ID (a UUID) or `--endpoint ID --dead`. It does not wait.
+- **Empty answers.** `subtitles delete` and `brand remove` get 204; they print a word, or with
+  `--json` `{"deleted":true}` and `{"removed":true}`.

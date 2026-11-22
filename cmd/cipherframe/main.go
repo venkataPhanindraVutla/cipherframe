@@ -22,6 +22,12 @@ Usage:
   cipherframe status ASSET_ID | inspect ASSET_ID | list [--limit N] [--cursor C]
   cipherframe process ASSET_ID [--wait]
   cipherframe delete ASSET_ID [--wait] | deletion-record ASSET_ID
+  cipherframe session create ASSET [--viewer ID] [--variant V] [--show-token] | show ID | revoke ID|--viewer V|--asset A
+  cipherframe verify-file ASSET FILE [--path P] [--variant V] | proof ASSET PATH [--variant V]
+  cipherframe subtitles import ASSET FILE --language L [--label T] [--default] | list ASSET | delete ASSET ID
+  cipherframe brand set-logo FILE [--corner C] [--opacity N] | show | remove
+  cipherframe keys rotate-api-key KEY_ID [--overlap 10m]
+  cipherframe webhooks list [--endpoint ID] [--status S] | replay DELIVERY_ID | replay --endpoint ID --dead
   cipherframe version
   cipherframe help [command]
 
@@ -48,9 +54,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stdout, "cipherframe %s %s\n", info.Version, info.GoVersion)
 		return 0
 	case "help", "-h", "--help":
-		if len(args) == 2 {
+		if len(args) >= 2 {
 			if cmd, ok := serverCommands()[args[1]]; ok {
-				return cmd.run([]string{"-h"}, stdout, stderr)
+				return cmd.run(append(append([]string{}, args[2:]...), "-h"), stdout, stderr)
 			}
 		}
 		_, _ = fmt.Fprint(stdout, usage)
@@ -65,7 +71,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func serverCommands() map[string]command {
 	m := map[string]command{uploadCommand.name: uploadCommand}
-	for _, c := range assetCommands {
+	for _, c := range append(assetCommands, restCommands...) {
 		m[c.name] = c
 	}
 	return m

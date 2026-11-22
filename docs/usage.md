@@ -49,7 +49,7 @@ cipherframe verify --deletion-record record.json \
 | Exit code | Meaning |
 |---|---|
 | 0 | success (verify: all ours) |
-| 1, 2 | verify only: any modified, cannot say |
+| 1, 2 | verify and verify-file only: modified, cannot say |
 | 3 | usage error |
 | 4 | the server refused the request (401, 403, 400, other 4xx, 500) |
 | 5 | not found |
@@ -57,8 +57,38 @@ cipherframe verify --deletion-record record.json \
 | 7 | network error, timeout or server unavailable |
 | 8 | `--wait` ended without success (asset failed, or the wait timed out) |
 
-The remaining commands (sessions, subtitles, brand, keys, webhooks, `verify-file`, `proof`) arrive
-with M8-1b. CI runs `deploy/compose/cli-e2e.sh` against the development stack.
+### Sessions, integrity, subtitles, brand, keys, webhooks
+
+```sh
+cipherframe session create "$id" [--viewer ID] [--variant masked] [--show-token]   # session, manifest URL, expiry, heartbeat
+cipherframe session show SESSION_ID
+cipherframe session revoke SESSION_ID                     # or --viewer V and/or --asset A (never tenant-wide)
+cipherframe proof "$id" 720p/seg-0.m4s > proof.json       # then: cipherframe verify --proof proof.json ... FILE
+cipherframe verify-file "$id" seg-0.m4s --path 720p/seg-0.m4s   # exit 0 ours, 1 modified, 2 cannot say
+cipherframe subtitles import "$id" en.vtt --language en --label English --default   # .json = transcript
+cipherframe subtitles list "$id" | delete "$id" SUBTITLE_ID
+cipherframe brand set-logo logo.png --corner top_left --opacity 60 | show | remove
+cipherframe keys rotate-api-key KEY_ID [--overlap 10m] > new-key.txt
+cipherframe webhooks list --status dead | replay DELIVERY_ID | replay --endpoint ID --dead
+```
+
+- `session create` prints the session ID, the manifest URL on the edge URL the API returned, the
+  expiry and the heartbeat interval. The playback token is printed only with `--show-token` (stdout
+  only); without it the token is also cut from `--json` and from a manifest URL that carries it
+  (`token_transport` `url`). Without `--viewer` a random `cli-` viewer ID is used.
+- `proof` prints the inclusion proof JSON exactly as `verify --proof` reads it. `verify-file` hashes
+  the file locally and sends only the hash to `POST /v1/verify`; without `--path` it searches the
+  tenant's artifacts by hash.
+- `keys rotate-api-key` prints the new key alone on stdout, once, and warns on stderr that it will
+  not be shown again; the old key works for `--overlap`.
+- `subtitles import` reads WebVTT or SRT (the server checks and rewrites it) or, for a `.json` file,
+  a transcript `{"cues":[{"start":0,"end":1.5,"text":"...","speaker":"..."}]}`.
+- `brand` needs the `admin` scope and is not retroactive: it applies to assets processed afterwards.
+- Not in the CLI because the API has no such call: `session list` (use `session show`, or revoke by
+  viewer or asset) and `keys rewrap` (the KMS re-wrap is `cipherframe-server admin kms-rewrap`, see
+  below).
+
+CI runs `deploy/compose/cli-e2e.sh` against the development stack.
 
 ## Reference player (M8-2, ADR 0052)
 

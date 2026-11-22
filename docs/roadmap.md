@@ -9,7 +9,7 @@ Last updated: 2026-11-22.
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M8 next) |
+| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M9 next, after gate P14) |
 | v2.0.0 | npm, Go and Python SDKs and verifiers, shared conformance vectors | Not started |
 | v2.1.0 | Python ML worker: local speech-to-text, perceptual fingerprint matching, invisible per-asset or per-tenant watermark | Not started |
 
@@ -28,7 +28,7 @@ Last updated: 2026-11-22.
 | Encoder preset and detection stride (ADR 0038) | Done |
 | M6 Deletion and retention | Done ([ADR 0040](adr/0040-retention-and-privacy-defaults.md), [ADR 0042](adr/0042-deletion-and-retention-details.md)) |
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Done (P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md), [ADR 0046](adr/0046-thumbnails.md), [ADR 0047](adr/0047-quotas-and-per-client-limits.md), [ADR 0048](adr/0048-overlay-watermark-policy.md), [ADR 0049](adr/0049-brand-logo.md)) |
-| M8 CLI (Go) and reference player (TypeScript) | Not started (P13 decided, [ADR 0050](adr/0050-reference-player-approach.md)) |
+| M8 CLI (Go) and reference player (TypeScript) | Done ([ADR 0050](adr/0050-reference-player-approach.md), [ADR 0051](adr/0051-cli-conventions.md), [ADR 0052](adr/0052-reference-player-implementation.md)) |
 | M9 Operations and release | Not started (gate P14) |
 | M10 v1 extras (may slip to v1.1) | Not started (gates P16 to P18) |
 
@@ -97,7 +97,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 
 ### M8 CLI and reference player
 
-- [ ] M8-1 `cipherframe` CLI in Go, a single static binary (partly done: M8-1a has the framework and `upload`, `status`, `inspect`, `list`, `process`, `delete`, `deletion-record` ([ADR 0051](adr/0051-cli-conventions.md)); M8-1b adds sessions, subtitles, brand, keys, webhooks, `verify-file` and `proof`)
+- [x] M8-1 `cipherframe` CLI in Go, a single static binary: assets, sessions, `verify-file`, `proof`, subtitles, brand, keys and webhooks ([ADR 0051](adr/0051-cli-conventions.md); `session list` and `keys rewrap` have no API call, see the ADR)
 - [x] M8-2 Reference player in TypeScript on hls.js ([ADR 0052](adr/0052-reference-player-implementation.md), `player/`)
 
 ### M9 Operations and release
