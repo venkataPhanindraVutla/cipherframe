@@ -52,7 +52,7 @@ func TestPlaybackSpansCarryNoRequestData(t *testing.T) {
 	for _, s := range spans {
 		texts := []string{s.Name}
 		for _, a := range s.Attributes {
-			texts = append(texts, string(a.Key), a.Value.Emit())
+			texts = append(texts, string(a.Key), a.Value.String())
 		}
 		for _, text := range texts {
 			for _, f := range forbidden {

@@ -13,7 +13,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
-const testToken = "test-fixture-scrape-token"
+const testToken = "test-fixture-scrape-token" //nolint:gosec // test fixture
 
 func setup(t *testing.T, o telemetry.Options) (*telemetry.Telemetry, *tracetest.InMemoryExporter) {
 	t.Helper()
@@ -95,8 +95,8 @@ func TestRouteTemplateLabelAndSpanName(t *testing.T) {
 	for _, s := range exp.GetSpans() {
 		names = append(names, s.Name)
 		for _, a := range s.Attributes {
-			if strings.Contains(a.Value.Emit(), "ses_") || strings.Contains(a.Value.Emit(), "test-fixture") {
-				t.Errorf("attribute %s leaks request data: %s", a.Key, a.Value.Emit())
+			if strings.Contains(a.Value.String(), "ses_") || strings.Contains(a.Value.String(), "test-fixture") {
+				t.Errorf("attribute %s leaks request data: %s", a.Key, a.Value.String())
 			}
 		}
 	}
