@@ -1,0 +1,182 @@
+# Cipherframe Helm chart values (ADR 0059). No secret value belongs in this file: secrets are
+# references to Kubernetes Secrets that already exist in the release namespace, and the chart mounts
+# each one as a file and sets the matching CIPHERFRAME_*_FILE variable (docs/usage.md, "The _FILE rule").
+# The database is external (ADR 0054): there is no bundled Postgres.
+
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+
+image:
+  pullPolicy: IfNotPresent
+  # tag defaults to the chart's appVersion; digest, when set, wins over the tag.
+  server: { repository: ghcr.io/venkataphanindravutla/cipherframe-server, tag: "", digest: "" }
+  worker: { repository: ghcr.io/venkataphanindravutla/cipherframe-worker, tag: "", digest: "" }
+  masker: { repository: ghcr.io/venkataphanindravutla/cipherframe-ml, tag: "", digest: "" }
+
+# Non-secret CIPHERFRAME_* settings for every role and the migration Job: any variable of
+# docs/usage.md that is not a secret. Quote every value. An empty string is passed as an empty
+# variable (for the S3 and KMS credentials that means "use the cloud SDK's default credential chain",
+# which is what IRSA and Workload Identity need).
+config:
+  CIPHERFRAME_ENV: production
+  CIPHERFRAME_LOG_LEVEL: info
+  # Base URL browsers use to reach the edge (the api refuses to start without it).
+  CIPHERFRAME_EDGE_PUBLIC_URL: ""
+  CIPHERFRAME_S3_SOURCE_BUCKET: ""
+  CIPHERFRAME_S3_DELIVERY_BUCKET: ""
+  CIPHERFRAME_API_KEY_PEPPER_CURRENT: "1"
+  CIPHERFRAME_PLAYBACK_TOKEN_KEY_CURRENT: "1"
+  # CIPHERFRAME_S3_REGION, CIPHERFRAME_S3_ENDPOINT, CIPHERFRAME_KMS_PROVIDER, CIPHERFRAME_KMS_AWS_KEY_ID,
+  # CIPHERFRAME_KMS_GCP_KEY_NAME and the rest: see ci/all-features-values.yaml for a full example.
+
+# Secret variables, as NAME: { name: <Secret>, key: <key in it> }. Every entry becomes a file mounted
+# read-only, with NAME_FILE pointing at it. These go to every role and the migration Job; add
+# role-specific ones under api.secrets, edge.secrets and worker.secrets. Add the metrics token, the
+# KMS credentials and static S3 keys here when you use them, for example
+#   CIPHERFRAME_METRICS_TOKEN: { name: cipherframe-metrics, key: token }
+secrets:
+  CIPHERFRAME_DATABASE_URL: { name: cipherframe-database, key: url }
+  CIPHERFRAME_API_KEY_PEPPERS: { name: cipherframe-peppers, key: peppers }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+# Each role: enabled, replicas, port, resources, scheduling, annotations, serviceAccount (annotations
+# carry the IRSA or Workload Identity binding), env (extra variables for this role), secrets.
+api:
+  enabled: true
+  replicas: 2
+  port: 8080
+  env: {}
+  secrets:
+    CIPHERFRAME_PLAYBACK_TOKEN_KEYS: { name: cipherframe-playback, key: keys }
+  serviceAccount: { annotations: {} }
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  pdb: { enabled: false, minAvailable: 1 }
+  # Plain HPA on CPU. The replicas value is ignored when enabled.
+  autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70 }
+
+edge:
+  enabled: true
+  replicas: 2
+  port: 8081
+  env: {}
+  secrets:
+    CIPHERFRAME_PLAYBACK_TOKEN_KEYS: { name: cipherframe-playback, key: keys }
+  serviceAccount: { annotations: {} }
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  pdb: { enabled: false, minAvailable: 1 }
+  autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+
+worker:
+  enabled: true
+  replicas: 1
+  # The worker-only listener (CIPHERFRAME_WORKER_LISTEN): /healthz, /readyz and /metrics.
+  port: 8082
+  env: {}
+  secrets: {}
+  serviceAccount: { annotations: {} }
+  # The scratch directory holds the plaintext source and segments while FFmpeg runs (ADR 0027): it
+  # is a node-local emptyDir, never storage. Disk need is 2 to 3 times the source per concurrent job.
+  workDir: { sizeLimit: 30Gi }
+  # A running job gets 20 seconds at shutdown and is otherwise retried, so a short grace period is enough.
+  terminationGracePeriodSeconds: 30
+  resources:
+    requests: { cpu: "2", memory: 2Gi, ephemeral-storage: 20Gi }
+    limits: { memory: 4Gi }
+  # The face masker (ADR 0036) runs as a second container of the worker pod, because it must share
+  # the worker's work directory and UID on one machine. Off by default, like the compose profile.
+  # It needs a database role limited to external_tasks (deploy/compose/masker-role.sql) whose URL is
+  # in the Secret named here. Masking is CPU heavy: size the pod for both containers.
+  masker:
+    enabled: false
+    databaseUrlSecret: { name: cipherframe-masker-database, key: url }
+    env: {}
+    resources:
+      requests: { cpu: "2", memory: 2Gi }
+      limits: { memory: 4Gi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  pdb: { enabled: false, minAvailable: 1 }
+  # KEDA ScaledObject on the queue depth, using the Prometheus scaler (needs the KEDA operator and a
+  # Prometheus that scrapes this release; see the README). threshold is available jobs per replica.
+  keda:
+    enabled: false
+    minReplicaCount: 1
+    maxReplicaCount: 10
+    pollingInterval: 30
+    cooldownPeriod: 300
+    serverAddress: http://prometheus-operated.monitoring.svc:9090
+    threshold: "2"
+    # Empty: max over pods of the available-job count (every process reports the whole table, so a
+    # plain sum would count the queue once per pod) in this release's namespace.
+    query: ""
+
+migrate:
+  # A pre-install and pre-upgrade hook Job running `cipherframe-server migrate`.
+  enabled: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+# Optional Ingress per public listener. The chart routes explicit prefixes only (api: /v1; edge:
+# /v1/play, /v1/uploads, /.well-known), so /metrics, /healthz and /readyz are never exposed.
+ingress:
+  api:
+    enabled: false
+    className: ""
+    host: api.example.com
+    annotations: {}
+    tls: []
+  edge:
+    enabled: false
+    className: ""
+    host: media.example.com
+    annotations: {}
+    tls: []
+
+# Prometheus Operator. The bearer token is the Secret you list as CIPHERFRAME_METRICS_TOKEN above.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+# Optional NetworkPolicy for the api, edge and worker pods. ingressFrom is who may reach api and
+# edge; metricsFrom is who may scrape all three. Egress is unrestricted unless egress is non-empty:
+# then only DNS and the listed rules are allowed (database, object store, KMS, OTLP collector).
+networkPolicy:
+  enabled: false
+  ingressFrom:
+    - namespaceSelector: {}
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels: { kubernetes.io/metadata.name: monitoring }
+  egress: []

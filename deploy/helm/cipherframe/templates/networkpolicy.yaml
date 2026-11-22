@@ -1,0 +1,38 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- range $role := list "api" "edge" "worker" }}
+{{- $r := get $.Values $role }}
+{{- if $r.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "cipherframe.labels" (dict "root" $ "role" $role) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cipherframe.selector" (dict "root" $ "role" $role) | nindent 6 }}
+  policyTypes: [Ingress{{ if $np.egress }}, Egress{{ end }}]
+  ingress:
+    {{- if ne $role "worker" }}
+    - from:
+        {{- toYaml $np.ingressFrom | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ $r.port }} }
+    {{- end }}
+    - from:
+        {{- toYaml $np.metricsFrom | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ $r.port }} }
+  {{- if $np.egress }}
+  egress:
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    {{- toYaml $np.egress | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
