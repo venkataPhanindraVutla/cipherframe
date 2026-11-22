@@ -56,6 +56,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0048](0048-overlay-watermark-policy.md) | Overlay watermark policy: settings, session code, drift path | none (M7-3, details under P12) | Accepted (flagged for owner review) | 2026-11-15 |
 | [0049](0049-brand-logo.md) | Per-tenant brand logo burned in at transcode | none (M7-4) | Accepted (flagged for owner review) | 2026-11-15 |
 | [0050](0050-reference-player-approach.md) | Reference player approach | P13 | Accepted | 2026-11-22 |
+| [0051](0051-cli-conventions.md) | Command line tool conventions: generated client, auth input, output, exit codes, tus | none (M8-1a) | Accepted (flagged for owner review) | 2026-11-22 |
 
 ## Open gates
 
