@@ -104,7 +104,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 
 - [ ] M9-1 Observability: traces and metrics across api, edge and worker
 - [ ] M9-2 Helm chart
-- [ ] M9-3 Terraform example: buckets, IAM, KMS keys
+- [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
 - [ ] M9-4 Load tests with published method and numbers
 - [ ] M9-5 Security review: threat model update, fuzz tests for playlist rewriting and token parsing
 - [ ] M9-6 Release automation: signed images, SBOM, changelog
