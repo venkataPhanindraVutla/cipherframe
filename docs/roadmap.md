@@ -9,7 +9,7 @@ Last updated: 2026-11-22.
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M9 next, after gate P14) |
+| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M9) |
 | v2.0.0 | npm, Go and Python SDKs and verifiers, shared conformance vectors | Not started |
 | v2.1.0 | Python ML worker: local speech-to-text, perceptual fingerprint matching, invisible per-asset or per-tenant watermark | Not started |
 
@@ -29,7 +29,7 @@ Last updated: 2026-11-22.
 | M6 Deletion and retention | Done ([ADR 0040](adr/0040-retention-and-privacy-defaults.md), [ADR 0042](adr/0042-deletion-and-retention-details.md)) |
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Done (P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md), [ADR 0046](adr/0046-thumbnails.md), [ADR 0047](adr/0047-quotas-and-per-client-limits.md), [ADR 0048](adr/0048-overlay-watermark-policy.md), [ADR 0049](adr/0049-brand-logo.md)) |
 | M8 CLI (Go) and reference player (TypeScript) | Done ([ADR 0050](adr/0050-reference-player-approach.md), [ADR 0051](adr/0051-cli-conventions.md), [ADR 0052](adr/0052-reference-player-implementation.md)) |
-| M9 Operations and release | Not started (gate P14) |
+| M9 Operations and release | In progress (P14 decided, [ADR 0053](adr/0053-observability-stack.md)) |
 | M10 v1 extras (may slip to v1.1) | Not started (gates P16 to P18) |
 
 ### M5 Integrity and anchoring
@@ -122,7 +122,6 @@ Each gate is asked of the project owner and recorded as an ADR before its milest
 
 | Gate | Decides | Needed for |
 |---|---|---|
-| P14 | Observability stack | M9 |
 | P16 | CDN providers and cache and revocation policy | M10 |
 | P17 | Hardware encoder targets | M10 |
 | P18 | HEVC and AV1 policy, including codec licensing | M10 |
@@ -151,8 +150,8 @@ These were accepted to keep the build moving and should be confirmed before the 
 
 Smaller items found while building, not yet scheduled:
 
-- Expose quota usage, refusals (`quota_exceeded`, `rate_limited`) and limits as metrics once the
-  observability stack exists (gate P14, M9): the plan says quotas are "exposed via API and metrics" and
+- Expose quota usage, refusals (`quota_exceeded`, `rate_limited`) and limits as metrics in M9-1
+  ([ADR 0053](adr/0053-observability-stack.md)): the plan says quotas are "exposed via API and metrics" and
   M7-6 delivered the API ([ADR 0047](adr/0047-quotas-and-per-client-limits.md)). Decide the tenant label
   cardinality there.
 - Share the request rate limit across api instances if a per-instance limit proves too loose
