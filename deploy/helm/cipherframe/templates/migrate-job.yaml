@@ -1,0 +1,48 @@
+{{- if .Values.migrate.enabled }}
+{{- $ctx := dict "root" . "role" "migrate" }}
+{{- $secrets := .Values.secrets }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cipherframe.fullname" . }}-migrate
+  labels:
+    {{- include "cipherframe.labels" $ctx | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "cipherframe.labels" $ctx | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "cipherframe.image" (dict "root" . "img" .Values.image.server) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          env:
+            {{- include "cipherframe.env" (dict "env" .Values.config "secrets" $secrets) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- include "cipherframe.secretMounts" $secrets | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- include "cipherframe.secretVolumes" $secrets | nindent 8 }}
+{{- end }}

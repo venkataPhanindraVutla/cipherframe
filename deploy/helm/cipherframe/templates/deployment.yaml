@@ -1,0 +1,126 @@
+{{- $listen := dict "api" "CIPHERFRAME_API_LISTEN" "edge" "CIPHERFRAME_EDGE_LISTEN" "worker" "CIPHERFRAME_WORKER_LISTEN" }}
+{{- range $role := list "api" "edge" "worker" }}
+{{- $r := get $.Values $role }}
+{{- if $r.enabled }}
+{{- $ctx := dict "root" $ "role" $role }}
+{{- $env := mergeOverwrite (deepCopy $.Values.config) (deepCopy $r.env) (dict (get $listen $role) (printf ":%v" $r.port)) }}
+{{- if eq $role "worker" }}{{ $_ := set $env "CIPHERFRAME_WORK_DIR" "/work" }}{{ end }}
+{{- $secrets := include "cipherframe.secrets" $ctx | fromYaml }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "cipherframe.labels" $ctx | nindent 4 }}
+spec:
+  {{- if not (include "cipherframe.autoscaled" $ctx) }}
+  replicas: {{ $r.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "cipherframe.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cipherframe.labels" $ctx | nindent 8 }}
+      {{- with $r.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+      automountServiceAccountToken: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- if eq $role "worker" }}
+      terminationGracePeriodSeconds: {{ $r.terminationGracePeriodSeconds }}
+      {{- end }}
+      containers:
+        - name: {{ $role }}
+          image: {{ include "cipherframe.image" (dict "root" $ "img" (ternary $.Values.image.worker $.Values.image.server (eq $role "worker"))) | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: ["--role={{ $role }}"]
+          ports:
+            - name: http
+              containerPort: {{ $r.port }}
+          env:
+            {{- include "cipherframe.env" (dict "env" $env "secrets" $secrets) | nindent 12 }}
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          resources:
+            {{- toYaml $r.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if eq $role "worker" }}
+            - { name: work, mountPath: /work }
+            {{- end }}
+            {{- include "cipherframe.secretMounts" $secrets | nindent 12 }}
+        {{- if and (eq $role "worker") $r.masker.enabled }}
+        - name: masker
+          image: {{ include "cipherframe.image" (dict "root" $ "img" $.Values.image.masker) | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          env:
+            {{- $menv := mergeOverwrite (dict "CIPHERFRAME_WORK_DIR" "/work") (deepCopy $r.masker.env) }}
+            {{- include "cipherframe.env" (dict "env" $menv "secrets" (dict)) | nindent 12 }}
+            - name: CIPHERFRAME_ML_DATABASE_URL_FILE
+              value: /var/run/cipherframe/secrets/ml-database-url/value
+          resources:
+            {{- toYaml $r.masker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: work, mountPath: /work }
+            - { name: ml-database-url, mountPath: /var/run/cipherframe/secrets/ml-database-url, readOnly: true }
+        {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if eq $role "worker" }}
+        - name: work
+          emptyDir:
+            sizeLimit: {{ $r.workDir.sizeLimit }}
+        {{- if $r.masker.enabled }}
+        - name: ml-database-url
+          secret:
+            secretName: {{ $r.masker.databaseUrlSecret.name | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ $r.masker.databaseUrlSecret.key | quote }}
+                path: value
+        {{- end }}
+        {{- end }}
+        {{- include "cipherframe.secretVolumes" $secrets | nindent 8 }}
+      {{- with $r.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

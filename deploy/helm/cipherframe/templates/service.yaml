@@ -1,0 +1,21 @@
+{{- range $role := list "api" "edge" "worker" }}
+{{- $r := get $.Values $role }}
+{{- if $r.enabled }}
+{{- $ctx := dict "root" $ "role" $role }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cipherframe.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "cipherframe.labels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "cipherframe.selector" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $r.port }}
+      targetPort: http
+{{- end }}
+{{- end }}
