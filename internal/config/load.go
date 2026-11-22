@@ -100,6 +100,7 @@ func (l *loader) load() *Config {
 	c.LogLevel = l.logLevel()
 	c.APIListen = l.listen(EnvAPIListen, defaultAPIListen)
 	c.EdgeListen = l.listen(EnvEdgeListen, defaultEdgeListen)
+	c.WorkerListen = l.listen(EnvWorkerListen, defaultWorkerListen)
 	c.DatabaseURL = l.databaseURL(prod)
 	c.S3 = l.s3(prod)
 	c.Uploads = l.uploads()
@@ -109,6 +110,7 @@ func (l *loader) load() *Config {
 	c.Media = l.media()
 	c.TSA = l.tsa(prod)
 	c.Retention = l.retention()
+	c.Metrics = l.metrics(prod)
 	return c
 }
 
