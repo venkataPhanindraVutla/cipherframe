@@ -1,0 +1,21 @@
+# Prometheus scrape configuration for the development stack (profile "observability"), and a
+# starting point for your own. Every Cipherframe listener serves /metrics behind a bearer token
+# (ADR 0053); here the token is read from a file, never written into this config.
+global:
+  scrape_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yaml
+
+scrape_configs:
+  # server runs the api and edge roles in the development stack, on two ports.
+  - job_name: cipherframe-api
+    authorization: { credentials_file: /etc/prometheus/cipherframe-metrics-token }
+    static_configs: [{ targets: ["server:8080"] }]
+  - job_name: cipherframe-edge
+    authorization: { credentials_file: /etc/prometheus/cipherframe-metrics-token }
+    static_configs: [{ targets: ["server:8081"] }]
+  # Only present with the worker profile (docker compose --profile worker ...).
+  - job_name: cipherframe-worker
+    authorization: { credentials_file: /etc/prometheus/cipherframe-metrics-token }
+    static_configs: [{ targets: ["worker:8082"] }]
