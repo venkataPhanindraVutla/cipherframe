@@ -7,6 +7,9 @@
 #
 # Usage: deploy/compose/cli-e2e.sh CIPHERFRAME_BINARY VIDEO_FILE
 # Needs: the stack and the worker running (docker compose --profile worker), curl and jq.
+#
+# With CIPHERFRAME_SCAN_SECRETS_FILE set to a path (in a private temp directory, not the job log) it
+# also writes one "kind=value" line for every secret the run handled, for secret-scan.sh (ADR 0058).
 set -eu
 
 cf="$1"
@@ -14,15 +17,36 @@ video="$2"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
+# record KIND VALUE: hand a secret to the end to end scan. Nothing is printed.
+record() {
+  [ -z "${CIPHERFRAME_SCAN_SECRETS_FILE:-}" ] || (umask 077; printf '%s=%s\n' "$1" "$2" >> "${CIPHERFRAME_SCAN_SECRETS_FILE}")
+}
+
 CIPHERFRAME_API_KEY="$(docker compose run --rm -T --no-deps server admin bootstrap --tenant-name cli-e2e --client-name cli-e2e)"
 echo "::add-mask::${CIPHERFRAME_API_KEY}"
 case "${CIPHERFRAME_API_KEY}" in cf_*_*) ;; *) echo "bootstrap did not print a key"; exit 1 ;; esac
 export CIPHERFRAME_API_KEY
 export CIPHERFRAME_SERVER=http://127.0.0.1:8080
+record api-key "${CIPHERFRAME_API_KEY}"
+# By position (cf_ + 12-character prefix + _): the base64url secret may itself contain underscores.
+record api-key-secret-part "$(printf '%s' "${CIPHERFRAME_API_KEY}" | cut -c17-)"
+record metrics-scrape-token "$(cat "$(dirname "$0")/../observability/dev/metrics-token")"
 
 id="$("${cf}" upload "${video}" --wait --wait-timeout 10m)"
 case "${id}" in ast_*) ;; *) echo "upload did not print an asset ID: ${id}"; exit 1 ;; esac
 echo "uploaded ${id}"
+
+# The source object key and the multipart upload ID never leave the server: none may reach a span or
+# a log. They exist until the asset is deleted, so read them now.
+if [ -n "${CIPHERFRAME_SCAN_SECRETS_FILE:-}" ]; then
+  docker compose exec -T postgres psql -U cipherframe -d cipherframe -At -F ' ' \
+    -c "SELECT source_key, coalesce(s3_upload_id, '') FROM assets WHERE source_key IS NOT NULL" |
+    while read -r skey uid; do
+      echo "::add-mask::${skey}"
+      record source-object-key "${skey}"
+      [ -z "${uid}" ] || { echo "::add-mask::${uid}"; record upload-id "${uid}"; }
+    done
+fi
 
 test "$("${cf}" status "${id}" --json | jq -r .state)" = ready
 "${cf}" inspect "${id}" | jq -e --arg id "${id}" '.id == $id and .state == "ready"' >/dev/null
@@ -36,11 +60,19 @@ token="$(printf '%s' "${sess}" | jq -r .token)"
 murl="$(printf '%s' "${sess}" | jq -r .manifest_url)"
 echo "::add-mask::${token}"
 echo "::add-mask::${sid}"
+record playback-token "${token}"
+record session-id "${sid}"
 printf '%s' "${sess}" | jq -e '.heartbeat_interval_seconds > 0' >/dev/null
 "${cf}" session show "${sid}" --json | jq -e '.state == "active"' >/dev/null
 rend="$(curl -fsS -H "Authorization: Bearer ${token}" "${murl}" | grep -v '^#' | head -n 1 | cut -d/ -f1)"
 seg="${rend}/seg-0.m4s"
 curl -fsS -H "Authorization: Bearer ${token}" "${murl%/master.m3u8}/${seg}" -o "${tmp}/seg.m4s"
+# The content key itself, through the key endpoint: it must reach no span and no log, in any form.
+kuri="$(curl -fsS -H "Authorization: Bearer ${token}" "${murl%/master.m3u8}/${rend}/media.m3u8" | sed -n 's/^#EXT-X-KEY:.*URI="\([^"]*\)".*/\1/p')"
+curl -fsS -H "Authorization: Bearer ${token}" "${murl%/master.m3u8}/${rend}/${kuri}" -o "${tmp}/key.bin"
+test "$(wc -c < "${tmp}/key.bin" | tr -d ' ')" = 16
+record content-key-hex "$(od -An -tx1 "${tmp}/key.bin" | tr -d ' \n')"
+record content-key-base64 "$(base64 < "${tmp}/key.bin" | tr -d '\n')"
 curl -fsS -H "Authorization: Bearer ${CIPHERFRAME_API_KEY}" "${CIPHERFRAME_SERVER}/v1/assets/${id}/manifest" > "${tmp}/manifest.json"
 "${cf}" proof "${id}" "${seg}" > "${tmp}/proof.json"
 "${cf}" verify --manifest "${tmp}/manifest.json" --proof "${tmp}/proof.json" \

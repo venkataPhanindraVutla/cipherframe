@@ -202,7 +202,7 @@ func TestRotationKeepsOldKeyVerifying(t *testing.T) {
 		t.Fatal("a signature does not verify with its key after rotation")
 	}
 	// The audit event names the rotation and the new key id, and no secret.
-	evs, err := e.repos.ListAuditEvents(ctx, e.tenant.ID, nil, 10)
+	evs, _, err := e.repos.ListAuditEvents(ctx, e.tenant.ID, db.AuditQuery{Limit: 10})
 	if err != nil || len(evs) != 1 || evs[0].Action != AuditRotate || evs[0].Target != nk.KeyID || evs[0].ClientID != e.client.ID {
 		t.Fatalf("audit = %+v, err = %v", evs, err)
 	}
@@ -250,7 +250,7 @@ func TestRetire(t *testing.T) {
 	if err != nil || id != keys[1].KeyID {
 		t.Fatalf("signed with %s (err %v), want %s", id, err, keys[1].KeyID)
 	}
-	evs, _ := e.repos.ListAuditEvents(ctx, e.tenant.ID, nil, 10)
+	evs, _, _ := e.repos.ListAuditEvents(ctx, e.tenant.ID, db.AuditQuery{Limit: 10})
 	var retires int
 	for _, ev := range evs {
 		if ev.Action == AuditRetire {
@@ -272,7 +272,7 @@ func TestKMSOutageCreatesNoKeyAndSignsNothing(t *testing.T) {
 	if n := e.count(t); n != 0 {
 		t.Fatalf("keys = %d after failed creations, want 0", n)
 	}
-	evs, _ := e.repos.ListAuditEvents(ctx, e.tenant.ID, nil, 10)
+	evs, _, _ := e.repos.ListAuditEvents(ctx, e.tenant.ID, db.AuditQuery{Limit: 10})
 	if len(evs) != 0 {
 		t.Fatalf("audit events = %d for a failed rotation, want 0", len(evs))
 	}

@@ -428,7 +428,7 @@ func TestRotationPreservesOwnership(t *testing.T) {
 	if after.CreatedByClientID != f.client.ID {
 		t.Fatal("asset ownership moved")
 	}
-	list, err := r.ListAuditEvents(ctx, f.tenant.ID, nil, 100)
+	list, _, err := r.ListAuditEvents(ctx, f.tenant.ID, db.AuditQuery{Limit: 100})
 	if err != nil || len(list) != len(events) {
 		t.Fatalf("audit rows after rotation: %d, %v", len(list), err)
 	}
@@ -502,7 +502,7 @@ func TestTenantIsolation(t *testing.T) {
 	if err != nil || len(clients) != 1 || clients[0].ID != b.client.ID {
 		t.Fatalf("tenant B client list leaks: %+v, %v", clients, err)
 	}
-	events, err := r.ListAuditEvents(ctx, b.tenant.ID, nil, 10)
+	events, _, err := r.ListAuditEvents(ctx, b.tenant.ID, db.AuditQuery{Limit: 10})
 	if err != nil || len(events) != 0 {
 		t.Fatalf("tenant B audit list leaks: %+v, %v", events, err)
 	}
@@ -552,17 +552,28 @@ func TestAuditEvents(t *testing.T) {
 		t.Fatalf("optional fields should be empty: %+v", e2)
 	}
 
-	all, err := r.ListAuditEvents(ctx, f.tenant.ID, nil, 10)
+	all, _, err := r.ListAuditEvents(ctx, f.tenant.ID, db.AuditQuery{Limit: 10})
 	if err != nil || len(all) != 2 || all[0] != e1 || all[1] != e2 {
 		t.Fatalf("list = %+v, %v", all, err)
 	}
-	first, err := r.ListAuditEvents(ctx, f.tenant.ID, nil, 1)
-	if err != nil || len(first) != 1 || first[0].ID != e1.ID {
-		t.Fatalf("first page = %+v, %v", first, err)
+	first, cur, err := r.ListAuditEvents(ctx, f.tenant.ID, db.AuditQuery{Limit: 1})
+	if err != nil || len(first) != 1 || first[0].ID != e1.ID || cur == nil {
+		t.Fatalf("first page = %+v, %v, %v", first, cur, err)
 	}
-	next, err := r.ListAuditEvents(ctx, f.tenant.ID, &db.AuditCursor{CreatedAt: first[0].CreatedAt, ID: first[0].ID}, 10)
-	if err != nil || len(next) != 1 || next[0].ID != e2.ID {
-		t.Fatalf("next page = %+v, %v", next, err)
+	back, err := db.ParseAuditCursor(cur.Encode())
+	if err != nil || back != *cur {
+		t.Fatalf("cursor round trip = %+v, %v", back, err)
+	}
+	next, cur, err := r.ListAuditEvents(ctx, f.tenant.ID, db.AuditQuery{After: &back, Limit: 10})
+	if err != nil || len(next) != 1 || next[0].ID != e2.ID || cur != nil {
+		t.Fatalf("next page = %+v, %v, %v", next, cur, err)
+	}
+	// since is inclusive, until exclusive.
+	if got, _, err := r.ListAuditEvents(ctx, f.tenant.ID, db.AuditQuery{Since: e2.CreatedAt, Limit: 10}); err != nil || len(got) != 1 || got[0].ID != e2.ID {
+		t.Fatalf("since = %+v, %v", got, err)
+	}
+	if got, _, err := r.ListAuditEvents(ctx, f.tenant.ID, db.AuditQuery{Until: e2.CreatedAt, Limit: 10}); err != nil || len(got) != 1 || got[0].ID != e1.ID {
+		t.Fatalf("until = %+v, %v", got, err)
 	}
 
 	// No foreign keys: rows survive deletion of the things they describe, and may reference
@@ -574,7 +585,7 @@ func TestAuditEvents(t *testing.T) {
 	if _, err := pool.Exec(ctx, "DELETE FROM api_keys WHERE id = $1", key.ID.UUID()); err != nil {
 		t.Fatal(err)
 	}
-	after, err := r.ListAuditEvents(ctx, f.tenant.ID, nil, 10)
+	after, _, err := r.ListAuditEvents(ctx, f.tenant.ID, db.AuditQuery{Limit: 10})
 	if err != nil || len(after) != 2 {
 		t.Fatalf("audit rows must survive key deletion: %d, %v", len(after), err)
 	}

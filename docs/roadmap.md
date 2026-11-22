@@ -102,8 +102,9 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 
 ### M9 Operations and release
 
-- [ ] M9-1 Observability: traces and metrics across api, edge and worker
-  - [x] M9-1a done: telemetry core, [observability.md](observability.md), [ADR 0055](adr/0055-telemetry-implementation.md). Dashboards, alert rules, audit export, the compose collector and the end-to-end secret scan are M9-1b.
+- [x] M9-1 Observability: traces and metrics across api, edge and worker
+  - [x] M9-1a: telemetry core, [observability.md](observability.md), [ADR 0055](adr/0055-telemetry-implementation.md)
+  - [x] M9-1b: Grafana dashboard, alert rules with `promtool` tests, the `observability` compose profile, `GET /v1/audit-events` and `cipherframe audit export`, the end-to-end secret scan ([ADR 0058](adr/0058-observability-tooling-and-audit-export.md), `deploy/observability/`)
 - [x] M9-2 Helm chart ([ADR 0059](adr/0059-helm-chart-choices.md), `deploy/helm/cipherframe/`; external Postgres only per [ADR 0054](adr/0054-operations-and-release-tooling.md); rendered and schema-checked in CI, no cluster install test)
 - [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
 - [x] M9-4 Load tests with published method and numbers ([load-tests.md](load-tests.md), [ADR 0061](adr/0061-load-test-method.md), `cmd/cipherframe-load`, raw CSVs in `docs/load-results/`)
@@ -151,10 +152,6 @@ These were accepted to keep the build moving and should be confirmed before the 
 
 Smaller items found while building, not yet scheduled:
 
-- Expose quota usage, refusals (`quota_exceeded`, `rate_limited`) and limits as metrics in M9-1
-  ([ADR 0053](adr/0053-observability-stack.md)): the plan says quotas are "exposed via API and metrics" and
-  M7-6 delivered the API ([ADR 0047](adr/0047-quotas-and-per-client-limits.md)). Decide the tenant label
-  cardinality there.
 - Share the request rate limit across api instances if a per-instance limit proves too loose
   ([ADR 0047](adr/0047-quotas-and-per-client-limits.md)).
 - Allowlist the public test IVs in the golden playlists for the secret scanner.

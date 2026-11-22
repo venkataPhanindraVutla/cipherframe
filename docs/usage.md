@@ -70,6 +70,7 @@ cipherframe subtitles list "$id" | delete "$id" SUBTITLE_ID
 cipherframe brand set-logo logo.png --corner top_left --opacity 60 | show | remove
 cipherframe keys rotate-api-key KEY_ID [--overlap 10m] > new-key.txt
 cipherframe webhooks list --status dead | replay DELIVERY_ID | replay --endpoint ID --dead
+cipherframe audit export [--since 2026-11-01T00:00:00Z] [--until T] > audit.ndjson   # admin scope
 ```
 
 - `session create` prints the session ID, the manifest URL on the edge URL the API returned, the
@@ -79,6 +80,9 @@ cipherframe webhooks list --status dead | replay DELIVERY_ID | replay --endpoint
 - `proof` prints the inclusion proof JSON exactly as `verify --proof` reads it. `verify-file` hashes
   the file locally and sends only the hash to `POST /v1/verify`; without `--path` it searches the
   tenant's artifacts by hash.
+- `audit export` writes the tenant's audit events to stdout as NDJSON, one compact object per line,
+  oldest first, following every page (`GET /v1/audit-events`, [api.md](api.md#audit-log-export-adr-0058)).
+  `--since` is inclusive and `--until` exclusive (RFC 3339). Output is always NDJSON.
 - `keys rotate-api-key` prints the new key alone on stdout, once, and warns on stderr that it will
   not be shown again; the old key works for `--overlap`.
 - `subtitles import` reads WebVTT or SRT (the server checks and rewrites it) or, for a `.json` file,

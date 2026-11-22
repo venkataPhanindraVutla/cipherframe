@@ -1099,6 +1099,34 @@ type AssetList struct {
 // Lists leave deleted assets out.
 type AssetState string
 
+// AuditEvent defines model for AuditEvent.
+type AuditEvent struct {
+	// Action What happened, for example `key.rotate` or `asset.delete`.
+	Action    string    `json:"action"`
+	ClientId  *ClientId `json:"client_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// Id The event's ID, unique and time-ordered.
+	Id openapi_types.UUID `json:"id"`
+
+	// KeyId The API key that made the request. Absent for events the system raised.
+	KeyId *string `json:"key_id,omitempty"`
+
+	// RequestId The `X-Request-Id` of the request that caused the event.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// Target What it happened to, if anything (an ID, a label or a short summary).
+	Target *string `json:"target,omitempty"`
+}
+
+// AuditEventList defines model for AuditEventList.
+type AuditEventList struct {
+	Items []AuditEvent `json:"items"`
+
+	// NextCursor Present when there are more events. Pass it as `after`.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // BrandLogo A tenant's current brand logo (ADR 0049): the stored image's identity and how it is placed.
 // `version`, `sha256` and the placement are what the signed manifest of an asset made with
 // this logo records.
@@ -2377,6 +2405,15 @@ type AccessLogTo = time.Time
 // AssetId defines model for AssetId.
 type AssetId = string
 
+// AuditAfter defines model for AuditAfter.
+type AuditAfter = string
+
+// AuditSince defines model for AuditSince.
+type AuditSince = time.Time
+
+// AuditUntil defines model for AuditUntil.
+type AuditUntil = time.Time
+
 // ClientIdPath defines model for ClientIdPath.
 type ClientIdPath = string
 
@@ -2504,6 +2541,21 @@ type CreateAssetSubtitleMultipartBody struct {
 
 // CreateAssetSubtitleMultipartBodyDefault defines parameters for CreateAssetSubtitle.
 type CreateAssetSubtitleMultipartBodyDefault string
+
+// ListAuditEventsParams defines parameters for ListAuditEvents.
+type ListAuditEventsParams struct {
+	// After The `next_cursor` of the previous page. Treat it as opaque.
+	After *AuditAfter `form:"after,omitempty" json:"after,omitempty"`
+
+	// Limit Page size, 1 to 500 (default 100).
+	Limit *AccessLogLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Since Only events at or after this time (RFC 3339).
+	Since *AuditSince `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only events before this time (RFC 3339). Must be after `since`.
+	Until *AuditUntil `form:"until,omitempty" json:"until,omitempty"`
+}
 
 // PutBrandLogoMultipartBody defines parameters for PutBrandLogo.
 type PutBrandLogoMultipartBody struct {
@@ -2919,6 +2971,9 @@ type ServerInterface interface {
 	// ImportAssetTranscript Import a transcript as a subtitle track
 	// (POST /v1/assets/{asset_id}/transcripts)
 	ImportAssetTranscript(w http.ResponseWriter, r *http.Request, assetId AssetId)
+	// ListAuditEvents Export the audit log
+	// (GET /v1/audit-events)
+	ListAuditEvents(w http.ResponseWriter, r *http.Request, params ListAuditEventsParams)
 	// DeleteBrandLogo Remove the tenant's brand logo
 	// (DELETE /v1/brand/logo)
 	DeleteBrandLogo(w http.ResponseWriter, r *http.Request)
@@ -3672,6 +3727,78 @@ func (siw *ServerInterfaceWrapper) ImportAssetTranscript(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ImportAssetTranscript(w, r, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAuditEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListAuditEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAuditEventsParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "since"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "until" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "until", r.URL.Query(), &params.Until, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "until"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "until", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAuditEvents(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5044,6 +5171,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/clients/{client_id}/quotas", wrapper.GetClientQuotas)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/clients/{client_id}/quotas", wrapper.UpdateClientQuotas)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/usage", wrapper.GetUsage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/audit-events", wrapper.ListAuditEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/playback-auth", wrapper.GetPlaybackAuth)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/playback-auth", wrapper.UpdatePlaybackAuth)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/playback-auth/jwt-keys/{kid}", wrapper.DeletePlaybackJwtKey)
@@ -7654,6 +7782,118 @@ type ImportAssetTranscriptdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response ImportAssetTranscriptdefaultApplicationProblemPlusJSONResponse) VisitImportAssetTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEventsRequestObject struct {
+	Params ListAuditEventsParams
+}
+
+type ListAuditEventsResponseObject interface {
+	VisitListAuditEventsResponse(w http.ResponseWriter) error
+}
+
+type ListAuditEvents200ResponseHeaders struct {
+	CacheControl string
+	XRequestId   string
+}
+
+type ListAuditEvents200JSONResponse struct {
+	Body    AuditEventList
+	Headers ListAuditEvents200ResponseHeaders
+}
+
+func (response ListAuditEvents200JSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEvents400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListAuditEvents400ApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEvents401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAuditEvents401ApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEvents403ResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAuditEvents403ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers ListAuditEvents403ResponseHeaders
+}
+
+func (response ListAuditEvents403ApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEventsdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type ListAuditEventsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    ListAuditEventsdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response ListAuditEventsdefaultApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -13445,6 +13685,9 @@ type StrictServerInterface interface {
 	// ImportAssetTranscript Import a transcript as a subtitle track
 	// (POST /v1/assets/{asset_id}/transcripts)
 	ImportAssetTranscript(ctx context.Context, request ImportAssetTranscriptRequestObject) (ImportAssetTranscriptResponseObject, error)
+	// ListAuditEvents Export the audit log
+	// (GET /v1/audit-events)
+	ListAuditEvents(ctx context.Context, request ListAuditEventsRequestObject) (ListAuditEventsResponseObject, error)
 	// DeleteBrandLogo Remove the tenant's brand logo
 	// (DELETE /v1/brand/logo)
 	DeleteBrandLogo(ctx context.Context, request DeleteBrandLogoRequestObject) (DeleteBrandLogoResponseObject, error)
@@ -14167,6 +14410,32 @@ func (sh *strictHandler) ImportAssetTranscript(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ImportAssetTranscriptResponseObject); ok {
 		if err := validResponse.VisitImportAssetTranscriptResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAuditEvents operation middleware
+func (sh *strictHandler) ListAuditEvents(w http.ResponseWriter, r *http.Request, params ListAuditEventsParams) {
+	var request ListAuditEventsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAuditEvents(ctx, request.(ListAuditEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAuditEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAuditEventsResponseObject); ok {
+		if err := validResponse.VisitListAuditEventsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -1,0 +1,75 @@
+# Alert rules over the metrics of docs/observability.md. Thresholds are starting points: tune them
+# to your traffic. Test with: promtool test rules alerts_test.yaml
+#
+# Scrape jobs are expected to be named cipherframe-api, cipherframe-edge and cipherframe-worker
+# (see deploy/observability/README.md).
+groups:
+  - name: cipherframe
+    rules:
+      - alert: CipherframeTargetDown
+        expr: up{job=~"cipherframe-.*"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} ({{ $labels.instance }}) cannot be scraped"
+          description: "Prometheus has not scraped {{ $labels.instance }} for 5 minutes. Check the process, the network path and the scrape token."
+
+      - alert: CipherframeQueueBacklogGrowing
+        expr: |
+          sum by (kind) (cipherframe_jobs{state="available"}) > 50
+          and
+          sum by (kind) (cipherframe_jobs{state="available"}) > sum by (kind) (cipherframe_jobs{state="available"} offset 30m)
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Queue of {{ $labels.kind }} jobs is growing"
+          description: "More than 50 {{ $labels.kind }} jobs are waiting, more than 30 minutes ago. Workers are down, stuck or too few."
+
+      - alert: CipherframeJobFailureRate
+        expr: |
+          sum by (kind) (rate(cipherframe_job_duration_seconds_count{outcome="failed"}[15m]))
+            / sum by (kind) (rate(cipherframe_job_duration_seconds_count{outcome=~"succeeded|failed"}[15m])) > 0.25
+          and
+          sum by (kind) (increase(cipherframe_job_duration_seconds_count{outcome="failed"}[15m])) >= 3
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 25% of {{ $labels.kind }} job attempts fail"
+          description: "A failed attempt is retried, so this is a rate of attempts, not of lost jobs. Look at the worker logs and the job table."
+
+      - alert: CipherframeHTTP5xxRate
+        expr: |
+          sum by (service) (rate(cipherframe_http_request_duration_seconds_count{service=~"api|edge", status_class="5xx"}[10m]))
+            / sum by (service) (rate(cipherframe_http_request_duration_seconds_count{service=~"api|edge"}[10m])) > 0.05
+          and
+          sum by (service) (rate(cipherframe_http_request_duration_seconds_count{service=~"api|edge"}[10m])) > 0.1
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 5% of {{ $labels.service }} responses are 5xx"
+          description: "Check the database, the object store and the key provider the service depends on."
+
+      - alert: CipherframeKeyEndpointSlow
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(cipherframe_key_request_duration_seconds_bucket{outcome="served"}[10m]))) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Content key requests: p99 above 500 ms"
+          description: "Viewers wait for the key before the first frame. Check the key provider (KMS) latency and the database."
+
+      - alert: CipherframeAnomalySpike
+        expr: sum by (kind) (increase(cipherframe_anomalies_total[15m])) > 20
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Many {{ $labels.kind }} anomaly events"
+          description: "A burst of playback anomaly events: possible token sharing or scraping. Read them with GET /v1/playback-events."
+
+      - alert: CipherframeRefusalsSpike
+        expr: sum by (reason) (increase(cipherframe_refusals_total[15m])) > 50
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Many requests refused: {{ $labels.reason }}"
+          description: "A tenant is hitting a quota or a rate limit. See the usage API, or enable the tenant_id label to see which."

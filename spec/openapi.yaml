@@ -1952,6 +1952,50 @@ paths:
           $ref: "#/components/responses/RateLimited"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/audit-events:
+    get:
+      operationId: listAuditEvents
+      summary: Export the audit log
+      description: |
+        Returns the audit events of the caller's tenant as structured objects, oldest first, with
+        a stable order (event time, then ID), an optional half-open `since`/`until` range on the
+        event time and cursor pagination (`limit` up to 500, default 100). Follow `next_cursor`
+        (as `after`) until it is absent to read everything. A page never repeats or skips a row,
+        and an event written while you read appears on the last page. Requires the `admin` scope.
+
+        An event records what was done (`action`), to what (`target`), by whom (`client_id`,
+        `api_key_id`; absent for events the system raises on its own) and under which request
+        (`request_id`). A `target` is an ID, a label or a short `key=value` summary; the audit log
+        never stores a token, a key secret, a signed URL, a session ID (only a short fingerprint of
+        one) or a source object key.
+      tags: [api]
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/AuditAfter"
+        - $ref: "#/components/parameters/AccessLogLimit"
+        - $ref: "#/components/parameters/AuditSince"
+        - $ref: "#/components/parameters/AuditUntil"
+      responses:
+        "200":
+          description: One page of audit events, oldest first.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventList"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/playback-auth:
     get:
       operationId: getPlaybackAuth
@@ -3428,6 +3472,31 @@ components:
         minimum: 1
         maximum: 500
         default: 100
+    AuditAfter:
+      name: after
+      in: query
+      required: false
+      description: The `next_cursor` of the previous page. Treat it as opaque.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    AuditSince:
+      name: since
+      in: query
+      required: false
+      description: Only events at or after this time (RFC 3339).
+      schema:
+        type: string
+        format: date-time
+    AuditUntil:
+      name: until
+      in: query
+      required: false
+      description: Only events before this time (RFC 3339). Must be after `since`.
+      schema:
+        type: string
+        format: date-time
     AccessLogCursor:
       name: cursor
       in: query
@@ -4617,6 +4686,45 @@ components:
         next_cursor:
           type: string
           description: Present when there are older events. Pass it as `cursor`.
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, action, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The event's ID, unique and time-ordered.
+        action:
+          type: string
+          description: What happened, for example `key.rotate` or `asset.delete`.
+        target:
+          type: string
+          description: What it happened to, if anything (an ID, a label or a short summary).
+        client_id:
+          $ref: "#/components/schemas/ClientId"
+        key_id:
+          type: string
+          pattern: "^key_[0-9a-hjkmnp-tv-z]{26}$"
+          description: The API key that made the request. Absent for events the system raised.
+        request_id:
+          type: string
+          description: The `X-Request-Id` of the request that caused the event.
+        created_at:
+          type: string
+          format: date-time
+    AuditEventList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        next_cursor:
+          type: string
+          description: Present when there are more events. Pass it as `after`.
     BrandLogo:
       description: |
         A tenant's current brand logo (ADR 0049): the stored image's identity and how it is placed.

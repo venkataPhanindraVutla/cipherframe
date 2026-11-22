@@ -56,7 +56,7 @@ func TestDeleteAssetEndpoint(t *testing.T) {
 	if n := h.purgeJobs(); n != 1 {
 		t.Fatalf("%d purge jobs, want 1", n)
 	}
-	events, _ := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, nil, 50)
+	events, _, _ := h.repos.ListAuditEvents(context.Background(), res.Tenant.ID, db.AuditQuery{Limit: 50})
 	deletes := 0
 	for _, e := range events {
 		if e.Action == "asset.delete" && e.Target == a.ID.String() {
