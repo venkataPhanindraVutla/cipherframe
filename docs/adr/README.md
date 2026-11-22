@@ -64,6 +64,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0056](0056-terraform-example-choices.md) | Terraform example choices: trust policy as input, SSE-S3 default, custom GCS roles, opt-in HMAC keys, fmt and validate in CI | none (M9-3) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0059](0059-helm-chart-choices.md) | Helm chart choices: secrets as mounted files, flat config map, masker as a worker sidecar, queue-depth KEDA query, fixed ingress prefixes | none (M9-2) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0060](0060-release-automation-choices.md) | Release automation choices: images from the existing Dockerfiles, masker job, signing and attestation, no CHANGELOG.md | none (M9-6) | Accepted (flagged for owner review) | 2026-11-22 |
+| [0061](0061-load-test-method.md) | Load test method: real-time viewers, ramp until a threshold breaks, raw CSV beside the method | none (M9-4) | Accepted (flagged for owner review) | 2026-11-22 |
 
 ## Open gates
 

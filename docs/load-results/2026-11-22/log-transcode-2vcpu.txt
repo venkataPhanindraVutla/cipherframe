@@ -1,0 +1,2 @@
+jobs 3 ok 3 concurrency 1: commit to ready p50 47.5 s p95 52.8 s p99 52.8 s
+media 60 s per job, 3 jobs finished in 147.3 s wall: 1.22 media seconds per wall second

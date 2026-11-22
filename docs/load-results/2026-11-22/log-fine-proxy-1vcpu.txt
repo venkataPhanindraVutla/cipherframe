@@ -1,0 +1,14 @@
+step 1 viewers 200 req/s 33.2 segment p50 8 p95 14 p99 15 ms errors 0.00%
+step 2 viewers 250 req/s 47.9 segment p50 9 p95 15 p99 18 ms errors 0.00%
+step 3 viewers 300 req/s 51.5 segment p50 9 p95 15 p99 17 ms errors 0.00%
+step 4 viewers 350 req/s 65.5 segment p50 9 p95 15 p99 18 ms errors 0.00%
+step 5 viewers 400 req/s 68.7 segment p50 10 p95 17 p99 22 ms errors 0.00%
+step 6 viewers 450 req/s 83.2 segment p50 9 p95 17 p99 21 ms errors 0.00%
+step 7 viewers 500 req/s 86.2 segment p50 9 p95 19 p99 22 ms errors 0.00%
+step 8 viewers 550 req/s 99.7 segment p50 9 p95 19 p99 23 ms errors 0.00%
+step 9 viewers 600 req/s 104.3 segment p50 8 p95 18 p99 22 ms errors 0.00%
+step 10 viewers 650 req/s 117.9 segment p50 9 p95 20 p99 26 ms errors 0.00%
+step 11 viewers 700 req/s 121.1 segment p50 8 p95 19 p99 24 ms errors 0.00%
+step 12 viewers 750 req/s 136.5 segment p50 10 p95 22 p99 29 ms errors 0.00%
+step 13 viewers 800 req/s 139.4 segment p50 9 p95 20 p99 25 ms errors 0.00%
+step 14 viewers 850 req/s 151.7 segment p50 8 p95 22 p99 28 ms errors 0.00%

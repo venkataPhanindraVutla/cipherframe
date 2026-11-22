@@ -555,6 +555,15 @@ Postgres, with the migration as a hook Job, secrets mounted as `_FILE` files and
 ServiceMonitor, autoscaling and NetworkPolicy. Its README has the values reference, upgrade notes and
 the cloud IAM each role needs. CI only renders and validates it; the project never installs it.
 
+## Load tests (M9-4, ADR 0061)
+
+`cmd/cipherframe-load` is a development tool, not part of a release. Its `play` mode ramps virtual
+viewers that create sessions and fetch playlists, the key, segments and heartbeats as the reference
+player does, in `proxy` or `presigned` delivery; its `transcode` mode times uploads to `ready`.
+[load-tests.md](load-tests.md) has the method, the numbers and how to reproduce them. The API key
+comes from `CIPHERFRAME_API_KEY` or `--api-key-file`, never a flag value, and the tool never writes a
+token, session ID, key or URL. `play` sets the tenant's `delivery` setting for the run.
+
 ## Releases and verifying them (M9-6, ADR 0060)
 
 Tagged releases publish the `cipherframe` CLI and the server as archives, and the `cipherframe-server`,

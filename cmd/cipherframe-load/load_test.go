@@ -64,8 +64,11 @@ func TestSummarizeAndBreach(t *testing.T) {
 }
 
 func TestParsePlaylists(t *testing.T) {
-	if got := parseMaster([]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n720p/media.m3u8\n360p/media.m3u8\n")); got != "720p/media.m3u8" {
+	if got := parseMaster([]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n720p/media.m3u8\n360p/media.m3u8\n"), ""); got != "720p/media.m3u8" {
 		t.Errorf("master: %q", got)
+	}
+	if got := parseMaster([]byte("#EXTM3U\n240p/media.m3u8\n360p/media.m3u8\n"), "360p"); got != "360p/media.m3u8" {
+		t.Errorf("master rendition: %q", got)
 	}
 	h := parseMedia([]byte("#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"../key\"\n#EXT-X-MAP:URI=\"init.mp4\"\n" +
 		"#EXTINF:4.000,\nseg-0.m4s\n#EXTINF:2.500,\nhttps://storage.test/seg-1.m4s?sig=x\n#EXT-X-ENDLIST\n"))

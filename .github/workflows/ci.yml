@@ -326,6 +326,10 @@ jobs:
             -f lavfi -i sine=frequency=440:sample_rate=48000 -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
             -shortest "${RUNNER_TEMP}/test.mp4"
           deploy/compose/cli-e2e.sh "${RUNNER_TEMP}/cipherframe" "${RUNNER_TEMP}/test.mp4"
+      - name: load tool smoke test
+        run: |
+          go build -o "${RUNNER_TEMP}/cipherframe-load" ./cmd/cipherframe-load
+          deploy/compose/load-smoke.sh "${RUNNER_TEMP}/cipherframe" "${RUNNER_TEMP}/cipherframe-load" "${RUNNER_TEMP}/test.mp4" 3
       - name: compose logs
         if: failure()
         run: docker compose --profile worker logs --no-color

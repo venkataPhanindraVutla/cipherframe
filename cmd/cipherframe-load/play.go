@@ -24,6 +24,7 @@ import (
 type playConfig struct {
 	common
 	asset, delivery, edge     string
+	rendition                 string
 	start, step, maxViewers   int
 	stepDur, settle, p99Limit time.Duration
 	maxErrRate, speed         float64
@@ -40,6 +41,7 @@ func runPlay(ctx context.Context, args []string) error {
 	fs.StringVar(&c.asset, "asset", "", "ready asset to play")
 	fs.StringVar(&c.delivery, "delivery", "proxy", "proxy or presigned (sets the tenant's delivery setting for the run)")
 	fs.StringVar(&c.edge, "edge", "", "edge base URL that replaces the origin of the manifest URL (default: as returned)")
+	fs.StringVar(&c.rendition, "rendition", "", "play the first rendition whose playlist path contains this, such as 720p (default: the first listed)")
 	fs.IntVar(&c.start, "start", 10, "viewers in the first step")
 	fs.IntVar(&c.step, "step", 10, "viewers added per step")
 	fs.IntVar(&c.maxViewers, "max", 200, "most viewers")
@@ -268,10 +270,12 @@ type hls struct {
 	durs      []time.Duration
 }
 
-func parseMaster(b []byte) string {
+// parseMaster returns the media playlist URI of the first rendition whose URI contains want (any
+// rendition when want is empty), or "".
+func parseMaster(b []byte, want string) string {
 	for l := range strings.SplitSeq(string(b), "\n") {
-		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
-			return l // the first rendition
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") && strings.Contains(l, want) {
+			return l
 		}
 	}
 	return ""
@@ -321,7 +325,7 @@ func (p *player) fetchMedia(ctx context.Context, withMaster bool) (hls, string) 
 		if st != http.StatusOK {
 			return hls{}, ""
 		}
-		p.mediaURL = p.resolve(p.master, parseMaster(b))
+		p.mediaURL = p.resolve(p.master, parseMaster(b, p.c.rendition))
 	}
 	b, st := p.do(ctx, "media", http.MethodGet, p.mediaURL)
 	if st != http.StatusOK {

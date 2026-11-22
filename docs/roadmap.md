@@ -106,7 +106,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
   - [x] M9-1a done: telemetry core, [observability.md](observability.md), [ADR 0055](adr/0055-telemetry-implementation.md). Dashboards, alert rules, audit export, the compose collector and the end-to-end secret scan are M9-1b.
 - [x] M9-2 Helm chart ([ADR 0059](adr/0059-helm-chart-choices.md), `deploy/helm/cipherframe/`; external Postgres only per [ADR 0054](adr/0054-operations-and-release-tooling.md); rendered and schema-checked in CI, no cluster install test)
 - [x] M9-3 Terraform example: buckets, IAM, KMS keys ([ADR 0056](adr/0056-terraform-example-choices.md), `deploy/terraform/`)
-- [ ] M9-4 Load tests with published method and numbers
+- [x] M9-4 Load tests with published method and numbers ([load-tests.md](load-tests.md), [ADR 0061](adr/0061-load-test-method.md), `cmd/cipherframe-load`, raw CSVs in `docs/load-results/`)
 - [x] M9-5 Security review: threat model update, fuzz tests for playlist rewriting, token, key and subtitle parsing (CI `fuzz` job on pushes to main), [disaster recovery](disaster-recovery.md)
 - [x] M9-6 Release automation: signed images, SBOM, changelog ([ADR 0060](adr/0060-release-automation-choices.md), [releasing.md](releasing.md), `.goreleaser.yaml`)
 
