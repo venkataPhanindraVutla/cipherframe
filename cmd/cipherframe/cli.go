@@ -43,6 +43,7 @@ type cliError struct {
 	kind    string // short stable word for --json: usage, network, incomplete or the problem code
 	msg     string
 	problem *apiclient.Problem
+	quiet   bool // the command already printed its result: only the exit code is left to report
 }
 
 func (e *cliError) Error() string { return e.msg }
@@ -199,6 +200,9 @@ func report(stderr io.Writer, name string, asJSON bool, c *cli, err error) int {
 	if !errors.As(err, &ce) {
 		ce = &cliError{code: exitAPI, kind: "error", msg: err.Error()}
 	}
+	if ce.quiet {
+		return ce.code
+	}
 	msg := ce.msg
 	if c != nil {
 		msg = c.scrub(msg)
@@ -222,10 +226,48 @@ func report(stderr io.Writer, name string, asJSON bool, c *cli, err error) int {
 type command struct {
 	name, synopsis, help string
 	setup                func(fs *flag.FlagSet) func(c *cli, args []string) error
+	// A group (session, subtitles, ...) has subs instead of setup. gaps names subcommands the
+	// plan lists that the API cannot support, with the reason shown as a usage error.
+	subs []command
+	gaps map[string]string
+}
+
+// runGroup dispatches "cipherframe GROUP SUB args".
+func (cmd command) runGroup(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		if len(args) == 0 {
+			_, _ = fmt.Fprint(stderr, cmd.groupHelp())
+			return exitUsage
+		}
+		_, _ = fmt.Fprint(stdout, cmd.groupHelp())
+		return 0
+	}
+	for _, s := range cmd.subs {
+		if strings.TrimPrefix(s.name, cmd.name+" ") == args[0] {
+			return s.run(args[1:], stdout, stderr)
+		}
+	}
+	if why, ok := cmd.gaps[args[0]]; ok {
+		return report(stderr, cmd.name+" "+args[0], false, nil, usageErr("%s", why))
+	}
+	return report(stderr, cmd.name, false, nil, usageErr("unknown subcommand %q (see cipherframe help %s)", args[0], cmd.name))
+}
+
+func (cmd command) groupHelp() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Usage: cipherframe %s SUBCOMMAND ...\n\n%s\n\nSubcommands:\n", cmd.name, strings.TrimSpace(cmd.help))
+	for _, s := range cmd.subs {
+		fmt.Fprintf(&b, "  %s\n", s.synopsis)
+	}
+	b.WriteString("\nRun cipherframe help " + cmd.name + " SUBCOMMAND for its flags.\n")
+	return b.String()
 }
 
 // run parses args (flags may follow the positional arguments), builds the cli and runs the command.
 func (cmd command) run(args []string, stdout, stderr io.Writer) int {
+	if cmd.subs != nil {
+		return cmd.runGroup(args, stdout, stderr)
+	}
 	fs := flag.NewFlagSet(cmd.name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cf commonFlags
@@ -296,3 +338,25 @@ const exitCodeHelp = `Exit codes: 0 ok, 3 usage error, 4 the server refused the 
 8 --wait ended without success (asset failed or wait timed out).
 verify keeps its own codes: 0 all ours, 1 any modified, 2 cannot say, 3 usage error.
 `
+
+// call runs one request with its own deadline and decodes a 2xx body into out (when non-nil).
+func (c *cli) call(mult int, do func(ctx context.Context) (*http.Response, error), out any) ([]byte, error) {
+	ctx, cancel := c.ctx(context.Background(), mult)
+	defer cancel()
+	resp, err := do(ctx) //nolint:bodyclose // finish closes it
+	return c.finish(resp, err, out)
+}
+
+// result prints raw with --json, otherwise calls human.
+func (c *cli) result(raw []byte, human func()) {
+	if c.json {
+		c.printJSON(raw)
+		return
+	}
+	human()
+}
+
+// done prints the result of a call that has no body: a small fixed object with --json.
+func (c *cli) done(msg, key string) {
+	c.result([]byte(`{"`+key+`":true}`), func() { c.printf("%s\n", msg) })
+}

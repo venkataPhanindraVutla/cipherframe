@@ -50,6 +50,7 @@ type fakeServer struct {
 	commitCode int      // when non-zero, commit answers this status as a problem
 	echoKey    bool     // problem details echo the Authorization header (to test scrubbing)
 	deleted    bool
+	extra      func(w http.ResponseWriter, r *http.Request, body []byte) bool // more routes (rest_test.go)
 }
 
 type testRouter struct{ doc *openapi3.T }
@@ -242,6 +243,9 @@ func (f *fakeServer) route(w http.ResponseWriter, r *http.Request, body []byte) 
 		w.Header().Set("X-Request-Id", testReqID)
 		_, _ = w.Write([]byte(`{"payloadType":"application/vnd.cipherframe.deletion+json","payload":"e30=","signatures":[{"keyid":"k","sig":"c2ln"}]}`))
 	default:
+		if f.extra != nil && f.extra(w, r, body) {
+			return
+		}
 		f.problem(w, r, 404, "not_found", "no such asset")
 	}
 }
@@ -253,13 +257,16 @@ func runCLI(t *testing.T, f *fakeServer, args ...string) (int, string, string) {
 	t.Setenv("CIPHERFRAME_API_KEY", testKey)
 	var out, errb bytes.Buffer
 	code := run(args, &out, &errb)
-	for _, s := range []string{testKey, testToken} {
-		if strings.Contains(out.String()+errb.String(), s) {
+	for _, s := range []string{testKey, testToken, testPlayToken, newKey} {
+		if s != allowOutput && strings.Contains(out.String()+errb.String(), s) {
 			t.Fatalf("a secret leaked into the output of %v:\nstdout: %s\nstderr: %s", args, out.String(), errb.String())
 		}
 	}
 	return code, out.String(), errb.String()
 }
+
+// allowOutput is the one secret a test shows on purpose (it checks that stdout itself).
+var allowOutput string
 
 func fastPolling(t *testing.T) {
 	t.Helper()
