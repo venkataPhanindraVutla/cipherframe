@@ -17,6 +17,49 @@
 
 The `cipherframe` CLI (M8-1) covers each step.
 
+## The command line tool
+
+`cipherframe` is one static binary (`CGO_ENABLED=0 go build -o cipherframe ./cmd/cipherframe`). The
+commands below follow the curl walkthrough of the stack: they create the asset, upload through the
+edge with the resumable tus protocol and commit. Conventions are in [ADR 0051](adr/0051-cli-conventions.md).
+
+```sh
+export CIPHERFRAME_SERVER=http://127.0.0.1:8080          # the api listener
+export CIPHERFRAME_API_KEY="$(cat key.txt)"               # or --api-key-file key.txt; never a flag value
+
+id=$(cipherframe upload clip.mp4 --wait)                  # create, tus upload, commit, wait until ready
+cipherframe status "$id"                                  # ast_...  ready
+cipherframe inspect "$id"                                 # the full asset document (JSON)
+cipherframe list --limit 20 [--cursor C]                  # one page; prints the next cursor on stderr
+cipherframe delete "$id" --wait > record.json             # waits, then prints the signed deletion record
+cipherframe verify --deletion-record record.json \
+  --keys-url "$CIPHERFRAME_SERVER/.well-known/cipherframe-keys.json"
+```
+
+- `upload FILE` takes `--mask-faces`, `--ttl 30d` (or `24h`), `--content-type`, `--wait` and
+  `--wait-timeout`. It sends the size and a content type, never the file name. An interrupted
+  transfer resumes from the server's offset within the same run. If the commit is refused after the
+  bytes arrived (a quota, say), run `cipherframe process ID` once the cause is fixed.
+- `--json` makes stdout one JSON document (the server's response) and errors one JSON object on
+  stderr; progress always goes to stderr. `deletion-record ID` and `delete --wait` print the signed
+  record in both modes.
+- Problems show the stable `code` and the request ID, never the key. `cipherframe help COMMAND`
+  lists a command's flags.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | success (verify: all ours) |
+| 1, 2 | verify only: any modified, cannot say |
+| 3 | usage error |
+| 4 | the server refused the request (401, 403, 400, other 4xx, 500) |
+| 5 | not found |
+| 6 | conflict or quota (409, 429) |
+| 7 | network error, timeout or server unavailable |
+| 8 | `--wait` ended without success (asset failed, or the wait timed out) |
+
+The remaining commands (sessions, subtitles, brand, keys, webhooks, `verify-file`, `proof`) arrive
+with M8-1b. CI runs `deploy/compose/cli-e2e.sh` against the development stack.
+
 ## Verifying files offline
 
 `cipherframe verify` checks downloaded HLS files against a signed manifest with public keys only

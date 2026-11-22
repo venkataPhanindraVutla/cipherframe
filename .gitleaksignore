@@ -28,3 +28,7 @@ fcb428fde29ef91f72b1f1e6a25e5df7822ce477:internal/config/kms_vault_test.go:gener
 # internal/webhook test: the published Standard Webhooks test vector (secret, message ID, timestamp and
 # signature from the specification), used to prove interoperable signing; public data, no secret.
 9529ac03eeaff4957384d26f6395693b9504ddea:internal/webhook/webhook_test.go:generic-api-key:23
+
+# cmd/cipherframe CLI test: a made-up upload token in the cfu_ format, used to prove the CLI never prints
+# it; it opens nothing.
+b8b3ef87570e302de73457e4edd388f6efb016a5:cmd/cipherframe/cli_test.go:generic-api-key:29

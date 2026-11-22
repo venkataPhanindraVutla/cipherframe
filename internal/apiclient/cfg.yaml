@@ -1,0 +1,11 @@
+# oapi-codegen configuration for the command line tool's API client. See gen.go for the command.
+package: apiclient
+output: client.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  # Operations tagged "api" in spec/openapi.yaml, the same set the api listener serves.
+  include-tags: [api]
+  # The spec has a schema called Client, so the generated HTTP client gets another name.
+  client-type-name: HTTPClient
