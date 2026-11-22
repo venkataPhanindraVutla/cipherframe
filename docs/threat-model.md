@@ -1,7 +1,7 @@
 # Threat model
 
-> Status: reviewed in M9-5 against everything built through M8, plus the planned metrics endpoint
-> (ADR 0053). The first table is the original list; the sections after it cover what was added later.
+> Status: reviewed in M9-5 against everything built through M8, plus the metrics endpoint and
+> tracing from M9-1a (ADR 0053, ADR 0055). The first table is the original list; the sections after it cover what was added later.
 > Known follow-ups are in [roadmap.md](roadmap.md#follow-ups). For backups and key loss, see
 > [disaster-recovery.md](disaster-recovery.md).
 
@@ -218,21 +218,25 @@ re-wrapped by KEK rotation (follow-ups).
   records them. A host page that embeds the player owns its own XSS surface. A compromised
   workstation exposes the key.
 
-### Metrics endpoint and OTLP export (M9-1, ADR 0053; planned)
+### Metrics endpoint and OTLP export (M9-1a, ADR 0053, ADR 0055)
 
 - **Assets:** operating figures, trace and metric attributes, the scrape bearer token, OTLP
   credentials.
 - **Threats:** an unauthorized scrape of `/metrics` on the service's own port (I); a secret, session ID
   or object key leaking into a span, label or log line (I); high-cardinality labels exhausting the
   metrics store (D); tenant IDs reaching a third-party store (I).
-- **Mitigations as decided (not yet built):** the endpoint is not served without a token; the token is
-  read from the environment or a file, compared in constant time and never logged; no asset,
-  session, client, viewer or key identifier is ever a label; the tenant label is opt-in; an
-  automated test scans the spans and log lines of an end-to-end run for secret material.
+- **Mitigations:** the endpoint is not mounted without `CIPHERFRAME_METRICS_TOKEN`; the token is
+  read from the environment or a file, kept only as a digest, compared in constant time and never
+  logged (`internal/telemetry/handler.go`); HTTP spans carry only the method, route template and
+  status, never the URL, query, client address or headers (`internal/telemetry/http.go`, with a
+  test on edge playback requests); no asset,
+  session, client, viewer or key identifier is ever a label; the tenant label is opt-in. The end-to-end scan of
+  spans and log lines for secret material comes with M9-1b.
 - **Residual:** `/metrics` shares the public listener, so do not route it at the ingress. A leaked
   scrape token shows figures, not content or keys. With the tenant label on, tenant IDs reach the
   metrics store. OTLP carries whatever the collector may see: run it inside your network.
-  **This section records the decision; re-check it against the code when M9-1 lands.**
+  An incoming `traceparent` header is honoured, so a client can choose the trace ID of its own
+  requests; it cannot read or change anyone else's.
 
 ## Parser hardening: fuzz tests (M9-5)
 
