@@ -67,7 +67,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
 | `POST /v1/assets` | yes | no | `assets:write` |
 | `GET /v1/assets`, `GET /v1/assets/{asset_id}`, `GET /v1/assets/{asset_id}/deletion-record` | yes | no | `assets:read` |
-| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
+| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `POST /v1/assets/{asset_id}/rekey`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
 | `GET /v1/assets/{asset_id}/subtitles`, `GET /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/subtitles`, `POST /v1/assets/{asset_id}/transcripts`, `DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:write` |
 | `GET /v1/brand/logo`, `PUT /v1/brand/logo`, `PATCH /v1/brand/logo`, `DELETE /v1/brand/logo` | yes | no | `admin` |
@@ -295,6 +295,13 @@ Verify it with `cipherframe verify --deletion-record` ([integrity.md](integrity.
 call returns `202` again, and queues a new purge only if the earlier job is no longer in the queue
 (this is how a deletion that ran out of retries is restarted). An in-flight processing or masking job
 stops at its next check and removes its own output; it cannot bring the asset back.
+
+**Re-key (M10-4, ADR 0068).** `POST /v1/assets/{asset_id}/rekey` (`assets:write`) queues an audited
+re-encryption of a `ready` asset's segments under a new content key and answers `202` with the job
+ID. The asset keeps playing under the old key until one transaction switches it; sessions that
+started before the switch are refused the key (`401`) and must start a new session. Refused with
+`409 asset_not_ready`, or `409 conflict` while the asset is being deleted, its masked variant is
+still being made, or an earlier re-key is still queued or running. See [usage.md](usage.md#re-keying-an-asset).
 
 **Variants (ADR 0036).** Every asset has an `original` variant. An asset created with `mask_faces:
 true` also gets a `masked` variant, built after the original is `ready`. The asset shows

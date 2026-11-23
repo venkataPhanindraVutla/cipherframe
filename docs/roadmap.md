@@ -116,7 +116,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 - [x] M10-1 CDN signed URLs ([ADR 0062](adr/0062-cdn-signed-urls.md), [ADR 0065](adr/0065-cdn-implementation.md), [cdn.md](cdn.md), `internal/cdn`)
 - [ ] M10-2 Hardware-accelerated encoding with software fallback
 - [ ] M10-3 HEVC and AV1 renditions, off by default
-- [ ] M10-4 Audited content-key re-key operation
+- [x] M10-4 Audited content-key re-key operation ([ADR 0068](adr/0068-content-key-rekey.md), `internal/rekey`)
 
 ## Open decision gates
 

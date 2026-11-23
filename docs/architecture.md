@@ -698,6 +698,18 @@ Each asset has one active content key (I7), wrapped by a key-encryption key held
 provider (AWS KMS, Vault Transit, GCP KMS; a development-only local provider is **pending P5**). See
 [encryption.md](encryption.md).
 
+**Re-key (M10-4, [ADR 0068](adr/0068-content-key-rekey.md)).** `POST /v1/assets/{asset_id}/rekey`
+queues `asset.rekey` (package `internal/rekey`, worker role). The job writes the media segments and
+media playlists of every variant, encrypted under a new key, into a generation directory `k<n>/` of
+the variant's HLS prefix while the asset keeps playing under the old key, then in **one transaction**
+under the asset lock signs the manifest again, replaces the content key rows (the old ones are
+deleted: still one key per variant, I7), swaps the registry rows, sets `assets.key_generation` and
+queues the timestamp anchor and the CDN purge when those are configured; the old objects are
+deleted after the commit. A crash before the commit leaves the asset as it was. Playback tokens
+carry the generation the session started on: the edge reads that generation's playlists and
+segments and serves the key only while it is the asset's current generation, so a session that
+began before the switch must start again.
+
 ## Lifecycle
 
 `created → uploading → committed → processing → ready | failed`, and from any of these `→ deleting → deleted`
