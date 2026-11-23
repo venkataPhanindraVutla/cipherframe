@@ -72,3 +72,28 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_cdn" {
+  description = "Create Cloud CDN in front of the delivery bucket (CDN delivery, ADR 0062): a global external HTTPS load balancer with a backend bucket and a signed URL key. Off by default. The source bucket is never behind it."
+  type        = bool
+  default     = false
+}
+
+variable "cdn_domain" {
+  description = "Domain name of the CDN (a Google-managed certificate is issued for it, and you point its DNS A record at the cdn_ip_address output). Required when enable_cdn is true."
+  type        = string
+  default     = null
+}
+
+variable "cdn_signing_key_name" {
+  description = "Name of the Cloud CDN signing key (CIPHERFRAME_CDN_KEY_ID)."
+  type        = string
+  default     = "cipherframe-url-signing"
+}
+
+variable "cdn_signing_key_value" {
+  description = "The signing key: 16 random bytes in URL-safe base64, for example from `head -c 16 /dev/urandom | base64 | tr +/ -_`. Required when enable_cdn is true. Sensitive, but it is kept in Terraform state: protect the state, or create the key outside Terraform. Cipherframe reads the same value from CIPHERFRAME_CDN_SIGNING_KEY_FILE."
+  type        = string
+  default     = null
+  sensitive   = true
+}

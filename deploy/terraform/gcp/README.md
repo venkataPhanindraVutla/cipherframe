@@ -72,6 +72,32 @@ instead. The secret is then in state, so use an encrypted remote backend, and th
 output is marked sensitive: it is hidden in plan and apply output and shown only by
 `terraform output -json hmac_secrets`.
 
+## Optional CDN (`enable_cdn`)
+
+`enable_cdn = true` (default `false`) adds Cloud CDN in front of the **delivery bucket only** (ADR 0062,
+0065; setup in [docs/cdn.md](../../../docs/cdn.md)): a backend bucket with signed URLs, a global
+external HTTPS load balancer with a Google-managed certificate for `cdn_domain`, and the Cloud CDN
+service agent as reader of the bucket, which stays private. It needs the Compute Engine API enabled.
+Generate the signing key with `head -c 16 /dev/urandom | base64 | tr +/ -_` and pass it as the
+sensitive variable `cdn_signing_key_value` (for example `TF_VAR_cdn_signing_key_value`); it is then in
+Terraform state, so use an encrypted remote backend, or create the key outside Terraform with
+`gcloud compute backend-buckets add-signed-url-key` and leave the variable out. Write the same key to
+the file that `CIPHERFRAME_CDN_SIGNING_KEY_FILE` names on the edge role.
+The worker's service account gets a custom role with `compute.urlMaps.invalidateCache` for the purge
+after a deletion. A URL map has no IAM policy of its own, so the binding is on the project.
+
+| Output | Variable |
+| --- | --- |
+| `cdn_base_url` | `CIPHERFRAME_CDN_BASE_URL` |
+| `cdn_key_name` | `CIPHERFRAME_CDN_KEY_ID` |
+| `cdn_url_map` | `CIPHERFRAME_CDN_CLOUDCDN_URL_MAP` |
+
+Also set `CIPHERFRAME_CDN_PROVIDER=cloudcdn` and `CIPHERFRAME_CDN_CLOUDCDN_PROJECT` to `project_id`, and
+point the DNS A record of `cdn_domain` at `cdn_ip_address` (the certificate is issued once it does). With
+`cors_allowed_origins` set, the backend bucket answers `Access-Control-Allow-Origin: *`, because a
+backend bucket cannot vary the header per origin; the bytes are ciphertext and the signed URL is the
+credential.
+
 ## Use
 
 ```sh

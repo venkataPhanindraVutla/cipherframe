@@ -20,6 +20,11 @@ config:
   CIPHERFRAME_KMS_AWS_ACCESS_KEY_ID: ""
   CIPHERFRAME_KMS_AWS_SECRET_ACCESS_KEY: ""
   CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS: "90"
+  # CDN delivery (docs/cdn.md). Every role gets these; only the edge gets the signing key, below.
+  CIPHERFRAME_CDN_PROVIDER: cloudfront
+  CIPHERFRAME_CDN_BASE_URL: https://d111111abcdef8.cloudfront.net
+  CIPHERFRAME_CDN_KEY_ID: K2JCJMDEHXQW5F
+  CIPHERFRAME_CDN_CLOUDFRONT_DISTRIBUTION_ID: E2EXAMPLE1ABCD
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.monitoring.svc:4318
 
 secrets:
@@ -43,6 +48,9 @@ api:
           app.kubernetes.io/component: api
 
 edge:
+  secrets:
+    # Becomes CIPHERFRAME_CDN_SIGNING_KEY_FILE: the CDN's private signing key, edge only.
+    CIPHERFRAME_CDN_SIGNING_KEY: { name: cipherframe-cdn-key, key: key }
   serviceAccount:
     annotations:
       eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/example-cipherframe-edge

@@ -66,3 +66,21 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_cdn" {
+  description = "Create a CloudFront distribution in front of the delivery bucket (CDN delivery, ADR 0062). Off by default. The source bucket is never behind it."
+  type        = bool
+  default     = false
+}
+
+variable "cdn_public_key_pem" {
+  description = "PEM public key whose private half Cipherframe signs CDN URLs with (CIPHERFRAME_CDN_SIGNING_KEY_FILE). Required when enable_cdn is true; a public key is not a secret, the private key never goes into Terraform. It must be an RSA 2048 key."
+  type        = string
+  default     = null
+}
+
+variable "cdn_price_class" {
+  description = "CloudFront price class of the distribution."
+  type        = string
+  default     = "PriceClass_100"
+}

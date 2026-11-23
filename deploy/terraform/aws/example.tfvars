@@ -14,3 +14,5 @@ assume_role_policies = {
 # bucket_kms_key_arn              = null # null uses SSE-S3
 # abort_incomplete_multipart_days = 0
 # cors_allowed_origins            = []
+# enable_cdn                      = false # CloudFront in front of the delivery bucket (docs/cdn.md)
+# cdn_public_key_pem              = null  # the public half of the CDN URL signing key
