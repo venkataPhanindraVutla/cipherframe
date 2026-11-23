@@ -23,6 +23,12 @@ type Repos struct {
 // New returns repositories over db, which is a *pgxpool.Pool, *pgx.Conn or pgx.Tx.
 func New(db dbgen.DBTX) *Repos { return &Repos{q: dbgen.New(db), conn: db} }
 
+// PgxTx returns the transaction r runs in, or false when r is over a pool or a connection.
+func (r *Repos) PgxTx() (pgx.Tx, bool) {
+	tx, ok := r.conn.(pgx.Tx)
+	return tx, ok
+}
+
 // Beginner starts transactions. *pgxpool.Pool implements it.
 type Beginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)

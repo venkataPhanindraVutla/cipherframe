@@ -18,6 +18,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/branding"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/cdn"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -282,7 +283,14 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		services = append(services, s, sweepService{repos: repos, log: log})
 	}
 	if Has(opts.Roles, RoleWorker) {
-		w, err := newWorker(pool, contentKeys, log, &processing{Buckets: buckets, Config: cfg, Signer: signer})
+		var cdnPurger cdn.Purger
+		if cfg.CDN.Enabled() {
+			if cdnPurger, err = cdn.NewPurger(ctx, cfg.CDN); err != nil {
+				cleanup()
+				return fmt.Errorf("cdn: %w", err)
+			}
+		}
+		w, err := newWorker(pool, contentKeys, log, &processing{Buckets: buckets, Config: cfg, Signer: signer, CDN: cdnPurger})
 		if err != nil {
 			cleanup()
 			return err
@@ -386,7 +394,7 @@ func newPlaybackService(pool *pgxpool.Pool, cfg *config.Config, kmsReg *kms.Regi
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
-	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access, Anomalies: anomalies})
+	svc, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access, Anomalies: anomalies, CDN: cfg.CDN.Enabled()})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
@@ -416,8 +424,14 @@ func newEdgePlayback(pool *pgxpool.Pool, repos *db.Repos, buckets *storage.Bucke
 	if err != nil {
 		return nil, err
 	}
+	var cdnSigner cdn.Signer
+	if cfg.CDN.Enabled() {
+		if cdnSigner, err = cdn.NewSigner(cfg.CDN); err != nil {
+			return nil, fmt.Errorf("cdn: %w", err)
+		}
+	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, KeyStore: repos, ContentKeys: contentKeys, Viewer: viewer, Access: access, Anomalies: anomalies,
+		Keyring: keyring, Store: repos, Delivery: buckets.Delivery, CDN: cdnSigner, KeyStore: repos, ContentKeys: contentKeys, Viewer: viewer, Access: access, Anomalies: anomalies,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
@@ -435,7 +449,7 @@ func newEdgeViewerAuth(pool *pgxpool.Pool, repos *db.Repos, keyring *token.Keyri
 		log.Warn("browser playback sessions are disabled: " + config.EnvEdgePublicURL + " is not set")
 		return nil, nil
 	}
-	sessions, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access, Anomalies: anomalies})
+	sessions, err := playback.NewService(playback.Deps{Pool: pool, Keyring: keyring, EdgeURL: cfg.Uploads.EdgePublicURL, KMS: kmsReg, Access: access, Anomalies: anomalies, CDN: cfg.CDN.Enabled()})
 	if err != nil {
 		return nil, fmt.Errorf("playback: %w", err)
 	}
@@ -496,6 +510,8 @@ type processing struct {
 	Config  *config.Config
 	// Signer signs integrity manifests with the current key (M5-1).
 	Signer signing.Signer
+	// CDN purges the delivery prefix of a deleted asset from the CDN (ADR 0062). Nil without a CDN.
+	CDN cdn.Purger
 }
 
 // newWorker builds the job registry and, when it has kinds, a working queue. Milestones register
@@ -517,9 +533,16 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 			return nil, fmt.Errorf("worker: %w", err)
 		}
 		// Verified deletion needs both buckets, which only a process with processing has.
-		if err := purge.Register(reg, purge.Deps{
+		pd := purge.Deps{
 			Pool: pool, Source: proc.Buckets.Source, Delivery: proc.Buckets.Delivery, Keys: contentKeys, Signer: proc.Signer, Log: log,
-		}); err != nil {
+		}
+		if proc.CDN != nil {
+			pd.CDNQueue = inserter
+			if err := purge.RegisterCDN(reg, purge.CDNDeps{Pool: pool, Purger: proc.CDN, Log: log}); err != nil {
+				return nil, fmt.Errorf("worker: %w", err)
+			}
+		}
+		if err := purge.Register(reg, pd); err != nil {
 			return nil, fmt.Errorf("worker: %w", err)
 		}
 	}
