@@ -1100,6 +1100,14 @@ type AssetList struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// AssetRekey defines model for AssetRekey.
+type AssetRekey struct {
+	AssetId string `json:"asset_id"`
+
+	// JobId The ID of the queued `asset.rekey` job.
+	JobId int64 `json:"job_id"`
+}
+
 // AssetState The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`,
 // then `deleting` while the purge runs and `deleted` for the tombstone that stays afterwards.
 // Lists leave deleted assets out.
@@ -2972,6 +2980,9 @@ type ServerInterface interface {
 	// GetAssetProof Get an inclusion proof for one artifact
 	// (GET /v1/assets/{asset_id}/proof)
 	GetAssetProof(w http.ResponseWriter, r *http.Request, assetId AssetId, params GetAssetProofParams)
+	// RekeyAsset Re-key an asset
+	// (POST /v1/assets/{asset_id}/rekey)
+	RekeyAsset(w http.ResponseWriter, r *http.Request, assetId AssetId)
 	// ListAssetSubtitles List an asset's subtitle tracks
 	// (GET /v1/assets/{asset_id}/subtitles)
 	ListAssetSubtitles(w http.ResponseWriter, r *http.Request, assetId AssetId)
@@ -3595,6 +3606,32 @@ func (siw *ServerInterfaceWrapper) GetAssetProof(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAssetProof(w, r, assetId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RekeyAsset operation middleware
+func (siw *ServerInterfaceWrapper) RekeyAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId AssetId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", r.PathValue("asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RekeyAsset(w, r, assetId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5153,6 +5190,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.GetAsset)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/assets/{asset_id}", wrapper.UpdateAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/commit", wrapper.CommitAsset)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/rekey", wrapper.RekeyAsset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/abort", wrapper.AbortAsset)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/assets/{asset_id}/subtitles", wrapper.ListAssetSubtitles)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/assets/{asset_id}/subtitles", wrapper.CreateAssetSubtitle)
@@ -6988,6 +7026,160 @@ type GetAssetProofdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetAssetProofdefaultApplicationProblemPlusJSONResponse) VisitGetAssetProofResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RekeyAssetRequestObject struct {
+	AssetId AssetId `json:"asset_id"`
+}
+
+type RekeyAssetResponseObject interface {
+	VisitRekeyAssetResponse(w http.ResponseWriter) error
+}
+
+type RekeyAsset202ResponseHeaders struct {
+	XRequestId string
+}
+
+type RekeyAsset202JSONResponse struct {
+	Body    AssetRekey
+	Headers RekeyAsset202ResponseHeaders
+}
+
+func (response RekeyAsset202JSONResponse) VisitRekeyAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RekeyAsset401ApplicationProblemPlusJSONResponse struct {
+	UnauthenticatedApplicationProblemPlusJSONResponse
+}
+
+func (response RekeyAsset401ApplicationProblemPlusJSONResponse) VisitRekeyAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RekeyAsset403ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RekeyAsset403ApplicationProblemPlusJSONResponse) VisitRekeyAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RekeyAsset404ResponseHeaders struct {
+	XRequestId string
+}
+
+type RekeyAsset404ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RekeyAsset404ResponseHeaders
+}
+
+func (response RekeyAsset404ApplicationProblemPlusJSONResponse) VisitRekeyAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RekeyAsset409ResponseHeaders struct {
+	XRequestId string
+}
+
+type RekeyAsset409ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RekeyAsset409ResponseHeaders
+}
+
+func (response RekeyAsset409ApplicationProblemPlusJSONResponse) VisitRekeyAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RekeyAsset503ResponseHeaders struct {
+	XRequestId string
+}
+
+type RekeyAsset503ApplicationProblemPlusJSONResponse struct {
+	Body    Problem
+	Headers RekeyAsset503ResponseHeaders
+}
+
+func (response RekeyAsset503ApplicationProblemPlusJSONResponse) VisitRekeyAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("X-Request-Id", fmt.Sprint(response.Headers.XRequestId))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RekeyAssetdefaultResponseHeaders struct {
+	XRequestId string
+}
+
+type RekeyAssetdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	Headers    RekeyAssetdefaultResponseHeaders
+	StatusCode int
+}
+
+func (response RekeyAssetdefaultApplicationProblemPlusJSONResponse) VisitRekeyAssetResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -13686,6 +13878,9 @@ type StrictServerInterface interface {
 	// GetAssetProof Get an inclusion proof for one artifact
 	// (GET /v1/assets/{asset_id}/proof)
 	GetAssetProof(ctx context.Context, request GetAssetProofRequestObject) (GetAssetProofResponseObject, error)
+	// RekeyAsset Re-key an asset
+	// (POST /v1/assets/{asset_id}/rekey)
+	RekeyAsset(ctx context.Context, request RekeyAssetRequestObject) (RekeyAssetResponseObject, error)
 	// ListAssetSubtitles List an asset's subtitle tracks
 	// (GET /v1/assets/{asset_id}/subtitles)
 	ListAssetSubtitles(ctx context.Context, request ListAssetSubtitlesRequestObject) (ListAssetSubtitlesResponseObject, error)
@@ -14280,6 +14475,32 @@ func (sh *strictHandler) GetAssetProof(w http.ResponseWriter, r *http.Request, a
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetAssetProofResponseObject); ok {
 		if err := validResponse.VisitGetAssetProofResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RekeyAsset operation middleware
+func (sh *strictHandler) RekeyAsset(w http.ResponseWriter, r *http.Request, assetId AssetId) {
+	var request RekeyAssetRequestObject
+
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RekeyAsset(ctx, request.(RekeyAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RekeyAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RekeyAssetResponseObject); ok {
+		if err := validResponse.VisitRekeyAssetResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

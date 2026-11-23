@@ -159,6 +159,8 @@ type Asset struct {
 	MaskFaces     bool
 	MaskingState  string
 	FacesDetected *int
+	// KeyGeneration counts content-key replacements (ADR 0068); 0 until the first re-key.
+	KeyGeneration int
 	// ExpiresAt is when the retention job deletes the asset (M6-4); nil means never.
 	ExpiresAt *time.Time
 	// DeletionRequestedAt and DeletionReason are set from the deleting state on; DeletedAt only on

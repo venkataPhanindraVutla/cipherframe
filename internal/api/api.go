@@ -19,6 +19,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/rekey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
@@ -57,6 +58,8 @@ type Deps struct {
 	Repos *db.Repos
 	// Purge starts asset deletions (M6-2). Without it DELETE /v1/assets/{asset_id} answers 503.
 	Purge *purge.Requester
+	// Rekey starts content-key re-keys (M10-4). Without it POST /v1/assets/{asset_id}/rekey answers 503.
+	Rekey *rekey.Requester
 	// Webhooks serves the webhook endpoints and deliveries (M7-5). Without it they answer 503.
 	Webhooks *webhook.Service
 	// Subtitles serves the subtitle and transcript endpoints (M7-1). Without it they answer 503.
@@ -83,7 +86,7 @@ func New(d Deps) *API {
 		d.Log = slog.Default()
 	}
 	router := httpx.NewRouter()
-	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, webhooks: d.Webhooks, subtitles: d.Subtitles, quota: d.Quota, branding: d.Branding}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(&server{ready: d.Ready, mgr: d.Manager, assets: d.Assets, playback: d.Playback, signing: d.Signing, keyset: d.KeySet, repos: d.Repos, purge: d.Purge, rekey: d.Rekey, webhooks: d.Webhooks, subtitles: d.Subtitles, quota: d.Quota, branding: d.Branding}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httpx.RequestErrorHandler,
 		ResponseErrorHandlerFunc: httpx.ResponseErrorHandler,
 	})

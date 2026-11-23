@@ -58,3 +58,7 @@ WHERE a.id = k.asset_id
   AND a.tenant_id = sqlc.arg(tenant_id)::uuid
   AND k.asset_id = sqlc.arg(asset_id)::uuid
 RETURNING k.id, k.variant;
+
+-- name: DeleteContentKeyByID :execrows
+-- Destroys one content key row by id (re-key, ADR 0068): the row is deleted, not flagged.
+DELETE FROM content_keys WHERE id = sqlc.arg(id)::uuid;

@@ -111,9 +111,12 @@ type Claims struct {
 	Scopes    Scope
 	// Variant is the variant the session is bound to ("original" or "masked", ADR 0036). Empty is
 	// read as original, so a token signed before variants existed stays valid.
-	Variant  string
-	IssuedAt time.Time
-	Expiry   time.Time
+	Variant string
+	// Generation is the content-key generation the session is bound to (ADR 0068). Zero for an
+	// asset that was never re-keyed, and for a token signed before re-keying existed.
+	Generation int
+	IssuedAt   time.Time
+	Expiry     time.Time
 }
 
 // payload is the wire form of Claims.
@@ -123,6 +126,7 @@ type payload struct {
 	Tenant  string `json:"n"`
 	Scopes  uint8  `json:"m"`
 	Variant string `json:"v,omitempty"`
+	Gen     int    `json:"g,omitempty"`
 	Issued  int64  `json:"i"`
 	Expires int64  `json:"e"`
 }
@@ -193,11 +197,13 @@ func (k *Keyring) Sign(c Claims) (string, error) {
 		return "", errors.New("token: invalid tenant ID")
 	case !c.Scopes.valid():
 		return "", errors.New("token: invalid scope")
+	case c.Generation < 0:
+		return "", errors.New("token: invalid key generation")
 	case c.IssuedAt.Unix() < 1 || c.Expiry.Unix() <= c.IssuedAt.Unix():
 		return "", errors.New("token: expiry must be after issue time")
 	}
 	body, err := json.Marshal(payload{
-		Session: c.SessionID, Asset: c.AssetID, Tenant: c.TenantID, Scopes: uint8(c.Scopes), Variant: c.Variant,
+		Session: c.SessionID, Asset: c.AssetID, Tenant: c.TenantID, Scopes: uint8(c.Scopes), Variant: c.Variant, Gen: c.Generation,
 		Issued: c.IssuedAt.Unix(), Expires: c.Expiry.Unix(),
 	})
 	if err != nil {
@@ -278,7 +284,7 @@ func (k *Keyring) verify(tok string, now time.Time, need Scope, assetID *string)
 	}
 	sc := Scope(p.Scopes)
 	switch {
-	case p.Session == "" || p.Asset == "" || p.Tenant == "" || !sc.valid() || p.Expires <= p.Issued:
+	case p.Session == "" || p.Asset == "" || p.Tenant == "" || !sc.valid() || p.Expires <= p.Issued || p.Gen < 0:
 		return Claims{}, false
 	case now.Unix() >= p.Expires:
 		return Claims{}, false
@@ -288,7 +294,7 @@ func (k *Keyring) verify(tok string, now time.Time, need Scope, assetID *string)
 		return Claims{}, false
 	}
 	return Claims{
-		SessionID: p.Session, AssetID: p.Asset, TenantID: p.Tenant, Scopes: sc, Variant: p.Variant,
+		SessionID: p.Session, AssetID: p.Asset, TenantID: p.Tenant, Scopes: sc, Variant: p.Variant, Generation: p.Gen,
 		IssuedAt: time.Unix(p.Issued, 0).UTC(), Expiry: time.Unix(p.Expires, 0).UTC(),
 	}, true
 }

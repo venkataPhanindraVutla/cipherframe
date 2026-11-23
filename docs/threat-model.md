@@ -147,6 +147,32 @@ edge URLs. What this changes, stated plainly:
   service agent (Cloud CDN). The source bucket is never behind it (I4). Thumbnails are never served
   through the CDN.
 
+### Content-key re-key (M10-4, ADR 0068)
+
+- **What it is for:** a content key that may have leaked. After a re-key, the segments the service
+  stores and serves are encrypted under a new key, and the old key is destroyed; the leaked key no
+  longer decrypts anything the service holds or serves from then on.
+- **What it does not do, plainly:**
+  - It does **not** help against plaintext a viewer already saved (screen capture, a decrypted
+    download), and it does **not** take back a key a viewer already holds: that key still decrypts
+    every copy of the old ciphertext, wherever the copy is (I8).
+  - Ciphertext copied before the switch stays readable with the old key. That includes bucket
+    versions and replicas, CDN caches until the purge completes or the entry expires, and database
+    backups, which still hold the old wrapped content key until they age out. Re-keying and then
+    restoring such a backup puts the old key back.
+  - It does not re-encrypt the source upload (the source bucket holds the original, not under this
+    key) and does not touch unencrypted objects: init segments, thumbnails, subtitles.
+- **Threats:** a re-key that corrupts or loses media (T, D); a re-key started by someone who should
+  not (E); playback under a key that no longer matches (D).
+- **Mitigations:** the operation is explicit, scoped (`assets:write`), audited
+  (`asset.rekey_requested`, `_completed`, `_failed`, with no key or object key) and limited to one at
+  a time per asset; every stored segment is checked against the signed manifest before it is
+  decrypted; the new objects are written beside the old and one transaction switches, so a crash
+  leaves the asset playable under the old key; plaintext stays in memory, one segment at a time
+  (ADR 0027); the manifest is signed and (when configured) timestamped again.
+- **Residual:** viewers mid-playback at the switch lose their session and must start again; both
+  generations occupy storage until the job ends.
+
 ### Deletion and retention (M6, ADR 0040, 0042)
 
 - **Assets:** the deletion record, the purge job, the time-to-live setting, the access-trail window.

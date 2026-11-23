@@ -533,6 +533,56 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/rekey:
+    post:
+      operationId: rekeyAsset
+      summary: Re-key an asset
+      description: |
+        Queues the audited re-key of a `ready` asset (ADR 0068): every encrypted segment of every
+        variant is decrypted with the asset's content key and encrypted again under a freshly
+        generated one, the integrity manifest is signed again (and timestamped again when anchoring
+        is on), and the asset is switched to the new key and the old key destroyed in one
+        transaction. The asset keeps playing under its old key until that switch. Sessions that
+        started before the switch can no longer fetch a key (`401`) and must be started again;
+        sessions started afterwards use the new key. When a CDN is configured the asset's CDN
+        purge is queued with the switch.
+
+        This limits what a **leaked content key** can still decrypt: segments stored from now on are
+        unreadable with it. It does not help against plaintext, or keys, that a viewer already saved.
+
+        The response is `202` with the ID of the job; the audit log (`GET /v1/audit-events`) gets
+        `asset.rekey_requested` now, then `asset.rekey_completed` or `asset.rekey_failed`. An asset
+        that is not `ready` is `409 asset_not_ready`; one being deleted, or whose masked variant is
+        still being made, is `409 conflict`; so is an asset whose earlier re-key has not finished
+        (at most one per asset). A deleted asset, and another tenant's, are `404 not_found`. Requires
+        the `assets:write` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "202":
+          description: The re-key is queued.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetRekey"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/assets/{asset_id}/abort:
     post:
       operationId: abortAsset
@@ -4523,6 +4573,17 @@ components:
           $ref: "#/components/schemas/Asset"
         upload:
           $ref: "#/components/schemas/UploadInstructions"
+    AssetRekey:
+      type: object
+      additionalProperties: false
+      required: [asset_id, job_id]
+      properties:
+        asset_id:
+          type: string
+        job_id:
+          type: integer
+          format: int64
+          description: The ID of the queued `asset.rekey` job.
     AssetList:
       type: object
       additionalProperties: false

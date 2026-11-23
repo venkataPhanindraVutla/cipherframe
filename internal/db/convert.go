@@ -161,6 +161,7 @@ func assetFromRow(r dbgen.Asset) Asset {
 		Renditions:          r.Renditions,
 		Progress:            int(r.Progress),
 		MaskFaces:           r.MaskFaces,
+		KeyGeneration:       int(r.KeyGeneration),
 		MaskingState:        strVal(r.MaskingState),
 		ExpiresAt:           utcPtr(r.ExpiresAt),
 		DeletionRequestedAt: utcPtr(r.DeletionRequestedAt),

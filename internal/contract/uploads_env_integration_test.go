@@ -464,6 +464,9 @@ func (e *upEnv) assertEveryUploadOperationExercised() {
 			if strings.Contains(path, "/subtitles") || strings.HasSuffix(path, "/transcripts") {
 				continue // exercised by TestSubtitleOperationsMatchSpec
 			}
+			if strings.HasSuffix(path, "/rekey") {
+				continue // exercised by TestIntegrityOperationsMatchSpec
+			}
 			if strings.HasSuffix(path, "/access-log") {
 				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
 			}

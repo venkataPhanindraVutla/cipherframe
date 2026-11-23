@@ -165,6 +165,40 @@ var assetCommands = []command{
 		},
 	},
 	{
+		name: "rekey", synopsis: "rekey ASSET_ID [flags]",
+		help: "Queue the audited re-key of a ready asset (ADR 0068): every segment is encrypted again under a\n" +
+			"new content key, the manifest is signed again and the old key is destroyed. The asset keeps\n" +
+			"playing under the old key until the switch; viewers that started before it start a new session.\n" +
+			"It limits what a leaked content key can still decrypt; it does not help against plaintext or\n" +
+			"keys a viewer already saved. Prints the job ID; the audit log shows asset.rekey_completed or\n" +
+			"asset.rekey_failed (audit export).",
+		setup: func(*flag.FlagSet) func(*cli, []string) error {
+			return func(c *cli, pos []string) error {
+				id, err := onePositional(pos, "asset ID")
+				if err != nil {
+					return err
+				}
+				ctx, cancel := c.ctx(context.Background(), 1)
+				defer cancel()
+				resp, err := c.api.RekeyAsset(ctx, id) //nolint:bodyclose // finish closes it
+				var out apiclient.AssetRekey
+				raw, err := c.finish(resp, err, &out)
+				if err != nil {
+					return err
+				}
+				switch {
+				case c.json:
+					c.printJSON(raw)
+				case c.idOnly:
+					c.printf("%s\n", out.AssetId)
+				default:
+					c.printf("%s  re-key queued (job %d)\n", out.AssetId, out.JobId)
+				}
+				return nil
+			}
+		},
+	},
+	{
 		name: "deletion-record", synopsis: "deletion-record ASSET_ID [flags]",
 		help: "Print the signed deletion record of a deleted asset (a DSSE envelope, JSON). Save it and check\n" +
 			"it with cipherframe verify --deletion-record. An asset that is not deleted yet is not_found.",

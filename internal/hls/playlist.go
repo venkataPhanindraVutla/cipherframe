@@ -1,6 +1,7 @@
 package hls
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -87,6 +88,55 @@ func RenderMedia(p MediaPlaylist) (string, error) {
 	}
 	b.WriteString("#EXT-X-ENDLIST\n")
 	return b.String(), nil
+}
+
+// ParseMedia reads a stored media playlist, the form RenderMedia writes: it takes the init segment,
+// and for every segment its IV, duration and URI. Anything else (another key method, a missing IV,
+// a tag out of place) is an error, so a playlist that was not made by Cipherframe is refused rather
+// than half-read. Durations are kept to the millisecond RenderMedia writes.
+func ParseMedia(src string) (MediaPlaylist, error) {
+	var (
+		p     MediaPlaylist
+		iv    IV
+		hasIV bool
+		dur   time.Duration
+	)
+	for line := range strings.SplitSeq(strings.TrimSuffix(src, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-MAP:URI=\""):
+			uri, ok := strings.CutSuffix(strings.TrimPrefix(line, "#EXT-X-MAP:URI=\""), "\"")
+			if !ok || p.InitURI != "" {
+				return MediaPlaylist{}, errors.New("hls: malformed EXT-X-MAP")
+			}
+			p.InitURI = uri
+		case strings.HasPrefix(line, "#EXT-X-KEY:METHOD=AES-128,"):
+			_, hexIV, ok := strings.Cut(line, ",IV=0x")
+			raw, err := hex.DecodeString(hexIV)
+			if !ok || err != nil || len(raw) != IVBytes {
+				return MediaPlaylist{}, errors.New("hls: malformed EXT-X-KEY")
+			}
+			copy(iv[:], raw)
+			hasIV = true
+		case strings.HasPrefix(line, "#EXTINF:"):
+			secs, ok := strings.CutSuffix(strings.TrimPrefix(line, "#EXTINF:"), ",")
+			f, err := strconv.ParseFloat(secs, 64)
+			if !ok || err != nil || f <= 0 || f > 1e6 {
+				return MediaPlaylist{}, errors.New("hls: malformed EXTINF")
+			}
+			dur = time.Duration(math.Round(f*1000)) * time.Millisecond
+		case strings.HasPrefix(line, "#"): // headers, ENDLIST: nothing to keep
+		default:
+			if !hasIV || dur == 0 {
+				return MediaPlaylist{}, errors.New("hls: a segment without its key or duration")
+			}
+			p.Segments = append(p.Segments, Segment{URI: line, Duration: dur, IV: iv})
+			hasIV, dur = false, 0
+		}
+	}
+	if p.InitURI == "" || len(p.Segments) == 0 {
+		return MediaPlaylist{}, errors.New("hls: a media playlist needs an init segment and at least one segment")
+	}
+	return p, nil
 }
 
 // RenderMaster returns the canonical master playlist. Variants are listed from the lowest bandwidth
