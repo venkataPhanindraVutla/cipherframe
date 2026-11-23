@@ -20,12 +20,53 @@ const (
 	EncoderVideoToolbox Encoder = "videotoolbox"
 )
 
-// Codec is the video codec of a rendition. Only H.264 is built; the parameter exists so that HEVC
-// and AV1 (ADR 0064) add cases to videoArgs instead of rewriting it.
+// Codec is the video codec of a rendition (ADR 0064). H.264 is always made; HEVC and AV1 are the
+// optional extras a tenant turns on.
 type Codec string
 
-// CodecH264 is the codec of every rendition today.
-const CodecH264 Codec = "h264"
+// The video codecs. The names of CodecHEVC and CodecAV1 are the values of the tenant setting
+// extra_codecs.
+const (
+	CodecH264 Codec = "h264"
+	CodecHEVC Codec = "hevc"
+	CodecAV1  Codec = "av1"
+)
+
+// ExtraCodecs returns the codecs a tenant can add to H.264, in the order they are made and listed.
+func ExtraCodecs() []Codec { return []Codec{CodecHEVC, CodecAV1} }
+
+// Valid reports whether c is H.264 or one of ExtraCodecs.
+func (c Codec) Valid() bool { return c == CodecH264 || c == CodecHEVC || c == CodecAV1 }
+
+// Extra reports whether c is one of ExtraCodecs.
+func (c Codec) Extra() bool { return c == CodecHEVC || c == CodecAV1 }
+
+// nameSuffix is what a codec adds to a rendition name: nothing for H.264 (its names never change),
+// "_hevc" or "_av1" otherwise.
+func (c Codec) nameSuffix() string {
+	if c.Extra() {
+		return "_" + string(c)
+	}
+	return ""
+}
+
+// crf is the codec's starting constant-quality value.
+func (c Codec) crf() int {
+	switch c {
+	case CodecHEVC:
+		return CRFHEVC
+	case CodecAV1:
+		return CRFAV1
+	}
+	return CRF
+}
+
+// SVTAV1Preset and X265Preset are the software presets of the extra codecs (ADR 0067). Unlike
+// libx264's they are not operator settings.
+const (
+	SVTAV1Preset = "8"
+	X265Preset   = "medium"
+)
 
 // DefaultHWDevice is the render node VAAPI and QSV use when CIPHERFRAME_WORKER_HW_DEVICE is unset.
 const DefaultHWDevice = "/dev/dri/renderD128"
@@ -47,13 +88,30 @@ func (e Encoder) Valid() bool {
 // Hardware reports whether e encodes on a device. The zero value is software.
 func (e Encoder) Hardware() bool { return e != "" && e != EncoderSoftware }
 
-// FFmpegName is the name FFmpeg gives the H.264 encoder, which is also what the manifest records.
+// For returns the encoder that makes codec c when the worker is set to e. It is e, except that
+// VideoToolbox has no AV1 encoder, so AV1 falls back to SVT-AV1 in software (ADR 0064).
+func (e Encoder) For(c Codec) Encoder {
+	if e == EncoderVideoToolbox && c == CodecAV1 {
+		return EncoderSoftware
+	}
+	return e
+}
+
+// FFmpegName is the name FFmpeg gives the encoder of codec c under e, which is also what the
+// manifest records: libx264, libx265 or libsvtav1 in software, "<codec>_<encoder>" on hardware.
 func (e Encoder) FFmpegName(c Codec) string {
-	switch {
-	case !e.Hardware():
+	e = e.For(c)
+	if c == "" {
+		c = CodecH264
+	}
+	if !e.Hardware() {
+		switch c {
+		case CodecHEVC:
+			return "libx265"
+		case CodecAV1:
+			return "libsvtav1"
+		}
 		return "libx264"
-	case c == CodecH264 || c == "":
-		return "h264_" + string(e)
 	}
 	return string(c) + "_" + string(e)
 }
@@ -84,50 +142,77 @@ func (e Encoder) pixelFormat() string {
 	return "format=yuv420p"
 }
 
-// videoArgs maps an encoder and a rung to the FFmpeg arguments of that rendition's video stream.
-// It is the only place that does. Every encoder gets the same placement of keyframes (every
-// KeyframeSeconds at forced timestamps, IDR, none added by scene detection) and the rung's
-// maxrate and bufsize caps; the quality target is each encoder's own constant-quality mode. The
-// ladder's CRF is libx264's; qualityFor translates it.
+// videoArgs maps an encoder, a codec and a rung to the FFmpeg arguments of that rendition's video
+// stream. It is the only place that does. Every encoder and codec gets the same placement of
+// keyframes (every KeyframeSeconds at forced timestamps, IDR, none added by scene detection) and the
+// rung's maxrate and bufsize caps; the quality target is each encoder's own constant-quality mode,
+// starting from the rendition's CRF, which is the codec's own (libx264's 23, x265's 26, SVT-AV1's 35).
+// qualityFor translates it for hardware encoders. HEVC is tagged hvc1 (Apple players need it); AV1
+// keeps FFmpeg's av01.
 func videoArgs(e Encoder, c Codec, r Rendition, preset string, rate FrameRate) ([]string, error) {
-	if c != CodecH264 && c != "" {
+	if c == "" {
+		c = CodecH264
+	}
+	if !c.Valid() {
 		return nil, fmt.Errorf("media: codec %q is not supported", c)
 	}
+	e = e.For(c)
 	gop := strconv.Itoa(rate.GOP)
 	caps := []string{"-maxrate", strconv.Itoa(r.MaxrateKbps) + "k", "-bufsize", strconv.Itoa(r.BufsizeKbps) + "k"}
 	keys := []string{"-g", gop, "-force_key_frames", "expr:gte(t,n_forced*" + strconv.Itoa(KeyframeSeconds) + ")", "-fps_mode", "cfr"}
 	q := strconv.Itoa(qualityFor(e, r.CRF))
+	crf := strconv.Itoa(r.CRF)
+	// head names the encoder and the profile of a hardware encoder (software encoders pick their own).
+	head := func(profile string) []string {
+		a := []string{"-c:v", e.FFmpegName(c)}
+		if c == CodecHEVC {
+			a = append(a, "-tag:v", "hvc1")
+		}
+		if profile != "" {
+			a = append(a, "-profile:v", profile)
+		}
+		return a
+	}
+	profile := map[Codec]string{CodecH264: "high", CodecHEVC: "main"}[c]
 	var a []string
 	switch e {
 	case EncoderSoftware, "":
-		a = []string{"-c:v", "libx264", "-profile:v", "high", "-preset", preset, "-crf", strconv.Itoa(r.CRF)}
-		a = append(a, caps...)
-		a = append(a, "-g", gop, "-keyint_min", gop, "-sc_threshold", "0", "-x264-params", "open-gop=0", "-forced-idr", "1")
+		switch c {
+		case CodecHEVC:
+			a = []string{"-c:v", "libx265", "-tag:v", "hvc1", "-preset", X265Preset, "-crf", crf}
+			a = append(a, caps...)
+			a = append(a, "-g", gop, "-keyint_min", gop, "-x265-params", "scenecut=0:open-gop=0", "-forced-idr", "1")
+		case CodecAV1:
+			a = []string{"-c:v", "libsvtav1", "-preset", SVTAV1Preset, "-crf", crf}
+			a = append(a, caps...)
+			a = append(a, "-g", gop, "-svtav1-params", "scd=0:irefresh-type=2", "-forced-idr", "1")
+		default:
+			a = []string{"-c:v", "libx264", "-profile:v", "high", "-preset", preset, "-crf", crf}
+			a = append(a, caps...)
+			a = append(a, "-g", gop, "-keyint_min", gop, "-sc_threshold", "0", "-x264-params", "open-gop=0", "-forced-idr", "1")
+		}
 		return append(a, keys[2:]...), nil
 	case EncoderNVENC:
 		// Variable bitrate in constant-quality mode: -cq sets the quality, -b:v 0 leaves the cap to maxrate.
-		a = []string{"-c:v", "h264_nvenc", "-profile:v", "high", "-preset", "p5", "-rc", "vbr", "-cq", q, "-b:v", "0"}
+		a = append(head(profile), "-preset", "p5", "-rc", "vbr", "-cq", q, "-b:v", "0")
 		a = append(a, caps...)
 		a = append(a, "-no-scenecut", "1", "-forced-idr", "1", "-strict_gop", "1")
 	case EncoderVAAPI:
 		// QVBR is VAAPI's constant-quality mode that still honours a bitrate cap. A driver without it
 		// fails the encode, which falls back to software.
-		a = []string{
-			"-c:v", "h264_vaapi", "-profile:v", "high", "-rc_mode", "QVBR", "-global_quality", q,
-			"-b:v", strconv.Itoa(r.MaxrateKbps) + "k",
-		}
+		a = append(head(profile), "-rc_mode", "QVBR", "-global_quality", q, "-b:v", strconv.Itoa(r.MaxrateKbps)+"k")
 		a = append(a, caps...)
 		a = append(a, "-idr_interval", "0")
 	case EncoderQSV:
 		// -global_quality with no bitrate is QSV's ICQ mode; the caps go in with it.
-		a = []string{"-c:v", "h264_qsv", "-profile:v", "high", "-preset", "medium", "-global_quality", q, "-look_ahead", "0"}
+		a = append(head(profile), "-preset", "medium", "-global_quality", q, "-look_ahead", "0")
 		a = append(a, caps...)
 		a = append(a, "-adaptive_i", "0", "-adaptive_b", "0", "-idr_interval", "0", "-forced_idr", "1")
 	case EncoderVideoToolbox:
 		// -q:v is VideoToolbox's constant quality (1 to 100, higher is better); -maxrate and -bufsize
 		// cap it. -realtime 0 and -allow_sw 0 keep the encode on the media engine and out of a
 		// software path that is slower than libx264.
-		a = []string{"-c:v", "h264_videotoolbox", "-profile:v", "high", "-q:v", q, "-realtime", "0", "-allow_sw", "0"}
+		a = append(head(profile), "-q:v", q, "-realtime", "0", "-allow_sw", "0")
 		a = append(a, caps...)
 	default:
 		return nil, fmt.Errorf("media: unknown encoder %q", e)
@@ -135,10 +220,11 @@ func videoArgs(e Encoder, c Codec, r Rendition, preset string, rate FrameRate) (
 	return append(a, keys...), nil
 }
 
-// qualityFor translates the ladder's libx264 CRF into e's constant-quality value. NVENC, VAAPI and
-// QSV scales run the same direction and about the same size as CRF, so they start from the CRF and
-// are for whoever has the hardware to tune. VideoToolbox's -q:v runs the other way: 106-2*CRF gives
-// 60 at CRF 23, which matched libx264's VMAF on the fixtures (docs/hardware-encoders.md).
+// qualityFor translates a rendition's CRF into e's constant-quality value. NVENC, VAAPI and QSV
+// scales run the same direction and about the same size as CRF, so they start from the CRF and are
+// for whoever has the hardware to tune. VideoToolbox's -q:v runs the other way: 106-2*CRF gives 60 at
+// libx264's CRF 23, which matched its VMAF on the fixtures (docs/hardware-encoders.md); the same
+// formula gives HEVC's 54, which is not measured.
 func qualityFor(e Encoder, crf int) int {
 	if e == EncoderVideoToolbox {
 		return min(max(106-2*crf, 1), 100)

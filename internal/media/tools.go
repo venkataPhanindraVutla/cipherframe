@@ -123,6 +123,26 @@ func (t Tools) CheckCapabilities(ctx context.Context) error {
 	return nil
 }
 
+// EncodableCodecs lists the extra codecs this FFmpeg can encode when the worker is set to e: those
+// whose encoder (libx265 or libsvtav1, or e's own such as hevc_nvenc) the `-encoders` listing shows,
+// in ExtraCodecs order. Software counts too whatever e is, because a failing hardware encode is retried
+// in software. Operators' own FFmpeg builds may lack them, so the capability check does not require
+// them (CheckCapabilities); the worker reports this list instead (ADR 0067).
+func (t Tools) EncodableCodecs(ctx context.Context, e Encoder) ([]Codec, error) {
+	res, err := runBounded(ctx, t.FFmpeg, "-hide_banner", "-encoders")
+	if err != nil {
+		return nil, fmt.Errorf("media: ffmpeg -encoders: %w", err)
+	}
+	have := parseListing(res.stdout, "-encoders")
+	var out []Codec
+	for _, c := range ExtraCodecs() {
+		if have[EncoderSoftware.FFmpegName(c)] || (e.Hardware() && have[e.FFmpegName(c)]) {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
 // maxVersionLine bounds the version string that goes into a signed manifest.
 const maxVersionLine = 256
 

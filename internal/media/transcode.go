@@ -95,11 +95,12 @@ type TranscodeSpec struct {
 	// Info is the probe result of the source and Renditions the ladder chosen for it.
 	Info       Info
 	Renditions []Rendition
-	// Preset is the libx264 preset of every rendition (ADR 0038); empty means X264Preset. Only the
-	// software encoder uses it.
+	// Preset is the libx264 preset of every rendition (ADR 0038); empty means X264Preset. Only
+	// libx264 uses it: the extra codecs' presets are fixed (ADR 0067).
 	Preset string
 	// Encoder encodes the video of every rendition; empty means EncoderSoftware (ADR 0063). Codec
-	// is the video codec; empty means CodecH264. HWDevice is the render node VAAPI and QSV open;
+	// is the video codec of every rendition of the run, empty meaning CodecH264; Renditions are
+	// those of LadderFor(Codec, ...), whose names and caps belong to the codec. HWDevice is the render node VAAPI and QSV open;
 	// empty means DefaultHWDevice.
 	Encoder  Encoder
 	Codec    Codec
@@ -156,7 +157,12 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 	if strings.HasPrefix(device, "-") || strings.ContainsAny(device, ",:=\x00") {
 		return nil, errors.New("media: hardware device path is not usable")
 	}
-	pixFmt := spec.Encoder.pixelFormat()
+	if spec.Codec != "" && !spec.Codec.Valid() {
+		return nil, fmt.Errorf("media: unknown codec %q", spec.Codec)
+	}
+	// VideoToolbox has no AV1 encoder: that codec is made in software, so it needs no device either.
+	enc := spec.Encoder.For(spec.Codec)
+	pixFmt := enc.pixelFormat()
 
 	var fg strings.Builder
 	branches := len(spec.Renditions)
@@ -201,7 +207,7 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 		"-protocol_whitelist", "file,pipe",
 		"-y",
 	}
-	args = append(args, spec.Encoder.deviceArgs(device)...)
+	args = append(args, enc.deviceArgs(device)...)
 	args = append(args, "-i", src)
 	if spec.Logo != nil {
 		args = append(args, spec.Logo.args()...)
