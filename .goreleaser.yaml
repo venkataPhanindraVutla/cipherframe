@@ -79,7 +79,7 @@ dockers_v2:
     dockerfile: build/Dockerfile
     images:
       - "ghcr.io/{{ tolower .Env.GITHUB_REPOSITORY_OWNER }}/cipherframe-server"
-    tags: ["{{ .Version }}", latest]
+    tags: ["{{ .Version }}", "{{ if not .Prerelease }}latest{{ end }}"] # an empty tag is skipped: pre-releases never move latest
     platforms: [linux/amd64, linux/arm64]
     build_args:
       VERSION: "{{ .Tag }}"
@@ -101,7 +101,7 @@ dockers_v2:
     dockerfile: build/worker.Dockerfile
     images:
       - "ghcr.io/{{ tolower .Env.GITHUB_REPOSITORY_OWNER }}/cipherframe-worker"
-    tags: ["{{ .Version }}", latest]
+    tags: ["{{ .Version }}", "{{ if not .Prerelease }}latest{{ end }}"] # an empty tag is skipped: pre-releases never move latest
     platforms: [linux/amd64, linux/arm64]
     build_args:
       VERSION: "{{ .Tag }}"
