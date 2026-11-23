@@ -331,6 +331,7 @@ func TestPlaybackSettingsExtraCodecsNeedAWorker(t *testing.T) {
 	}
 	report := func(id string, age time.Duration, codecs ...string) {
 		t.Helper()
+		codecs = append([]string{}, codecs...) // an empty list, not NULL
 		if _, err := h.pool.Exec(ctx, `INSERT INTO worker_capabilities (worker_id, codecs, started_at, last_seen_at)
 			VALUES ($1::uuid, $2::text[], now() - interval '1 day', now() - make_interval(secs => $3))
 			ON CONFLICT (worker_id) DO UPDATE SET codecs = EXCLUDED.codecs, last_seen_at = EXCLUDED.last_seen_at`,
