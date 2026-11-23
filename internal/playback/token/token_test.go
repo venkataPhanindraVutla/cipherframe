@@ -424,3 +424,38 @@ func TestVariantIsSignedAndRoundTrips(t *testing.T) {
 		t.Fatalf("a token with an edited variant verified: %v", err)
 	}
 }
+
+func TestGenerationIsSignedAndRoundTrips(t *testing.T) {
+	k := testKeyring(t, 1, 1)
+	for _, g := range []int{0, 1, 7} {
+		c := claims(t, allScopes)
+		c.Generation = g
+		tok, err := k.Sign(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := k.Open(tok, t0, ScopeSegment); err != nil || got.Generation != g {
+			t.Fatalf("generation %d: got %d, %v", g, got.Generation, err)
+		}
+	}
+	c := claims(t, allScopes)
+	c.Generation = -1
+	if _, err := k.Sign(c); err == nil {
+		t.Fatal("Sign accepted a negative generation")
+	}
+	// Under the MAC: a token for generation 1 edited to generation 0 does not verify.
+	c.Generation = 1
+	tok, err := k.Sign(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(tok, ".")
+	raw, err := enc.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts[1] = enc.EncodeToString(bytes.Replace(raw, []byte(`"g":1,`), nil, 1))
+	if _, err := k.Open(strings.Join(parts, "."), t0, ScopeSegment); !isInvalid(err) {
+		t.Fatalf("a token with an edited generation verified: %v", err)
+	}
+}

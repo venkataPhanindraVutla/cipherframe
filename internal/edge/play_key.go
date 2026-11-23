@@ -71,7 +71,9 @@ func (s *server) GetPlaybackKey(ctx context.Context, _ gen.GetPlaybackKeyRequest
 	if err != nil {
 		return nil, unauthIfNotFound(err)
 	}
-	if asset.State != db.AssetReady {
+	// A session that started before a re-key (ADR 0068) holds playlists for the old key: it gets no
+	// key, and so starts a new session.
+	if asset.State != db.AssetReady || asset.KeyGeneration != g.generation {
 		p.access.RecordKeyDenied(p.accessEvent(ctx, g, db.AccessKeyDenied))
 		return nil, errPlaybackUnauthenticated()
 	}

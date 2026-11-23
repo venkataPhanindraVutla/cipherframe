@@ -280,7 +280,7 @@ func (p *Playback) guard(w http.ResponseWriter, r *http.Request, rawSession stri
 	}
 
 	g := grant{
-		tenant: tenant, asset: asset, variant: variant, session: sid, settings: set,
+		tenant: tenant, asset: asset, variant: variant, generation: claims.Generation, session: sid, settings: set,
 		tokenHash: db.TokenHash(tok), tokenExpiry: claims.Expiry,
 	}
 	if set.TokenInURL {

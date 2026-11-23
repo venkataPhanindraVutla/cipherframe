@@ -274,7 +274,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 	}
 	tok, err := s.keyring.Sign(token.Claims{
 		SessionID: sid.String(), AssetID: asset.ID.String(), TenantID: in.TenantID.String(),
-		Scopes: token.ScopeManifest | token.ScopeKey | token.ScopeSegment, Variant: variant.String(),
+		Scopes: token.ScopeManifest | token.ScopeKey | token.ScopeSegment, Variant: variant.String(), Generation: asset.KeyGeneration,
 		IssuedAt: now, Expiry: tokenExpires,
 	})
 	if err != nil {

@@ -226,7 +226,11 @@ type grant struct {
 	// variant is the variant the session is bound to. Every storage key and the content key are
 	// resolved from it, never from anything the request says (ADR 0036).
 	variant keys.Variant
-	session id.SessionID
+	// generation is the content-key generation the session is bound to (ADR 0068): the media
+	// playlists and segments are read from it, and the key is served only while the asset is still
+	// at it.
+	generation int
+	session    id.SessionID
 	// urlToken is the token to put in rewritten URIs: set only when the tenant has token_in_url on.
 	urlToken string
 	// settings are the tenant's settings the guard used (the key bounds come from here).
@@ -267,7 +271,7 @@ func segmentObject(g grant, rend keys.Rendition, file string) (key, contentType 
 	if err != nil {
 		return "", "", false
 	}
-	return keys.VariantSegment(g.tenant, g.asset, g.variant, rend, n), "video/iso.segment", true
+	return keys.VariantSegmentGen(g.tenant, g.asset, g.variant, rend, n, g.generation), "video/iso.segment", true
 }
 
 // maxPresignTTL is the longest lifetime of a presigned or CDN-signed segment URL (ADR 0032, 0062).
@@ -360,7 +364,7 @@ func (s *server) GetPlaybackMedia(ctx context.Context, req gen.GetPlaybackMediaR
 	if err != nil {
 		return nil, errs.New(errs.NotFound, "No such resource.")
 	}
-	src, err := s.play.readPlaylist(ctx, keys.VariantPlaylist(g.tenant, g.asset, g.variant, rend))
+	src, err := s.play.readPlaylist(ctx, keys.VariantPlaylistGen(g.tenant, g.asset, g.variant, rend, g.generation))
 	if err != nil {
 		return nil, err
 	}
