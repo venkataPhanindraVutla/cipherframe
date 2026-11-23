@@ -121,9 +121,14 @@ ones with the codec's own CRF as the quality value; they are as unverified as th
 the AOM patent licence) are compiled from sources pinned by SHA-256 in `build/worker.Dockerfile` and are in both
 worker image targets, whose FFmpeg additionally has the NVENC, VAAPI and QSV encoders of HEVC and AV1 in
 `worker-hw`. x265 is built 8-bit only (every rendition is 8-bit 4:2:0), so a 10-bit HEVC rendition is not
-possible. Two details of the static aarch64 link are in the Dockerfile's comments: x265's pkg-config file needs a
-version and loses the shared `libgcc_s`, and with these libraries a position-independent static link overflows the
-GOT range of the glibc `libm.a`, so the static FFmpeg and x265 are built without PIC. SVT-AV1 3.1.2 rather than the
+possible. Details found by building both targets, each in the Dockerfile's comments: x265's pkg-config file needs a version
+and loses the shared `libgcc_s`; with these libraries a position-independent static aarch64 link overflows the GOT range
+of the glibc `libm.a`, so the static FFmpeg and x265 are built without PIC; the dynamic `worker-hw` FFmpeg is a PIE
+linked by trixie's gcc 14, which can use neither a non-PIC x265 nor SVT-AV1's gcc 12 LTO bytecode, so that image gets
+its own x265 (PIC) and SVT-AV1 (no LTO) from the same sources, and `libmvec` (glibc's vector math, pulled in by the
+codecs' fast-math code) joins the libraries its build check allows. Both targets were built here: the static one for
+linux/arm64 and `worker-hw` for linux/amd64 under emulation, whose `ffmpeg -encoders` lists libx265, libsvtav1 and the
+NVENC, VAAPI and QSV encoders of both codecs, and in which libx265 and libsvtav1 encoded a test clip. SVT-AV1 3.1.2 rather than the
 newer 4.x line because it is the version built and run against this FFmpeg here; 4.x was not tried. `SOURCE.md` and the
 licence texts of the image list both libraries; HEVC patent licensing is the operator's concern, as H.264's is. A
 `measure` build target (never shipped) adds libvmaf (BSD-2-Clause-Patent) for the numbers in codecs.md.

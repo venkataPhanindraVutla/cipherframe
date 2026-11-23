@@ -33,7 +33,8 @@ H.264 is always made. A tenant can add HEVC and AV1 renditions with the `extra_c
 | `vaapi` | `h264_vaapi` | `hevc_vaapi` | `av1_vaapi` (recent Intel and AMD GPUs) | **not verified on hardware** |
 | `qsv` | `h264_qsv` | `hevc_qsv` | `av1_qsv` (Intel Arc and recent iGPUs) | **not verified on hardware** |
 
-The `worker-hw` image enables all of these encoders. A worker whose hardware lacks a codec (an older NVIDIA GPU has no
+The `worker-hw` image enables all of these encoders (it was built for linux/amd64 and its encoder list checked; no
+device was available to run the hardware ones). A worker whose hardware lacks a codec (an older NVIDIA GPU has no
 `av1_nvenc`, say) fails that codec's transcode, and the job repeats it in software like any failed hardware encode, so the
 codec is still made. The quality values of the hardware encoders start from the codec's own CRF (26 for HEVC, 35 for
 AV1) and are untuned, like their H.264 ones. The worker reports a codec as available when the software encoder or the

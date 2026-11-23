@@ -113,6 +113,34 @@ RUN cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${PREFIX
     && ninja && ninja install
 
 # ---------------------------------------------------------------------------------------------
+# x265 and SVT-AV1 again, for the hardware image. That FFmpeg is linked dynamically as a position-independent
+# executable by trixie's gcc 14, which cannot use the two static libraries above: x265 is built without PIC
+# there (its assembly then cannot go into a PIE) and SVT-AV1's archive holds LTO bytecode from gcc 12. So these
+# are the same sources with PIC on and LTO off.
+FROM toolchain AS x265-hw
+ARG X265_VERSION=4.1
+ARG X265_SHA256=a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29
+RUN fetch https://download.videolan.org/pub/videolan/x265/x265_${X265_VERSION}.tar.gz \
+        ${X265_SHA256} /src/x265.tar.gz
+RUN mkdir /src/x265 && tar -xzf /src/x265.tar.gz -C /src/x265 --strip-components=1
+WORKDIR /src/x265/build
+RUN cmake ../source -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_INSTALL_LIBDIR=lib \
+        -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_PIC=ON -DENABLE_HDR10_PLUS=OFF \
+    && ninja && ninja install \
+    && sed -i -e "s/^Version:.*/Version: ${X265_VERSION}/" -e "/^Libs.private:/s/ -lgcc_s//g" ${PREFIX}/lib/pkgconfig/x265.pc
+
+FROM toolchain AS svtav1-hw
+ARG SVTAV1_VERSION=3.1.2
+ARG SVTAV1_SHA256=d0d73bfea42fdcc1222272bf2b0e2319e9df5574721298090c3d28315586ecb1
+RUN fetch https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v${SVTAV1_VERSION}/SVT-AV1-v${SVTAV1_VERSION}.tar.gz \
+        ${SVTAV1_SHA256} /src/svtav1.tar.gz
+RUN mkdir /src/svtav1 && tar -xzf /src/svtav1.tar.gz -C /src/svtav1 --strip-components=1
+WORKDIR /src/svtav1/build
+RUN cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_SHARED_LIBS=OFF -DBUILD_APPS=OFF -DBUILD_DEC=OFF -DBUILD_TESTING=OFF -DSVT_AV1_LTO=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    && ninja && ninja install
+
+# ---------------------------------------------------------------------------------------------
 # FFmpeg source, verified once and shared by the two builds below.
 FROM toolchain AS ffmpeg-src
 ARG FFMPEG_VERSION=9.0.2
@@ -195,7 +223,7 @@ RUN make install PREFIX=${PREFIX}
 # ---------------------------------------------------------------------------------------------
 # The hardware-capable FFmpeg: the build above plus the NVENC, VAAPI and QSV encoders of H.264, HEVC and
 # AV1 (h264_*, hevc_*, av1_*) and the hwupload filter. Linked dynamically, against glibc, libva and libvpl
-# only (x264, x265, SVT-AV1 and dav1d stay static, built once in the bookworm stages; x265 is C++, so its
+# only (x264, x265, SVT-AV1 and dav1d stay static, built in the bookworm stages; x265 is C++, so its
 # static library takes libstdc++ along dynamically, as libvpl does). The readelf check below fails the build
 # if any other shared library appears. libva and libvpl are the
 # Debian trixie packages of the pinned snapshot (MIT).
@@ -203,13 +231,16 @@ FROM toolchain-hw AS ffmpeg-hw
 COPY --from=ffmpeg-src /src/ffmpeg /src/ffmpeg
 COPY --from=x264 /opt/deps /opt/deps
 COPY --from=dav1d /opt/deps /opt/deps
-COPY --from=x265 /opt/deps /opt/deps
-COPY --from=svtav1 /opt/deps /opt/deps
+COPY --from=x265-hw /opt/deps /opt/deps
+COPY --from=svtav1-hw /opt/deps /opt/deps
 COPY --from=nvcodec /opt/deps /opt/deps
 ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
 WORKDIR /src/ffmpeg
+# --pkg-config-flags=--static: x265 and SVT-AV1 are static libraries here, and the libraries they need (libstdc++,
+# libm) are only in their pkg-config files' private lists.
 RUN ./configure \
         --prefix=/opt/ffmpeg-hw \
+        --pkg-config-flags=--static \
         --extra-cflags=-I/opt/deps/include \
         --extra-ldflags="-L/opt/deps/lib" \
         --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug \
@@ -232,7 +263,7 @@ RUN ./configure \
 FROM ffmpeg-hw AS ffmpeg-hw-checked
 RUN readelf -d /opt/ffmpeg-hw/bin/ffmpeg | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | sort > /tmp/needed \
     && cat /tmp/needed \
-    && ! grep -vE '^(ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libva\.so|libva-drm\.so|libvpl\.so|libstdc\+\+\.so|libgcc_s\.so)' /tmp/needed \
+    && ! grep -vE '^(ld-linux|libc\.so|libm\.so|libmvec\.so|libdl\.so|libpthread\.so|librt\.so|libva\.so|libva-drm\.so|libvpl\.so|libstdc\+\+\.so|libgcc_s\.so)' /tmp/needed \
     && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -encoders > /tmp/encoders \
     && for e in h264_nvenc h264_vaapi h264_qsv hevc_nvenc hevc_vaapi hevc_qsv av1_nvenc av1_vaapi av1_qsv libx264 libx265 libsvtav1 aac mjpeg; do grep -qw "$e" /tmp/encoders || { echo "missing encoder $e" >&2; exit 1; }; done \
     && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -filters | grep -qw hwupload
