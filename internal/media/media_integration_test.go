@@ -327,10 +327,10 @@ func keyframeTimes(t *testing.T, dir string, o media.RenditionOutput) []float64 
 		joined = append(joined, b...)
 	}
 	whole := filepath.Join(t.TempDir(), "joined.mp4")
-	if err := os.WriteFile(whole, joined, 0o600); err != nil {
+	if err := os.WriteFile(whole, joined, 0o600); err != nil { //nolint:gosec // path is under t.TempDir
 		t.Fatal(err)
 	}
-	cmd := exec.Command(tools(t).FFprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", //nolint:gosec // test: argument array
+	cmd := exec.CommandContext(t.Context(), tools(t).FFprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", //nolint:gosec // test: argument array
 		"-of", "csv=p=0", "file:"+whole)
 	cmd.Env = []string{"LC_ALL=C"}
 	out, err := cmd.Output()

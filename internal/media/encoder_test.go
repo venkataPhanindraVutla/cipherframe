@@ -157,7 +157,7 @@ func TestProbeEncoder(t *testing.T) {
 		if err := (Tools{FFmpeg: bin}).ProbeEncoder(t.Context(), e, ""); err != nil {
 			t.Fatalf("%s: %v", e, err)
 		}
-		got, _ := os.ReadFile(argsFile)
+		got, _ := os.ReadFile(argsFile) //nolint:gosec // test reads its own temp file
 		args := strings.Fields(string(got))
 		for _, want := range []string{e.FFmpegName(CodecH264), "file:/dev/zero", "null"} {
 			if !slices.Contains(args, want) {

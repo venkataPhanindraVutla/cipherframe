@@ -69,10 +69,11 @@ runtime load their drivers with `dlopen`. The static distroless `worker` image i
 unchanged and a second target, `worker-hw` (`docker build --target worker-hw`), carries a dynamically
 linked FFmpeg with `h264_nvenc` (`nv-codec-headers` n12.2.72.0, pinned by checksum; needs NVIDIA
 driver 550.54 or newer), `h264_vaapi` (`libva`) and `h264_qsv` (`libvpl`), plus the `hwupload`
-filter, on Debian bookworm from the same dated snapshot with the runtime libraries and the Intel and
-Mesa VAAPI drivers. The build fails if the binary needs any shared library beyond glibc, libva and
-libvpl. x264 and dav1d stay static, `--disable-everything` stays, and `--enable-nonfree` is absent.
-`libva` and `libvpl` come from the Debian packages of the snapshot (MIT) rather than from source
+filter, on Debian **trixie** (bookworm has no libvpl and no Intel GPU runtime) from a dated snapshot, with the runtime libraries and the Intel and
+Mesa VAAPI drivers. The target is linux/amd64 only, because Debian packages libvpl and the Intel runtime for
+amd64 alone. The build fails if the binary needs any shared library beyond glibc, libva, libvpl and the C++ runtime libvpl needs. x264 and
+dav1d stay static (built once, in the bookworm stages), `--disable-everything` stays, and `--enable-nonfree`
+is absent. `libva` and `libvpl` come from the Debian packages of the snapshot (MIT) rather than from source
 builds. The image's `SOURCE.md` has its own template. This departs from ADR 0063's wording
 ("the Linux worker image adds"): a second image keeps the hardened default image as it is, at the
 cost of releasing two worker variants if the owner wants the second published.

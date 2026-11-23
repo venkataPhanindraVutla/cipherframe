@@ -75,7 +75,7 @@ func TestSelectEncoderKeepsAWorkingHardwareEncoder(t *testing.T) {
 	if cfg.Media.Encoder != media.EncoderNVENC {
 		t.Fatalf("encoder = %q, want nvenc", cfg.Media.Encoder)
 	}
-	if got, _ := os.ReadFile(argsFile); !strings.Contains(string(got), "h264_nvenc") {
+	if got, _ := os.ReadFile(argsFile); !strings.Contains(string(got), "h264_nvenc") { //nolint:gosec // test reads its own temp file
 		t.Errorf("the test encode did not use h264_nvenc: %s", got)
 	}
 }
