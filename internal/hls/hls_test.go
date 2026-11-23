@@ -351,6 +351,101 @@ func TestVideoCodecFromTheInitSegment(t *testing.T) {
 	}
 }
 
+// hevcInit builds an init segment with an hvc1 sample entry whose hvcC box has the given fields.
+func hevcInit(entry string, spaceTierProfile byte, compat uint32, constraints [6]byte, level byte) []byte {
+	rec := []byte{1, spaceTierProfile}
+	rec = binary.BigEndian.AppendUint32(rec, compat)
+	rec = append(rec, constraints[:]...)
+	rec = append(rec, level, 0xf0, 0, 0xfc, 0xfd, 0xf8, 0xf8, 0, 0, 0, 0)
+	hvc := box(entry, make([]byte, 78), box("hvcC", rec))
+	return box("moov", box("trak", box("mdia", box("minf", box("stbl", box("stsd", []byte{0, 0, 0, 0, 0, 0, 0, 1}, hvc))))))
+}
+
+func av1Init(profileLevel, flags byte) []byte {
+	av01 := box("av01", make([]byte, 78), box("av1C", []byte{0x81, profileLevel, flags, 0}))
+	return box("moov", box("trak", box("mdia", box("minf", box("stbl", box("stsd", []byte{0, 0, 0, 0, 0, 0, 0, 1}, av01))))))
+}
+
+// The strings players expect: ISO/IEC 14496-15 annex E for HEVC and the AV1 ISOBMFF binding.
+func TestVideoCodecHEVCAndAV1(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		init []byte
+		want string
+	}{
+		// Main profile, compatibility flags 0x60000000, Main tier, level 4.0, progressive constraint byte 0x90.
+		{"hevc main L4.0", hevcInit("hvc1", 0x01, 0x60000000, [6]byte{0x90}, 120), "hvc1.1.6.L120.90"},
+		{"hevc main L3.1", hevcInit("hvc1", 0x01, 0x60000000, [6]byte{0x90}, 93), "hvc1.1.6.L93.90"},
+		{"hevc high tier", hevcInit("hvc1", 0x21, 0x60000000, [6]byte{0x90}, 150), "hvc1.1.6.H150.90"},
+		{"hevc main 10", hevcInit("hvc1", 0x02, 0x20000000, [6]byte{0xb0}, 120), "hvc1.2.4.L120.b0"},
+		{"hevc extra constraint bytes", hevcInit("hvc1", 0x01, 0x60000000, [6]byte{0x90, 0, 0x12}, 120), "hvc1.1.6.L120.90.0.12"},
+		{"hevc hev1 entry", hevcInit("hev1", 0x01, 0x60000000, [6]byte{0x90}, 120), "hev1.1.6.L120.90"},
+		{"av1 main 8 bit L4.0", av1Init(0x08, 0x0c), "av01.0.08M.08"},
+		{"av1 L5.1", av1Init(0x0d, 0x0c), "av01.0.13M.08"},
+		{"av1 high tier", av1Init(0x08, 0x8c), "av01.0.08H.08"},
+		{"av1 10 bit", av1Init(0x08, 0x4c), "av01.0.08M.10"},
+		{"av1 12 bit", av1Init(0x28, 0x6c), "av01.1.08M.12"},
+	} {
+		got, err := hls.VideoCodec(tc.init)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+	for name, in := range map[string][]byte{
+		"hvc1 without hvcC": box("moov", box("hvc1", make([]byte, 4))),
+		"truncated hvcC":    hevcInit("hvc1", 1, 0x60000000, [6]byte{0x90}, 120)[:120],
+		"bad hvcC version":  bytes.Replace(hevcInit("hvc1", 1, 0x60000000, [6]byte{0x90}, 120), []byte("hvcC\x01"), []byte("hvcC\x02"), 1),
+		"av01 without av1C": box("moov", box("av01", make([]byte, 4))),
+		"truncated av1C":    av1Init(0x08, 0x0c)[:len(av1Init(0x08, 0x0c))-3],
+		"bad av1C marker":   bytes.Replace(av1Init(0x08, 0x0c), []byte("av1C\x81"), []byte("av1C\x01"), 1),
+	} {
+		if _, err := hls.VideoCodec(in); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+	// Whatever the cut, a malformed init segment is an error and never a panic.
+	for _, whole := range [][]byte{hevcInit("hvc1", 1, 0x60000000, [6]byte{0x90}, 120), av1Init(0x08, 0x0c)} {
+		for n := range len(whole) {
+			_, _ = hls.VideoCodec(whole[:n])
+		}
+	}
+}
+
+// H.264 comes first so that a player starting at the first entry always can decode it, then HEVC,
+// then AV1; each family runs from the lowest bandwidth up.
+func TestMasterPlaylistOrdersFamiliesH264First(t *testing.T) {
+	mk := func(uri string, bw int64, codecs string) hls.Variant {
+		return hls.Variant{URI: uri + "/playlist.m3u8", Bandwidth: bw, AverageBandwidth: bw, Width: 426, Height: 240, Codecs: codecs, FrameRate: 30}
+	}
+	got, err := hls.RenderMaster([]hls.Variant{
+		mk("240p_av1", 100_000, "av01.0.04M.08,mp4a.40.2"),
+		mk("720p_hevc", 1_500_000, "hvc1.1.6.L120.90,mp4a.40.2"),
+		mk("720p", 2_900_000, "avc1.64001f,mp4a.40.2"),
+		mk("240p_hevc", 150_000, "hvc1.1.6.L120.90,mp4a.40.2"),
+		mk("240p", 450_000, "avc1.640015,mp4a.40.2"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uris []string
+	for _, l := range strings.Split(got, "\n") {
+		if strings.HasSuffix(l, "/playlist.m3u8") {
+			uris = append(uris, strings.TrimSuffix(l, "/playlist.m3u8"))
+		}
+	}
+	if want := "240p 720p 240p_hevc 720p_hevc 240p_av1"; strings.Join(uris, " ") != want {
+		t.Errorf("order %v, want %s", uris, want)
+	}
+	// Edge's session rewriting keeps every variant and maps each to its own media playlist.
+	rw, err := hls.RewriteMaster(got, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(rw, "/media.m3u8"); n != 5 || !strings.Contains(rw, "720p_hevc/media.m3u8") || !strings.Contains(rw, "240p_av1/media.m3u8") {
+		t.Errorf("RewriteMaster dropped or renamed a variant:\n%s", rw)
+	}
+}
+
 func TestAudioCodecFromTheInitSegment(t *testing.T) {
 	if got, err := hls.AudioCodec(aacInit(0x40, 2)); err != nil || got != "mp4a.40.2" {
 		t.Errorf("AudioCodec = %q, %v; want mp4a.40.2", got, err)
