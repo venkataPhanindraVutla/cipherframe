@@ -124,8 +124,9 @@ func videoArgs(e Encoder, c Codec, r Rendition, preset string, rate FrameRate) (
 		a = append(a, caps...)
 		a = append(a, "-adaptive_i", "0", "-adaptive_b", "0", "-idr_interval", "0", "-forced_idr", "1")
 	case EncoderVideoToolbox:
-		// -q:v is VideoToolbox's constant quality (1 to 100, higher is better); -realtime 0 and
-		// -allow_sw 0 keep it on the media engine and out of a software path that is slower than libx264.
+		// -q:v is VideoToolbox's constant quality (1 to 100, higher is better); -maxrate and -bufsize
+		// cap it. -realtime 0 and -allow_sw 0 keep the encode on the media engine and out of a
+		// software path that is slower than libx264.
 		a = []string{"-c:v", "h264_videotoolbox", "-profile:v", "high", "-q:v", q, "-realtime", "0", "-allow_sw", "0"}
 		a = append(a, caps...)
 	default:
@@ -135,11 +136,12 @@ func videoArgs(e Encoder, c Codec, r Rendition, preset string, rate FrameRate) (
 }
 
 // qualityFor translates the ladder's libx264 CRF into e's constant-quality value. NVENC, VAAPI and
-// QSV scales run the same direction and about the same size as CRF, so they start from the CRF;
-// VideoToolbox's runs the other way (see docs/hardware-encoders.md for how it was tuned).
+// QSV scales run the same direction and about the same size as CRF, so they start from the CRF and
+// are for whoever has the hardware to tune. VideoToolbox's -q:v runs the other way: 106-2*CRF gives
+// 60 at CRF 23, which matched libx264's VMAF on the fixtures (docs/hardware-encoders.md).
 func qualityFor(e Encoder, crf int) int {
 	if e == EncoderVideoToolbox {
-		return min(max(100-2*crf, 1), 100)
+		return min(max(106-2*crf, 1), 100)
 	}
 	return crf
 }

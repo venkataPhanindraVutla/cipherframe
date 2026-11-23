@@ -24,7 +24,7 @@ func TestVideoArgsGolden(t *testing.T) {
 		{EncoderNVENC, "-c:v h264_nvenc -profile:v high -preset p5 -rc vbr -cq 23 -b:v 0 -maxrate 2500k -bufsize 5000k -no-scenecut 1 -forced-idr 1 -strict_gop 1 -g 60 " + keys},
 		{EncoderVAAPI, "-c:v h264_vaapi -profile:v high -rc_mode QVBR -global_quality 23 -b:v 2500k -maxrate 2500k -bufsize 5000k -idr_interval 0 -g 60 " + keys},
 		{EncoderQSV, "-c:v h264_qsv -profile:v high -preset medium -global_quality 23 -look_ahead 0 -maxrate 2500k -bufsize 5000k -adaptive_i 0 -adaptive_b 0 -idr_interval 0 -forced_idr 1 -g 60 " + keys},
-		{EncoderVideoToolbox, "-c:v h264_videotoolbox -profile:v high -q:v 54 -realtime 0 -allow_sw 0 -maxrate 2500k -bufsize 5000k -g 60 " + keys},
+		{EncoderVideoToolbox, "-c:v h264_videotoolbox -profile:v high -q:v 60 -realtime 0 -allow_sw 0 -maxrate 2500k -bufsize 5000k -g 60 " + keys},
 	} {
 		got, err := videoArgs(tc.enc, CodecH264, rung720(), X264Preset, OutputFrameRate(30))
 		if err != nil {
