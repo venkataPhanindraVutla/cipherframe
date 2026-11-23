@@ -59,6 +59,8 @@ type Asset struct {
 	DeletedAt           *time.Time
 	ExpiresAt           *time.Time
 	KeyGeneration       int32
+	ExtraCodecs         []string
+	ExtraCodecFailures  []byte
 }
 
 type AssetArtifact struct {
@@ -295,6 +297,7 @@ type PlaybackSetting struct {
 	AnomalySessionsPerViewer10m int32
 	AnomalySegmentsWithoutKey   int32
 	AutoRevoke                  []string
+	ExtraCodecs                 []string
 }
 
 type PrivacySetting struct {
@@ -425,4 +428,11 @@ type WebhookEvent struct {
 	Data       []byte
 	OccurredAt time.Time
 	CreatedAt  time.Time
+}
+
+type WorkerCapability struct {
+	WorkerID   pgtype.UUID
+	Codecs     []string
+	StartedAt  time.Time
+	LastSeenAt time.Time
 }

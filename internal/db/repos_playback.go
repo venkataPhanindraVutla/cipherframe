@@ -37,7 +37,11 @@ type PlaybackSettings struct {
 	// AutoRevoke lists the event kinds that also revoke the session (or the viewer's sessions):
 	// empty, the default, only records events. See AutoRevokeKinds for the allowed kinds.
 	AutoRevoke []string
-	UpdatedAt  time.Time
+	// ExtraCodecs lists the extra video codecs new uploads are encoded in beside H.264 (ADR 0064):
+	// any of ExtraCodecs. Empty, the default, means H.264 only. It applies to assets created after it
+	// changes.
+	ExtraCodecs []string
+	UpdatedAt   time.Time
 }
 
 // The delivery strategies (ADR 0032).
@@ -64,6 +68,7 @@ func DefaultPlaybackSettings() PlaybackSettings {
 		AnomalySessionsPerViewer10m: 10,
 		AnomalySegmentsWithoutKey:   30,
 		AutoRevoke:                  []string{},
+		ExtraCodecs:                 []string{},
 	}
 }
 
@@ -126,6 +131,7 @@ func settingsFromRow(r dbgen.PlaybackSetting) PlaybackSettings {
 		AnomalySessionsPerViewer10m: int(r.AnomalySessionsPerViewer10m),
 		AnomalySegmentsWithoutKey:   int(r.AnomalySegmentsWithoutKey),
 		AutoRevoke:                  append([]string{}, r.AutoRevoke...),
+		ExtraCodecs:                 append([]string{}, r.ExtraCodecs...),
 		UpdatedAt:                   r.UpdatedAt.UTC(),
 	}
 }
@@ -180,6 +186,10 @@ func (r *Repos) PutPlaybackSettings(ctx context.Context, tenantID id.TenantID, s
 	if revoke == nil {
 		revoke = []string{}
 	}
+	codecs := s.ExtraCodecs
+	if codecs == nil {
+		codecs = []string{}
+	}
 	//nolint:gosec // every value is range-checked by the caller and by the table's CHECKs
 	row, err := r.q.UpsertPlaybackSettings(ctx, dbgen.UpsertPlaybackSettingsParams{
 		TenantID:                 tid,
@@ -197,6 +207,7 @@ func (r *Repos) PutPlaybackSettings(ctx context.Context, tenantID id.TenantID, s
 		AnomalySessionsPerViewer10m: int32(s.AnomalySessionsPerViewer10m),
 		AnomalySegmentsWithoutKey:   int32(s.AnomalySegmentsWithoutKey),
 		AutoRevoke:                  revoke,
+		ExtraCodecs:                 codecs,
 		At:                          at,
 	})
 	if err != nil {

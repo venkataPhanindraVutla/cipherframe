@@ -25,6 +25,10 @@ func settingsOut(s db.PlaybackSettings) gen.PlaybackSettings {
 		AnomalySessionsPerViewer10m: s.AnomalySessionsPerViewer10m,
 		AnomalySegmentsWithoutKey:   s.AnomalySegmentsWithoutKey,
 		AutoRevoke:                  make([]gen.PlaybackSettingsAutoRevoke, len(s.AutoRevoke)),
+		ExtraCodecs:                 make([]gen.ExtraCodec, len(s.ExtraCodecs)),
+	}
+	for i, c := range s.ExtraCodecs {
+		out.ExtraCodecs[i] = gen.ExtraCodec(c)
 	}
 	for i, k := range s.AutoRevoke {
 		out.AutoRevoke[i] = gen.PlaybackSettingsAutoRevoke(k)
@@ -70,6 +74,13 @@ func settingsIn(b *gen.PlaybackSettingsInput) (db.PlaybackSettings, error) {
 		out.AutoRevoke = make([]string, len(*b.AutoRevoke))
 		for i, k := range *b.AutoRevoke {
 			out.AutoRevoke[i] = string(k)
+		}
+	}
+	need("extra_codecs", b.ExtraCodecs != nil)
+	if b.ExtraCodecs != nil {
+		out.ExtraCodecs = make([]string, len(*b.ExtraCodecs))
+		for i, c := range *b.ExtraCodecs {
+			out.ExtraCodecs[i] = string(c)
 		}
 	}
 	need("allowed_origins", b.AllowedOrigins != nil)

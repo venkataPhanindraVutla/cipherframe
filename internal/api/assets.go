@@ -46,6 +46,22 @@ func assetOut(a db.Asset) gen.Asset {
 		}
 		out.Masking = &m
 	}
+	if len(a.ExtraCodecs) > 0 {
+		ec := gen.ExtraCodecs{Requested: make([]gen.ExtraCodec, len(a.ExtraCodecs)), Failed: []struct {
+			Codec  gen.ExtraCodec `json:"codec"`
+			Reason string         `json:"reason"`
+		}{}}
+		for i, c := range a.ExtraCodecs {
+			ec.Requested[i] = gen.ExtraCodec(c)
+		}
+		for _, f := range a.ExtraCodecFailures {
+			ec.Failed = append(ec.Failed, struct {
+				Codec  gen.ExtraCodec `json:"codec"`
+				Reason string         `json:"reason"`
+			}{gen.ExtraCodec(f.Codec), f.Reason})
+		}
+		out.ExtraCodecs = &ec
+	}
 	if a.ContentType != "" {
 		ct := a.ContentType
 		out.ContentType = &ct

@@ -243,7 +243,7 @@ func (q *Queries) GetPlaybackSessionTenant(ctx context.Context, idHash []byte) (
 }
 
 const getPlaybackSettings = `-- name: GetPlaybackSettings :one
-SELECT tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key, auto_revoke FROM playback_settings WHERE tenant_id = $1
+SELECT tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key, auto_revoke, extra_codecs FROM playback_settings WHERE tenant_id = $1
 `
 
 func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID) (PlaybackSetting, error) {
@@ -265,6 +265,7 @@ func (q *Queries) GetPlaybackSettings(ctx context.Context, tenantID pgtype.UUID)
 		&i.AnomalySessionsPerViewer10m,
 		&i.AnomalySegmentsWithoutKey,
 		&i.AutoRevoke,
+		&i.ExtraCodecs,
 	)
 	return i, err
 }
@@ -606,7 +607,7 @@ INSERT INTO playback_settings (
     tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds,
     session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute,
     allowed_origins, token_in_url, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key,
-    auto_revoke, updated_at
+    auto_revoke, extra_codecs, updated_at
 ) VALUES (
     $1::uuid, $2::integer,
     $3::integer, $4::integer,
@@ -614,7 +615,7 @@ INSERT INTO playback_settings (
     $7::integer, $8::integer,
     $9::text[], $10::boolean, $11::text,
     $12::integer, $13::integer,
-    $14::text[], $15::timestamptz
+    $14::text[], $15::text[], $16::timestamptz
 )
 ON CONFLICT (tenant_id) DO UPDATE SET
     token_ttl_seconds          = EXCLUDED.token_ttl_seconds,
@@ -630,8 +631,9 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     anomaly_sessions_per_viewer_10m = EXCLUDED.anomaly_sessions_per_viewer_10m,
     anomaly_segments_without_key    = EXCLUDED.anomaly_segments_without_key,
     auto_revoke                = EXCLUDED.auto_revoke,
+    extra_codecs               = EXCLUDED.extra_codecs,
     updated_at                 = EXCLUDED.updated_at
-RETURNING tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key, auto_revoke
+RETURNING tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds, session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute, allowed_origins, token_in_url, updated_at, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key, auto_revoke, extra_codecs
 `
 
 type UpsertPlaybackSettingsParams struct {
@@ -649,6 +651,7 @@ type UpsertPlaybackSettingsParams struct {
 	AnomalySessionsPerViewer10m int32
 	AnomalySegmentsWithoutKey   int32
 	AutoRevoke                  []string
+	ExtraCodecs                 []string
 	At                          time.Time
 }
 
@@ -668,6 +671,7 @@ func (q *Queries) UpsertPlaybackSettings(ctx context.Context, arg UpsertPlayback
 		arg.AnomalySessionsPerViewer10m,
 		arg.AnomalySegmentsWithoutKey,
 		arg.AutoRevoke,
+		arg.ExtraCodecs,
 		arg.At,
 	)
 	var i PlaybackSetting
@@ -687,6 +691,7 @@ func (q *Queries) UpsertPlaybackSettings(ctx context.Context, arg UpsertPlayback
 		&i.AnomalySessionsPerViewer10m,
 		&i.AnomalySegmentsWithoutKey,
 		&i.AutoRevoke,
+		&i.ExtraCodecs,
 	)
 	return i, err
 }

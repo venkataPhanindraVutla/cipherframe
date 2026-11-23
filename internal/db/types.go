@@ -161,6 +161,11 @@ type Asset struct {
 	FacesDetected *int
 	// KeyGeneration counts content-key replacements (ADR 0068); 0 until the first re-key.
 	KeyGeneration int
+	// ExtraCodecs are the extra video codecs the tenant's setting listed when the asset was created
+	// (ADR 0064): what the worker makes beside H.264. ExtraCodecFailures lists those it could not make,
+	// set when the asset becomes ready.
+	ExtraCodecs        []string
+	ExtraCodecFailures []CodecFailure
 	// ExpiresAt is when the retention job deletes the asset (M6-4); nil means never.
 	ExpiresAt *time.Time
 	// DeletionRequestedAt and DeletionReason are set from the deleting state on; DeletedAt only on
