@@ -235,6 +235,29 @@ func (s *server) DeleteAsset(ctx context.Context, req gen.DeleteAssetRequestObje
 	return gen.DeleteAsset202JSONResponse{Body: assetOut(a), Headers: gen.DeleteAsset202ResponseHeaders{XRequestId: requestID(ctx)}}, nil
 }
 
+// RekeyAsset queues the re-key of a ready asset (ADR 0068).
+func (s *server) RekeyAsset(ctx context.Context, req gen.RekeyAssetRequestObject) (gen.RekeyAssetResponseObject, error) {
+	p, actor, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.rekey == nil {
+		return nil, errs.New(errs.DependencyUnavailable, "Re-keying is not available.")
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	jobID, err := s.rekey.Request(ctx, p.TenantID, aid, actor)
+	if err != nil {
+		return nil, err
+	}
+	return gen.RekeyAsset202JSONResponse{
+		Body:    gen.AssetRekey{AssetId: aid.String(), JobId: jobID},
+		Headers: gen.RekeyAsset202ResponseHeaders{XRequestId: requestID(ctx)},
+	}, nil
+}
+
 // UpdateAsset sets or clears the asset's time-to-live. The body is read raw so that an explicit
 // null (clear the expiry) is told apart from a member that is absent.
 func (s *server) UpdateAsset(ctx context.Context, req gen.UpdateAssetRequestObject) (gen.UpdateAssetResponseObject, error) {

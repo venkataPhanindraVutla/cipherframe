@@ -11,6 +11,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/rekey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/reqid"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
@@ -32,6 +33,8 @@ type server struct {
 	repos *db.Repos
 	// purge starts asset deletions (M6-2).
 	purge *purge.Requester
+	// rekey starts content-key re-keys (M10-4).
+	rekey *rekey.Requester
 	// webhooks serves the webhook endpoints and deliveries (M7-5).
 	webhooks *webhook.Service
 	// subtitles serves the subtitle track endpoints (M7-1).

@@ -86,6 +86,8 @@ func (r *restFake) route2(w http.ResponseWriter, req *http.Request, body []byte)
 		"attempts": 0, "next_attempt_at": "2026-11-22T10:00:00Z", "created_at": "2026-11-22T10:00:00Z",
 	}
 	switch {
+	case m == "POST" && p == "/v1/assets/"+testAsset+"/rekey":
+		r.reply(w, 202, map[string]any{"asset_id": testAsset, "job_id": 42}, false)
 	case m == "POST" && p == "/v1/playback-sessions":
 		if r.body["asset_id"] == "ast_00000000000000000000000001" {
 			r.problem(w, req, 409, "asset_not_ready", "the asset is processing")
@@ -553,4 +555,22 @@ func TestAuditExport(t *testing.T) {
 		"bad since": {"audit", "export", "--since", "yesterday"},
 		"argument":  {"audit", "export", "x"},
 	})
+}
+
+func TestAssetRekey(t *testing.T) {
+	r := newRest(t)
+	code, out, errb := runCLI(t, r.fakeServer, "rekey", testAsset)
+	exit(t, "rekey", code, 0, errb)
+	if !strings.Contains(out, testAsset) || !strings.Contains(out, "job 42") {
+		t.Fatalf("stdout: %s", out)
+	}
+	code, out, errb = runCLI(t, r.fakeServer, "rekey", testAsset, "--json")
+	exit(t, "rekey json", code, 0, errb)
+	if !strings.Contains(out, `"job_id":42`) {
+		t.Fatalf("json: %s", out)
+	}
+	usageCases(t, r.fakeServer, map[string][]string{"no asset": {"rekey"}})
+	r.problemOnly(409, "asset_not_ready", "only a ready asset can be re-keyed")
+	code, _, errb = runCLI(t, r.fakeServer, "rekey", testAsset)
+	exit(t, "not ready", code, 6, errb)
 }

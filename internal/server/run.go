@@ -34,6 +34,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/playback/token"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/rekey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/subtitles"
@@ -217,6 +218,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			cleanup()
 			return err
 		}
+		rekeyer, err := rekey.NewRequester(pool, queue)
+		if err != nil {
+			cleanup()
+			return err
+		}
 		playbackSvc, err := newPlaybackService(pool, cfg, kmsReg, access, anomalies)
 		if err != nil {
 			cleanup()
@@ -250,6 +256,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			KeySet:      keySet,
 			Repos:       repos,
 			Purge:       requester,
+			Rekey:       rekeyer,
 			Webhooks:    webhooks,
 			Subtitles:   subtitleSvc,
 			Quota:       quota.NewService(pool, nil),
@@ -346,6 +353,9 @@ func newAssetService(pool *pgxpool.Pool, buckets *storage.Buckets, cfg *config.C
 		return nil, nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	if err := purge.Declare(reg); err != nil {
+		return nil, nil, nil, fmt.Errorf("assets: %w", err)
+	}
+	if err := rekey.Declare(reg); err != nil {
 		return nil, nil, nil, fmt.Errorf("assets: %w", err)
 	}
 	// The subtitle service enqueues manifest.anchor when it re-signs a manifest (ADR 0044).
@@ -543,6 +553,13 @@ func newWorker(pool *pgxpool.Pool, contentKeys *contentkey.Manager, log *slog.Lo
 			}
 		}
 		if err := purge.Register(reg, pd); err != nil {
+			return nil, fmt.Errorf("worker: %w", err)
+		}
+		// Audited content-key re-key (ADR 0068); it queues the anchor and CDN-purge jobs when those are on.
+		if err := rekey.Register(reg, rekey.Deps{
+			Pool: pool, Delivery: proc.Buckets.Delivery, Keys: contentKeys, Signer: proc.Signer, Queue: inserter,
+			Anchor: proc.Config.TSA.Enabled(), CDN: proc.CDN != nil, Log: log,
+		}); err != nil {
 			return nil, fmt.Errorf("worker: %w", err)
 		}
 	}
