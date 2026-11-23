@@ -28,7 +28,7 @@ type PlaybackSettings struct {
 	KeyRequestsPerMinute     int
 	AllowedOrigins           []string
 	TokenInURL               bool
-	// Delivery is DeliveryProxy or DeliveryPresigned (ADR 0032).
+	// Delivery is DeliveryProxy, DeliveryPresigned (ADR 0032) or DeliveryCDN (ADR 0062).
 	Delivery string
 	// AnomalySessionsPerViewer10m and AnomalySegmentsWithoutKey are the thresholds of the
 	// rapid_session_creation and segments_without_key signals (M4-9); 0 disables the signal.
@@ -44,6 +44,7 @@ type PlaybackSettings struct {
 const (
 	DeliveryProxy     = "proxy"
 	DeliveryPresigned = "presigned"
+	DeliveryCDN       = "cdn"
 )
 
 // DefaultPlaybackSettings returns the settings of a tenant that has none stored. They equal the

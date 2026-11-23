@@ -109,6 +109,7 @@ func (l *loader) load() *Config {
 	c.KMS = l.kms(prod)
 	c.Media = l.media()
 	c.TSA = l.tsa(prod)
+	c.CDN = l.cdn(prod)
 	c.Retention = l.retention()
 	c.Metrics = l.metrics(prod)
 	return c

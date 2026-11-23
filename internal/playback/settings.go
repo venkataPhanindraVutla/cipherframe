@@ -54,8 +54,8 @@ func ValidateSettings(s db.PlaybackSettings) []errs.FieldError {
 	if hbOK && inRange(s.IdleTimeoutSeconds, 30, 3600) && s.HeartbeatIntervalSeconds >= s.IdleTimeoutSeconds {
 		bad("heartbeat_interval_seconds", "must be less than idle_timeout_seconds")
 	}
-	if s.Delivery != db.DeliveryProxy && s.Delivery != db.DeliveryPresigned {
-		bad("delivery", "must be proxy or presigned")
+	if s.Delivery != db.DeliveryProxy && s.Delivery != db.DeliveryPresigned && s.Delivery != db.DeliveryCDN {
+		bad("delivery", "must be proxy, presigned or cdn")
 	}
 	if len(s.AllowedOrigins) > MaxAllowedOrigins {
 		bad("allowed_origins", fmt.Sprintf("must list at most %d origins", MaxAllowedOrigins))
