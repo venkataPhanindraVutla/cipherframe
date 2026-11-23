@@ -216,7 +216,9 @@ builder (`media.LadderFor` and `media.TranscodeArgs`), runs one FFmpeg process p
 time, and records bytes per rung, wall and CPU time of the process, VMAF of each rung against the source scaled to
 the rung's size (default model, every third frame), and whether the keyframes are identical on every rendition and
 the segments match H.264's. Raw numbers: `docs/encoder-results/2026-11-23/codecs.json` (the ladders) and
-`codecs-sweep.json` (the quality settings sweep). To repeat it:
+`codecs-sweep.json` (the CRF and preset sweep) and `codecs-caps.json` (the cap experiment; `-mode sweep` and
+`-mode caps`). The sweep and the cap runs were made before the benchmark started the extra codecs at H.264's first
+picture like the worker does, which changes no size or score, only the keyframe remark in those two files. To repeat it:
 
 ```sh
 docker build -f build/worker.Dockerfile --target tools   --output type=local,dest=out/tools .
