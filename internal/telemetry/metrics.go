@@ -41,6 +41,7 @@ type metrics struct {
 	transcodeDuration *prometheus.HistogramVec
 	transcodeMedia    prometheus.Counter
 	encoderFallbacks  *prometheus.CounterVec
+	codecFailures     *prometheus.CounterVec
 	keyDuration       *prometheus.HistogramVec
 	anomalies         *prometheus.CounterVec
 	refusals          *prometheus.CounterVec
@@ -69,6 +70,9 @@ func newMetrics(reg *prometheus.Registry, tenantLabel bool) *metrics {
 		encoderFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cipherframe_encoder_fallbacks_total", Help: "Times a hardware encoder was replaced by software, by encoder and stage.",
 		}, []string{"encoder", "stage"}),
+		codecFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cipherframe_extra_codec_failures_total", Help: "Extra codecs (hevc, av1) an asset asked for and did not get, by codec and reason.",
+		}, []string{"codec", "reason"}),
 		transcodeMedia: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "cipherframe_transcode_seconds_of_media_total", Help: "Seconds of source media transcoded successfully.",
 		}),
@@ -83,7 +87,7 @@ func newMetrics(reg *prometheus.Registry, tenantLabel bool) *metrics {
 			Name: "cipherframe_refusals_total", Help: "Requests refused by a quota or a rate limit.",
 		}, refusalLabels),
 	}
-	reg.MustRegister(m.httpDuration, m.jobDuration, m.transcodeDuration, m.transcodeMedia, m.encoderFallbacks, m.keyDuration, m.anomalies, m.refusals)
+	reg.MustRegister(m.httpDuration, m.jobDuration, m.transcodeDuration, m.transcodeMedia, m.encoderFallbacks, m.codecFailures, m.keyDuration, m.anomalies, m.refusals)
 	return m
 }
 
@@ -106,6 +110,14 @@ func ObserveJob(kind, outcome string, d time.Duration) {
 func EncoderFallback(encoder, stage string) {
 	if t := cur(); t != nil {
 		t.m.encoderFallbacks.WithLabelValues(encoder, stage).Inc()
+	}
+}
+
+// ExtraCodecFailure counts one extra codec that was not made. codec is hevc or av1 and reason one of
+// the fixed codes of db.CodecFailure, so the label stays small.
+func ExtraCodecFailure(codec, reason string) {
+	if t := cur(); t != nil {
+		t.m.codecFailures.WithLabelValues(codec, reason).Inc()
 	}
 }
 

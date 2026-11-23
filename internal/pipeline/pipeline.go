@@ -102,6 +102,9 @@ type Deps struct {
 	// software. HWDevice is the render node VAAPI and QSV open.
 	Encoder  media.Encoder
 	HWDevice string
+	// Codecs are the extra codecs this worker's FFmpeg can encode (ADR 0064), found at startup. An asset
+	// that asked for another gets that codec recorded as failed with encoder_unavailable.
+	Codecs []media.Codec
 	Log      *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
@@ -218,7 +221,10 @@ func Register(reg *jobs.Registry, d Deps) error {
 	if err != nil {
 		return err
 	}
-	if err := jobs.Register(reg, p.Handle, jobs.KindConfig{Timeout: d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia}); err != nil {
+	// Each extra codec is its own transcode under the same timeout (ADR 0067), so the job's limit
+	// has room for all of them.
+	transcodes := time.Duration(1 + len(media.ExtraCodecs()))
+	if err := jobs.Register(reg, p.Handle, jobs.KindConfig{Timeout: transcodes*d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia}); err != nil {
 		return err
 	}
 	if d.Tasks == nil {
@@ -226,7 +232,7 @@ func Register(reg *jobs.Registry, d Deps) error {
 	}
 	return jobs.Register(reg, p.HandleMask, jobs.KindConfig{
 		// The masker, the wait for the original and the masked transcode each have their own limit.
-		Timeout: 2*d.MaskTimeout + d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMask, MaxAttempts: maskJobAttempts,
+		Timeout: 2*d.MaskTimeout + transcodes*d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMask, MaxAttempts: maskJobAttempts,
 	})
 }
 

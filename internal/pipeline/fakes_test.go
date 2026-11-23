@@ -310,6 +310,7 @@ func (r *fakeRepo) Complete(_ context.Context, _ id.TenantID, _ id.AssetID, arts
 	r.asset.State = db.AssetReady
 	r.asset.DurationMS = c.Duration.Milliseconds()
 	r.asset.Renditions = c.Renditions
+	r.asset.ExtraCodecFailures = c.ExtraCodecFailures
 	r.asset.Progress = 100
 	return r.asset, nil
 }
@@ -430,7 +431,7 @@ func (f *fakeTools) Transcode(ctx context.Context, spec media.TranscodeSpec, pro
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, media.InitFile), fakeInit(f.info.Audio != nil), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, media.InitFile), fakeInitFor(spec.Codec, f.info.Audio != nil), 0o600); err != nil {
 			return err
 		}
 		var pl strings.Builder
@@ -488,9 +489,20 @@ func descriptor(tag byte, payload ...[]byte) []byte {
 
 // fakeInit is a minimal init segment with an avc1 (High, level 4.0) and optionally an mp4a (AAC-LC)
 // sample entry, enough for the codec strings.
-func fakeInit(audio bool) []byte {
-	avc1 := box("avc1", make([]byte, 78), box("avcC", []byte{1, 0x64, 0x00, 0x28, 0xff, 0xe1}))
-	parts := [][]byte{box("stsd", []byte{0, 0, 0, 0, 0, 0, 0, 1}, avc1)}
+func fakeInit(audio bool) []byte { return fakeInitFor("", audio) }
+
+// fakeInitFor is fakeInit for a codec: hvc1 (Main, level 4.0) for HEVC, av01 (Main, level 4.0, 8 bit)
+// for AV1, avc1 otherwise.
+func fakeInitFor(c media.Codec, audio bool) []byte {
+	entry := box("avc1", make([]byte, 78), box("avcC", []byte{1, 0x64, 0x00, 0x28, 0xff, 0xe1}))
+	switch c {
+	case media.CodecHEVC:
+		hvcC := append([]byte{1, 0x01, 0x60, 0, 0, 0, 0x90, 0, 0, 0, 0, 0, 120}, make([]byte, 10)...)
+		entry = box("hvc1", make([]byte, 78), box("hvcC", hvcC))
+	case media.CodecAV1:
+		entry = box("av01", make([]byte, 78), box("av1C", []byte{0x81, 0x08, 0x0c, 0}))
+	}
+	parts := [][]byte{box("stsd", []byte{0, 0, 0, 0, 0, 0, 0, 1}, entry)}
 	if audio {
 		asc := descriptor(0x05, []byte{2 << 3, 0x10})
 		dec := descriptor(0x04, []byte{0x40, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, asc)
