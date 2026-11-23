@@ -123,8 +123,8 @@ worker image targets, whose FFmpeg additionally has the NVENC, VAAPI and QSV enc
 `worker-hw`. x265 is built 8-bit only (every rendition is 8-bit 4:2:0), so a 10-bit HEVC rendition is not
 possible. Two details of the static aarch64 link are in the Dockerfile's comments: x265's pkg-config file needs a
 version and loses the shared `libgcc_s`, and with these libraries a position-independent static link overflows the
-GOT range of the glibc `libm.a`, so the static FFmpeg and x265 are built without PIC. SVT-AV1 3.1.2 was chosen
-over the newer 4.x line because it is the one this FFmpeg's wrapper is known to work with. `SOURCE.md` and the
+GOT range of the glibc `libm.a`, so the static FFmpeg and x265 are built without PIC. SVT-AV1 3.1.2 rather than the
+newer 4.x line because it is the version built and run against this FFmpeg here; 4.x was not tried. `SOURCE.md` and the
 licence texts of the image list both libraries; HEVC patent licensing is the operator's concern, as H.264's is. A
 `measure` build target (never shipped) adds libvmaf (BSD-2-Clause-Patent) for the numbers in codecs.md.
 
@@ -132,7 +132,8 @@ licence texts of the image list both libraries; HEVC patent licensing is the ope
 `MediaSource.isTypeSupported` for each `CODECS` string) and starts on a decodable one, which a unit test
 (`player/test/multicodec.test.ts`, the real hls.js over a fixture master with `MediaSource` stubbed) and the
 end-to-end test (CI prepares an asset with both codecs, and Chromium plays it) check. Chromium in CI is only
-assumed to decode H.264 and AV1.
+assumed to decode H.264 and AV1. The end-to-end test was run against the compose stack built from this branch (a worker
+image with both codecs, an asset with both on): the master played in Chromium and the new test passed.
 
 ## Consequences
 
