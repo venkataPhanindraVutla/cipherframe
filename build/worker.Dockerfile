@@ -4,13 +4,17 @@
 #   docker build -f build/worker.Dockerfile --build-arg VERSION=v0.1.0 -t cipherframe-worker .
 #
 # Design notes
-# - FFmpeg and x264 are GPL; dav1d is BSD-2-Clause. They are separate programs that Cipherframe starts
+# - FFmpeg, x264 and x265 are GPL; dav1d is BSD-2-Clause; SVT-AV1 is BSD-3-Clause-Clear with the AOM
+#   patent licence. They are separate programs that Cipherframe starts
 #   as processes (invariant I1), never libraries. The licence texts and a written source offer
 #   (SOURCE.md, generated from the pins below) are in /usr/share/licenses/ffmpeg/.
 # - FFmpeg is linked fully statically (glibc included), so the final image can be distroless/static:
 #   no libc, no shell, no package manager to attack. The build ran `ldd` to prove nothing is dynamic.
 # - Every source download is pinned by SHA-256 and every base image by tag and digest. Debian
 #   build tools come from a fixed snapshot.debian.org timestamp.
+# - x265 (HEVC) and SVT-AV1 (AV1) are the software encoders of the optional extra codecs (ADR 0064,
+#   ADR 0067). They are compiled in always, but the worker only uses them for tenants that turned a
+#   codec on. x265 is built 8-bit only (every rendition is 8-bit 4:2:0).
 # - dav1d is here because FFmpeg's native "av1" decoder is hardware-accelerator-only: without
 #   libdav1d (or libaom) AV1 uploads could be probed but never decoded.
 # - Targets: the default (last) target is the worker image. `fixtures` is a test-only stage that
@@ -40,7 +44,7 @@ RUN rm -f /etc/apt/sources.list.d/* /etc/apt/sources.list \
     && echo 'Acquire::Retries "5";' >> /etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        bzip2 ca-certificates curl gcc libc6-dev make meson nasm ninja-build pkg-config xz-utils \
+        bzip2 ca-certificates cmake curl g++ gcc libc6-dev make meson nasm ninja-build pkg-config xz-utils \
     && rm -rf /var/lib/apt/lists/*
 # fetch URL SHA256 DEST: download with retries (a flaky TLS handshake is retried, not fatal), then
 # verify the pinned checksum. The pins are in each RUN's text, so a cached layer is reused without
@@ -79,6 +83,36 @@ RUN meson setup build --prefix=${PREFIX} --libdir=lib --buildtype=release --defa
     && ninja -C build install
 
 # ---------------------------------------------------------------------------------------------
+# x265 (GPL-2.0-or-later): the HEVC software encoder, 8-bit only, static, no command line tool.
+FROM toolchain AS x265
+ARG X265_VERSION=4.1
+ARG X265_SHA256=a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29
+RUN fetch https://download.videolan.org/pub/videolan/x265/x265_${X265_VERSION}.tar.gz \
+        ${X265_SHA256} /src/x265.tar.gz
+RUN mkdir /src/x265 && tar -xzf /src/x265.tar.gz -C /src/x265 --strip-components=1
+WORKDIR /src/x265/build
+RUN cmake ../source -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_INSTALL_LIBDIR=lib \
+        -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_PIC=OFF -DENABLE_HDR10_PLUS=OFF \
+    && ninja && ninja install \
+    # Two repairs to the pkg-config file, which FFmpeg's configure ("x265 >= 2.6", then a static link test)
+    # reads: a release tarball has no version control data, so the version comes out empty; and CMake lists
+    # the shared libgcc_s among the libraries to link, which does not exist in a static link (libgcc is there).
+    && sed -i -e "s/^Version:.*/Version: ${X265_VERSION}/" -e "/^Libs.private:/s/ -lgcc_s//g" ${PREFIX}/lib/pkgconfig/x265.pc
+
+# ---------------------------------------------------------------------------------------------
+# SVT-AV1 (BSD-3-Clause-Clear with the AOM patent licence): the AV1 software encoder, static, encoder only.
+FROM toolchain AS svtav1
+ARG SVTAV1_VERSION=3.1.2
+ARG SVTAV1_SHA256=d0d73bfea42fdcc1222272bf2b0e2319e9df5574721298090c3d28315586ecb1
+RUN fetch https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v${SVTAV1_VERSION}/SVT-AV1-v${SVTAV1_VERSION}.tar.gz \
+        ${SVTAV1_SHA256} /src/svtav1.tar.gz
+RUN mkdir /src/svtav1 && tar -xzf /src/svtav1.tar.gz -C /src/svtav1 --strip-components=1
+WORKDIR /src/svtav1/build
+RUN cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_SHARED_LIBS=OFF -DBUILD_APPS=OFF -DBUILD_DEC=OFF -DBUILD_TESTING=OFF \
+    && ninja && ninja install
+
+# ---------------------------------------------------------------------------------------------
 # FFmpeg source, verified once and shared by the two builds below.
 FROM toolchain AS ffmpeg-src
 ARG FFMPEG_VERSION=9.0.2
@@ -93,7 +127,7 @@ RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-comp
 #   input   protocols file,pipe; demuxers mov (MP4/MOV), matroska (MKV/WebM), rawvideo (the face masker
 #           pipes raw frames in, ADR 0036)
 #   decode  h264 hevc vp8 vp9 libdav1d(av1) aac opus mp3 (+ parsers)
-#   encode  libx264, aac; mjpeg (poster and sprite JPEGs, ADR 0046)
+#   encode  libx264, libx265 (HEVC), libsvtav1 (AV1), aac; mjpeg (poster and sprite JPEGs, ADR 0046)
 #   output  muxers mp4 and hls (fMP4 segments); null (decode checks and tests); image2 (JPEG files)
 #   filters scale format aresample null anull setsar fps split trim setpts tile overlay colorchannelmixer (the brand logo,
 #           ADR 0049: it arrives as raw RGBA pixels through the rawvideo demuxer, so no PNG decoder and no zlib are
@@ -101,9 +135,14 @@ RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-comp
 #           matrix rotation (FFmpeg's autorotate inserts them); ffmpeg adds aformat/trim/etc itself.
 # Not built: network protocols, devices, every other codec, container and filter, zlib/bzlib/iconv
 # (so compressed MP4 headers and Matroska header compression are rejected).
+# --disable-pic: with x265 and SVT-AV1 in, a position-independent static link on aarch64 overflows the 32 KiB
+# range its libm.a's GOT-relative relocations reach ("relocation truncated to fit R_AARCH64_LD64_GOTPAGE_LO15").
+# A static executable needs no PIC, so FFmpeg and x265 are built without it.
 FROM ffmpeg-src AS ffmpeg
 COPY --from=x264 /opt/deps /opt/deps
 COPY --from=dav1d /opt/deps /opt/deps
+COPY --from=x265 /opt/deps /opt/deps
+COPY --from=svtav1 /opt/deps /opt/deps
 ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
 WORKDIR /src/ffmpeg
 RUN ./configure \
@@ -111,14 +150,14 @@ RUN ./configure \
         --pkg-config-flags=--static \
         --extra-cflags=-I/opt/deps/include \
         --extra-ldflags="-L/opt/deps/lib -static" \
-        --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug \
+        --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug --disable-pic \
         --disable-ffplay --disable-avdevice \
-        --enable-gpl --enable-libx264 --enable-libdav1d \
+        --enable-gpl --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libdav1d \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov,matroska,rawvideo \
         --enable-decoder=h264,hevc,vp8,vp9,libdav1d,aac,opus,mp3,mp3float,rawvideo \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
-        --enable-encoder=libx264,aac,mjpeg \
+        --enable-encoder=libx264,libx265,libsvtav1,aac,mjpeg \
         --enable-muxer=mp4,hls,null,image2 \
         --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer \
     && make -j"$(nproc)" \
@@ -154,15 +193,18 @@ WORKDIR /src/nvcodec
 RUN make install PREFIX=${PREFIX}
 
 # ---------------------------------------------------------------------------------------------
-# The hardware-capable FFmpeg: the build above plus h264_nvenc, h264_vaapi and h264_qsv and the
-# hwupload filter. Linked dynamically, against glibc, libva and libvpl only (x264 and dav1d stay
-# static); libvpl is a C++ library, so libstdc++ comes with it. The readelf check below fails the build
+# The hardware-capable FFmpeg: the build above plus the NVENC, VAAPI and QSV encoders of H.264, HEVC and
+# AV1 (h264_*, hevc_*, av1_*) and the hwupload filter. Linked dynamically, against glibc, libva and libvpl
+# only (x264, x265, SVT-AV1 and dav1d stay static, built once in the bookworm stages; x265 is C++, so its
+# static library takes libstdc++ along dynamically, as libvpl does). The readelf check below fails the build
 # if any other shared library appears. libva and libvpl are the
 # Debian trixie packages of the pinned snapshot (MIT).
 FROM toolchain-hw AS ffmpeg-hw
 COPY --from=ffmpeg-src /src/ffmpeg /src/ffmpeg
 COPY --from=x264 /opt/deps /opt/deps
 COPY --from=dav1d /opt/deps /opt/deps
+COPY --from=x265 /opt/deps /opt/deps
+COPY --from=svtav1 /opt/deps /opt/deps
 COPY --from=nvcodec /opt/deps /opt/deps
 ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
 WORKDIR /src/ffmpeg
@@ -172,13 +214,13 @@ RUN ./configure \
         --extra-ldflags="-L/opt/deps/lib" \
         --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug \
         --disable-ffplay --disable-avdevice \
-        --enable-gpl --enable-libx264 --enable-libdav1d \
+        --enable-gpl --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libdav1d \
         --enable-ffnvcodec --enable-nvenc --enable-vaapi --enable-libvpl \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov,matroska,rawvideo \
         --enable-decoder=h264,hevc,vp8,vp9,libdav1d,aac,opus,mp3,mp3float,rawvideo \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
-        --enable-encoder=libx264,aac,mjpeg,h264_nvenc,h264_vaapi,h264_qsv \
+        --enable-encoder=libx264,libx265,libsvtav1,aac,mjpeg,h264_nvenc,h264_vaapi,h264_qsv,hevc_nvenc,hevc_vaapi,hevc_qsv,av1_nvenc,av1_vaapi,av1_qsv \
         --enable-muxer=mp4,hls,null,image2 \
         --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer,hwupload \
     && make -j"$(nproc)" \
@@ -192,7 +234,7 @@ RUN readelf -d /opt/ffmpeg-hw/bin/ffmpeg | sed -n 's/.*Shared library: \[\(.*\)\
     && cat /tmp/needed \
     && ! grep -vE '^(ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libva\.so|libva-drm\.so|libvpl\.so|libstdc\+\+\.so|libgcc_s\.so)' /tmp/needed \
     && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -encoders > /tmp/encoders \
-    && for e in h264_nvenc h264_vaapi h264_qsv libx264 aac mjpeg; do grep -qw "$e" /tmp/encoders || { echo "missing encoder $e" >&2; exit 1; }; done \
+    && for e in h264_nvenc h264_vaapi h264_qsv hevc_nvenc hevc_vaapi hevc_qsv av1_nvenc av1_vaapi av1_qsv libx264 libx265 libsvtav1 aac mjpeg; do grep -qw "$e" /tmp/encoders || { echo "missing encoder $e" >&2; exit 1; }; done \
     && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -filters | grep -qw hwupload
 
 # ---------------------------------------------------------------------------------------------
@@ -227,6 +269,47 @@ RUN ./configure \
     && (ldd /opt/ffmpeg-fixtures/bin/ffmpeg 2>&1 | grep -q 'not a dynamic executable')
 
 # ---------------------------------------------------------------------------------------------
+# Measurement only (docs/codecs.md): libvmaf (BSD-2-Clause-Patent) and an FFmpeg that can decode what the
+# worker writes and score it. It never ships; the build exports it with `--target measure`. The worker's
+# own FFmpeg makes the renditions; this one, and its ffprobe (which can read the HLS output), only compare
+# them with the source and read their keyframes.
+FROM toolchain AS vmaf
+ARG VMAF_VERSION=3.0.0
+ARG VMAF_SHA256=7178c4833639e6b989ecae73131d02f70735fdb3fc2c7d84bc36c9c3461d93b1
+RUN fetch https://github.com/Netflix/vmaf/archive/refs/tags/v${VMAF_VERSION}.tar.gz \
+        ${VMAF_SHA256} /src/vmaf.tar.gz
+RUN mkdir /src/vmaf && tar -xzf /src/vmaf.tar.gz -C /src/vmaf --strip-components=1
+WORKDIR /src/vmaf/libvmaf
+RUN meson setup build --prefix=${PREFIX} --libdir=lib --buildtype=release --default-library=static \
+        -Denable_tests=false -Denable_docs=false -Dbuilt_in_models=true \
+    && ninja -C build install
+
+FROM ffmpeg-src AS ffmpeg-measure
+COPY --from=dav1d /opt/deps /opt/deps
+COPY --from=vmaf /opt/deps /opt/deps
+ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
+WORKDIR /src/ffmpeg
+RUN ./configure \
+        --prefix=/opt/ffmpeg-measure \
+        --pkg-config-flags=--static \
+        --extra-cflags=-I/opt/deps/include \
+        --extra-ldflags="-L/opt/deps/lib -static" \
+        --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug --disable-pic \
+        --disable-ffplay --disable-avdevice \
+        --enable-gpl --enable-libdav1d --enable-libvmaf \
+        --enable-protocol=file,pipe \
+        --enable-demuxer=mov,hls \
+        --enable-decoder=h264,hevc,libdav1d \
+        --enable-parser=h264,hevc,av1 \
+        --enable-muxer=null \
+        --enable-filter=scale,format,setsar,setpts,null,libvmaf \
+    && make -j"$(nproc)" \
+    && make install \
+    && strip /opt/ffmpeg-measure/bin/ffmpeg /opt/ffmpeg-measure/bin/ffprobe \
+    && (ldd /opt/ffmpeg-measure/bin/ffmpeg 2>&1 | grep -q 'not a dynamic executable') \
+    && (ldd /opt/ffmpeg-measure/bin/ffprobe 2>&1 | grep -q 'not a dynamic executable')
+
+# ---------------------------------------------------------------------------------------------
 # Licence texts and the written source offer.
 FROM ffmpeg AS licenses
 ARG FFMPEG_VERSION=9.0.2
@@ -235,21 +318,32 @@ ARG X264_COMMIT=b35605ace3ddf7c1a5d67a2eb553f034aef41d55
 ARG X264_SHA256=6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224
 ARG DAV1D_VERSION=1.5.4
 ARG DAV1D_SHA256=686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
+ARG X265_VERSION=4.1
+ARG X265_SHA256=a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29
+ARG SVTAV1_VERSION=3.1.2
+ARG SVTAV1_SHA256=d0d73bfea42fdcc1222272bf2b0e2319e9df5574721298090c3d28315586ecb1
 ARG DEBIAN_SNAPSHOT=20261101T000000Z
 COPY --from=x264 /src/x264/COPYING /out/x264-COPYING
 COPY --from=dav1d /src/dav1d/COPYING /out/dav1d-COPYING
+COPY --from=x265 /src/x265/COPYING /out/x265-COPYING
+COPY --from=svtav1 /src/svtav1/LICENSE.md /src/svtav1/PATENTS.md /out/
 COPY build/worker-SOURCE.md.in /tmp/SOURCE.md.in
 RUN mkdir -p /out/licenses \
     && cp /src/ffmpeg/COPYING.GPLv2 /src/ffmpeg/COPYING.GPLv3 /src/ffmpeg/COPYING.LGPLv2.1 \
           /src/ffmpeg/COPYING.LGPLv3 /src/ffmpeg/LICENSE.md /src/ffmpeg/CREDITS /out/licenses/ \
     && cp /out/x264-COPYING /out/licenses/x264-COPYING.GPLv2 \
     && cp /out/dav1d-COPYING /out/licenses/dav1d-COPYING.BSD-2-Clause \
+    && cp /out/x265-COPYING /out/licenses/x265-COPYING.GPLv2 \
+    && cp /out/LICENSE.md /out/licenses/svtav1-LICENSE.md \
+    && cp /out/PATENTS.md /out/licenses/svtav1-PATENTS.md \
     && cp /usr/share/doc/libc6/copyright /out/licenses/glibc-copyright \
     && cp /usr/share/common-licenses/LGPL-2.1 /out/licenses/glibc-LGPL-2.1 \
     && LIBC_VERSION="$(dpkg-query -W -f='${Version}' libc6)" \
     && sed -e "s|@FFMPEG_VERSION@|${FFMPEG_VERSION}|g" -e "s|@FFMPEG_SHA256@|${FFMPEG_SHA256}|g" \
            -e "s|@X264_COMMIT@|${X264_COMMIT}|g" -e "s|@X264_SHA256@|${X264_SHA256}|g" \
            -e "s|@DAV1D_VERSION@|${DAV1D_VERSION}|g" -e "s|@DAV1D_SHA256@|${DAV1D_SHA256}|g" \
+           -e "s|@X265_VERSION@|${X265_VERSION}|g" -e "s|@X265_SHA256@|${X265_SHA256}|g" \
+           -e "s|@SVTAV1_VERSION@|${SVTAV1_VERSION}|g" -e "s|@SVTAV1_SHA256@|${SVTAV1_SHA256}|g" \
            -e "s|@DEBIAN_SNAPSHOT@|${DEBIAN_SNAPSHOT}|g" -e "s|@LIBC_VERSION@|${LIBC_VERSION}|g" \
            -e '/@BUILDCONF@/{r /opt/ffmpeg/buildconf.txt' -e 'd}' \
            /tmp/SOURCE.md.in > /out/licenses/SOURCE.md
@@ -265,9 +359,15 @@ ARG DAV1D_VERSION=1.5.4
 ARG DAV1D_SHA256=686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
 ARG NVCODEC_VERSION=n12.2.72.0
 ARG NVCODEC_SHA256=dbeaec433d93b850714760282f1d0992b1254fc3b5a6cb7d76fc1340a1e47563
+ARG X265_VERSION=4.1
+ARG X265_SHA256=a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29
+ARG SVTAV1_VERSION=3.1.2
+ARG SVTAV1_SHA256=d0d73bfea42fdcc1222272bf2b0e2319e9df5574721298090c3d28315586ecb1
 ARG DEBIAN_SNAPSHOT=20261101T000000Z
 COPY --from=x264 /src/x264/COPYING /out/x264-COPYING
 COPY --from=dav1d /src/dav1d/COPYING /out/dav1d-COPYING
+COPY --from=x265 /src/x265/COPYING /out/x265-COPYING
+COPY --from=svtav1 /src/svtav1/LICENSE.md /src/svtav1/PATENTS.md /out/
 COPY --from=nvcodec /src/nvcodec/README /out/nvcodec-README
 COPY build/worker-hw-SOURCE.md.in /tmp/SOURCE.md.in
 RUN mkdir -p /out/licenses \
@@ -275,6 +375,9 @@ RUN mkdir -p /out/licenses \
           /src/ffmpeg/COPYING.LGPLv3 /src/ffmpeg/LICENSE.md /src/ffmpeg/CREDITS /out/licenses/ \
     && cp /out/x264-COPYING /out/licenses/x264-COPYING.GPLv2 \
     && cp /out/dav1d-COPYING /out/licenses/dav1d-COPYING.BSD-2-Clause \
+    && cp /out/x265-COPYING /out/licenses/x265-COPYING.GPLv2 \
+    && cp /out/LICENSE.md /out/licenses/svtav1-LICENSE.md \
+    && cp /out/PATENTS.md /out/licenses/svtav1-PATENTS.md \
     && cp /usr/share/doc/libva-dev/copyright /out/licenses/libva-copyright \
     && cp /usr/share/doc/libvpl-dev/copyright /out/licenses/libvpl-copyright \
     && LIBVA_VERSION="$(dpkg-query -W -f='${Version}' libva-dev)" \
@@ -282,6 +385,8 @@ RUN mkdir -p /out/licenses \
     && sed -e "s|@FFMPEG_VERSION@|${FFMPEG_VERSION}|g" -e "s|@FFMPEG_SHA256@|${FFMPEG_SHA256}|g" \
            -e "s|@X264_COMMIT@|${X264_COMMIT}|g" -e "s|@X264_SHA256@|${X264_SHA256}|g" \
            -e "s|@DAV1D_VERSION@|${DAV1D_VERSION}|g" -e "s|@DAV1D_SHA256@|${DAV1D_SHA256}|g" \
+           -e "s|@X265_VERSION@|${X265_VERSION}|g" -e "s|@X265_SHA256@|${X265_SHA256}|g" \
+           -e "s|@SVTAV1_VERSION@|${SVTAV1_VERSION}|g" -e "s|@SVTAV1_SHA256@|${SVTAV1_SHA256}|g" \
            -e "s|@NVCODEC_VERSION@|${NVCODEC_VERSION}|g" -e "s|@NVCODEC_SHA256@|${NVCODEC_SHA256}|g" \
            -e "s|@LIBVA_VERSION@|${LIBVA_VERSION}|g" -e "s|@LIBVPL_VERSION@|${LIBVPL_VERSION}|g" \
            -e "s|@DEBIAN_SNAPSHOT@|${DEBIAN_SNAPSHOT}|g" \
@@ -305,6 +410,12 @@ RUN CGO_ENABLED=0 go build -trimpath \
 FROM scratch AS tools
 COPY --from=ffmpeg /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe /
 COPY --from=fixtures /opt/ffmpeg-fixtures/bin/ffmpeg /ffmpeg-fixtures
+
+# ---------------------------------------------------------------------------------------------
+# Measurement: the scoring FFmpeg (docker build --target measure --output type=local,dest=out/measure).
+FROM scratch AS measure
+COPY --from=ffmpeg-measure /opt/ffmpeg-measure/bin/ffmpeg /ffmpeg-vmaf
+COPY --from=ffmpeg-measure /opt/ffmpeg-measure/bin/ffprobe /ffprobe-vmaf
 
 # ---------------------------------------------------------------------------------------------
 # The hardware worker image (docker build --target worker-hw). Debian, not distroless: libva and the
