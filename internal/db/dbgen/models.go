@@ -58,6 +58,7 @@ type Asset struct {
 	DeletionReason      *string
 	DeletedAt           *time.Time
 	ExpiresAt           *time.Time
+	KeyGeneration       int32
 }
 
 type AssetArtifact struct {

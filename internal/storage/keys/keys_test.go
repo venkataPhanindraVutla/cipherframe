@@ -38,6 +38,9 @@ func allKeys(t *testing.T, tn id.TenantID, a id.AssetID) []builtKey {
 		{"MaskedPlaylist", keys.Delivery, keys.VariantPlaylist(tn, a, keys.Masked, r)},
 		{"MaskedInitSegment", keys.Delivery, keys.VariantInitSegment(tn, a, keys.Masked, r)},
 		{"MaskedSegment7", keys.Delivery, keys.VariantSegment(tn, a, keys.Masked, r, 7)},
+		{"PlaylistGen2", keys.Delivery, keys.VariantPlaylistGen(tn, a, keys.Original, r, 2)},
+		{"SegmentGen2", keys.Delivery, keys.VariantSegmentGen(tn, a, keys.Original, r, 3, 2)},
+		{"MaskedSegmentGen1", keys.Delivery, keys.VariantSegmentGen(tn, a, keys.Masked, r, 3, 1)},
 	}
 }
 
@@ -178,5 +181,40 @@ func TestBrandLogoKeysAreTheTenantsAndOutsideEveryAssetPrefix(t *testing.T) {
 	other := id.New[id.TenantKind]()
 	if strings.HasPrefix(keys.BrandLogo(other, v), keys.BrandLogoPrefix(tn)) {
 		t.Error("two tenants share a branding prefix")
+	}
+}
+
+func TestSplitGeneration(t *testing.T) {
+	tn, a := id.New[id.TenantKind](), id.New[id.AssetKind]()
+	r, _ := keys.ParseRendition("720p")
+	prefix := keys.VariantHLSPrefix(tn, a, keys.Original)
+	for gen := range 4 {
+		rel := strings.TrimPrefix(keys.VariantSegmentGen(tn, a, keys.Original, r, 5, gen), prefix)
+		g, rest := keys.SplitGeneration(rel)
+		if g != gen || rest != "720p/seg-5.m4s" {
+			t.Errorf("generation %d: got (%d, %q) from %q", gen, g, rest, rel)
+		}
+	}
+	for _, rel := range []string{"master.m3u8", "k0/720p/seg-0.m4s", "k01/720p/x", "kx/720p/x", "k/720p/x", "k1", "720p/seg-0.m4s"} {
+		if g, rest := keys.SplitGeneration(rel); g != 0 || rest != rel {
+			t.Errorf("%q: got (%d, %q), want generation 0 and the same path", rel, g, rest)
+		}
+	}
+}
+
+func TestWithGeneration(t *testing.T) {
+	for _, c := range []struct {
+		rel  string
+		gen  int
+		want string
+	}{
+		{"720p/seg-0.m4s", 1, "k1/720p/seg-0.m4s"},
+		{"k1/720p/seg-0.m4s", 2, "k2/720p/seg-0.m4s"},
+		{"k2/720p/playlist.m3u8", 0, "720p/playlist.m3u8"},
+		{"720p/playlist.m3u8", 0, "720p/playlist.m3u8"},
+	} {
+		if got := keys.WithGeneration(c.rel, c.gen); got != c.want {
+			t.Errorf("WithGeneration(%q, %d) = %q, want %q", c.rel, c.gen, got, c.want)
+		}
 	}
 }

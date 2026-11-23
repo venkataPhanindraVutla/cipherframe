@@ -8,6 +8,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -364,6 +365,50 @@ func TestAudioCodecFromTheInitSegment(t *testing.T) {
 	for _, n := range []int{0, 10, len(whole) - 3} {
 		if _, err := hls.AudioCodec(whole[:n]); err == nil {
 			t.Errorf("accepted an init segment truncated to %d bytes", n)
+		}
+	}
+}
+
+func TestParseMediaReadsWhatRenderMediaWrites(t *testing.T) {
+	p := hls.MediaPlaylist{
+		InitURI: "init.mp4",
+		Segments: []hls.Segment{
+			{URI: "seg-0.m4s", Duration: 6 * time.Second, IV: ivOf(t, "000102030405060708090a0b0c0d0e0f")},
+			{URI: "seg-1.m4s", Duration: 2002 * time.Millisecond, IV: ivOf(t, "f0e1d2c3b4a5968778695a4b3c2d1e0f")},
+		},
+	}
+	text, err := hls.RenderMedia(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := hls.ParseMedia(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, p) {
+		t.Errorf("parsed %+v, want %+v", got, p)
+	}
+	if again, err := hls.RenderMedia(got); err != nil || again != text {
+		t.Errorf("render of the parsed playlist differs: %v", err)
+	}
+}
+
+func TestParseMediaRefusesWhatIsNotOurs(t *testing.T) {
+	const key = "#EXT-X-KEY:METHOD=AES-128,URI=\"cipherframe-key\",IV=0x000102030405060708090A0B0C0D0E0F\n"
+	for name, src := range map[string]string{
+		"empty":         "",
+		"no segments":   "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-ENDLIST\n",
+		"no init":       "#EXTM3U\n" + key + "#EXTINF:6.000,\nseg-0.m4s\n",
+		"no key":        "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.000,\nseg-0.m4s\n",
+		"no duration":   "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n" + key + "seg-0.m4s\n",
+		"short iv":      "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\",IV=0x0001\n#EXTINF:6.000,\nseg-0.m4s\n",
+		"other method":  "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"k\",IV=0x000102030405060708090A0B0C0D0E0F\n#EXTINF:6.000,\nseg-0.m4s\n",
+		"bad duration":  "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n" + key + "#EXTINF:abc,\nseg-0.m4s\n",
+		"second init":   "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-MAP:URI=\"x.mp4\"\n" + key + "#EXTINF:6.000,\nseg-0.m4s\n",
+		"unquoted init": "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\n" + key + "#EXTINF:6.000,\nseg-0.m4s\n",
+	} {
+		if _, err := hls.ParseMedia(src); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }
