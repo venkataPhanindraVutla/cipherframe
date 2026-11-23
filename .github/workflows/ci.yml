@@ -398,6 +398,10 @@ jobs:
           grep -q 'ffmpeg transcode' "${out}/spans/traces.jsonl"
           grep -q 'GET /v1/play/{session_id}/key' "${out}/spans/traces.jsonl"
           deploy/compose/secret-scan.sh "${SCAN_DIR}/secrets" "${out}"
+      - name: load tool smoke test
+        run: |
+          go build -o "${RUNNER_TEMP}/cipherframe-load" ./cmd/cipherframe-load
+          deploy/compose/load-smoke.sh "${RUNNER_TEMP}/cipherframe" "${RUNNER_TEMP}/cipherframe-load" "${RUNNER_TEMP}/test.mp4" 3
       - name: compose logs
         if: failure()
         run: docker compose --profile worker --profile observability logs --no-color

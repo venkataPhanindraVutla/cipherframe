@@ -1,0 +1,4 @@
+step,viewers,kind,requests,errors,req_per_s,p50_ms,p95_ms,p99_ms
+1,1,upload,3,0,0.02,408.2,472.1,472.1
+1,1,transcode,3,0,0.02,47540.9,52784.2,52784.2
+1,1,all,6,0,0.04,472.1,52784.2,52784.2

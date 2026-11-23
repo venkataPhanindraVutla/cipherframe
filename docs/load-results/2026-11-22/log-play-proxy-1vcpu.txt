@@ -1,0 +1,10 @@
+step 1 viewers 1000 req/s 167.1 segment p50 3 p95 5 p99 7 ms errors 0.00%
+step 2 viewers 1500 req/s 251.6 segment p50 3 p95 4 p99 6 ms errors 0.00%
+step 3 viewers 2000 req/s 397.3 segment p50 3 p95 5 p99 6 ms errors 0.00%
+step 4 viewers 2500 req/s 450.9 segment p50 3 p95 5 p99 7 ms errors 0.00%
+step 5 viewers 3000 req/s 669.3 segment p50 3 p95 5 p99 7 ms errors 0.00%
+step 6 viewers 3500 req/s 688.5 segment p50 3 p95 11 p99 104 ms errors 0.00%
+step 7 viewers 4000 req/s 782.9 segment p50 3 p95 6 p99 14 ms errors 0.00%
+step 8 viewers 4500 req/s 444.0 segment p50 584 p95 10357 p99 10458 ms errors 0.00%
+stopping at 4500 viewers: segment p99 10458 ms over 1000 ms
+highest passing step: 4000 viewers (delivery proxy, speed 1x)

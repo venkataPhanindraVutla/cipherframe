@@ -65,6 +65,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0058](0058-observability-tooling-and-audit-export.md) | Observability tooling and audit export: dashboard and alerts, observability compose profile, `GET /v1/audit-events`, `cipherframe audit export`, end-to-end secret scan | none (M9-1b) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0059](0059-helm-chart-choices.md) | Helm chart choices: secrets as mounted files, flat config map, masker as a worker sidecar, queue-depth KEDA query, fixed ingress prefixes | none (M9-2) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0060](0060-release-automation-choices.md) | Release automation choices: images from the existing Dockerfiles, masker job, signing and attestation, no CHANGELOG.md | none (M9-6) | Accepted (flagged for owner review) | 2026-11-22 |
+| [0061](0061-load-test-method.md) | Load test method: real-time viewers, ramp until a threshold breaks, raw CSV beside the method | none (M9-4) | Accepted (flagged for owner review) | 2026-11-22 |
 
 ## Open gates
 
