@@ -114,7 +114,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 ### M10 v1 extras
 
 - [ ] M10-1 CDN signed URLs
-- [ ] M10-2 Hardware-accelerated encoding with software fallback
+- [x] M10-2 Hardware-accelerated encoding with software fallback ([hardware-encoders.md](hardware-encoders.md), [ADR 0066](adr/0066-hardware-encoder-implementation.md); only VideoToolbox measured, NVENC, VAAPI and QSV not verified on hardware)
 - [ ] M10-3 HEVC and AV1 renditions, off by default
 - [ ] M10-4 Audited content-key re-key operation
 

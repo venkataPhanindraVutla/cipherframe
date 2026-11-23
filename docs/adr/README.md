@@ -69,6 +69,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0062](0062-cdn-signed-urls.md) | CDN signed URLs: CloudFront and Cloud CDN, a `cdn` delivery setting, the presigned expiry rule, purge on deletion | P16 | Accepted | 2026-11-23 |
 | [0063](0063-hardware-encoders.md) | Hardware encoders: NVENC, VAAPI, QSV and VideoToolbox per worker, software fallback, only VideoToolbox measured | P17 | Accepted | 2026-11-23 |
 | [0064](0064-hevc-and-av1-renditions.md) | HEVC and AV1 renditions: libx265 and SVT-AV1, full ladder per codec, one master with CODECS, per-tenant `extra_codecs` | P18 | Accepted | 2026-11-23 |
+| [0066](0066-hardware-encoder-implementation.md) | Hardware encoder implementation: one argument mapping, whole-transcode software retry, probe through rawvideo, a separate dynamically linked `worker-hw` image, VideoToolbox `-q:v` | none (M10-2) | Accepted (flagged for owner review) | 2026-11-23 |
 
 ## Open gates
 

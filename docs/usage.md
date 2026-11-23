@@ -494,6 +494,12 @@ SHA-256 or digest. `/usr/share/licenses/ffmpeg/` holds the licence texts and `SO
 written source offer with the exact sources and configure line. The image's `ENV` points
 `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH` at `/usr/local/bin`.
 
+**Hardware encoders (M10-2).** The static image above cannot use a GPU: libva and the NVIDIA runtime
+load their drivers with `dlopen`. `docker build -f build/worker.Dockerfile --target worker-hw -t cipherframe-worker-hw .`
+builds a second image with a dynamically linked FFmpeg that has `h264_nvenc`, `h264_vaapi` and `h264_qsv`
+(Debian base, no `--enable-nonfree`). Set `CIPHERFRAME_WORKER_ENCODER` and give the container the device;
+[hardware-encoders.md](hardware-encoders.md) has the setup per encoder and what was and was not measured.
+
 **Rebuild the worker image after upgrading to the brand logo (M7-4, ADR 0049).** The startup check now
 requires the `overlay` and `colorchannelmixer` filters and the `rawvideo` decoder and demuxer. A worker
 image (or your own FFmpeg) built before that fails the check and the worker does not start; the message
@@ -641,6 +647,8 @@ variable, never its value.
 | `CIPHERFRAME_WORKER_LADDER_HEIGHTS` | all rungs | no | no | Restricts the renditions of both variants to a comma-separated subset of the rung heights `1080,720,480,360,240` (ADR 0024), for example `720,360`. Known heights only, no duplicates. A rung taller than the source is skipped; a source shorter than every selected rung gets one rendition at its own height. Fewer rungs mean a proportionally faster transcode. |
 | `CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS` | `90` | no | no | How many days the access trail (`playback_access_log`) and the anomaly events (`playback_events`) are kept, a whole number from 1 to 3650 (ADR 0040). The **worker** role's retention job drops whole monthly partitions past the window and deletes the older rows of the rest, every five minutes. Assets have no deployment-wide time-to-live: they are kept until deleted unless the request or the tenant's `asset_ttl_seconds` sets one ([api.md](api.md#assets-and-uploads-adr-0025-0026)). |
 | `CIPHERFRAME_WORKER_X264_PRESET` | `medium` | no | no | The libx264 preset of every rendition in both variants (ADR 0038): `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower` or `veryslow`. Faster presets cut transcode time and give lower quality per bit; the bitrate caps of ADR 0024 still apply. Keyframe alignment is unaffected. |
+| `CIPHERFRAME_WORKER_ENCODER` | `software` | no | no | Video encoder of the **worker** (ADR 0063, ADR 0066): `software` (libx264), `nvenc`, `vaapi`, `qsv` or `videotoolbox`. Hardware is a property of the machine, so this is per worker, not per tenant. At startup the worker runs a short test encode; if it fails it logs one warning naming the encoder and uses software. A hardware transcode that fails during a job is repeated once with libx264. See [hardware-encoders.md](hardware-encoders.md). |
+| `CIPHERFRAME_WORKER_HW_DEVICE` | `/dev/dri/renderD128` | no | no | The render node `vaapi` and `qsv` open: a plain path under `/dev`. Ignored by the other encoders. |
 | `CIPHERFRAME_TSA_URL` | unset (anchoring off) | no | no | Endpoint of an RFC 3161 time-stamping authority (ADR 0041). `https` only; `http` is accepted only when `CIPHERFRAME_ENV=development`, for a local authority. Set on the **worker** role, which runs the `manifest.anchor` job. See [Timestamp anchoring](#timestamp-anchoring-optional). |
 | `CIPHERFRAME_TSA_TIMEOUT` | `10s` | no | no | Go duration for one request to the authority, above zero and at most `2m`. |
 | `CIPHERFRAME_TSA_POLICY_OID` | unset | no | no | Policy the request asks for, dotted decimal such as `1.2.3.4`. Leave unset to accept the authority's default. |

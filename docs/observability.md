@@ -66,7 +66,8 @@ The registry also holds the standard Go and process collectors.
 | `cipherframe_http_request_duration_seconds` | `service` (api, edge), `route`, `method`, `status_class` | Request duration. `route` is the OpenAPI template; `other` for an unmatched request; `method` is `OTHER` for a non-standard method. |
 | `cipherframe_job_duration_seconds` | `kind`, `outcome` | One job attempt. Outcomes: succeeded, failed, cancelled, snoozed. |
 | `cipherframe_jobs` | `kind`, `state` | Queue depth read from the job table: available, scheduled, retryable, running. Cached 5 seconds; present only in a process with a database. |
-| `cipherframe_transcode_duration_seconds` | `outcome` | One FFmpeg transcode of the whole rendition ladder. Outcomes: succeeded, failed. |
+| `cipherframe_transcode_duration_seconds` | `outcome`, `encoder` | One FFmpeg transcode of the whole rendition ladder. Outcomes: succeeded, failed. `encoder` is `software`, `nvenc`, `vaapi`, `qsv` or `videotoolbox` (ADR 0066), the encoder that ran. |
+| `cipherframe_encoder_fallbacks_total` | `encoder`, `stage` | Times a hardware encoder was replaced by libx264: `startup` (the worker's test encode failed) or `job` (a hardware transcode failed and was repeated in software). |
 | `cipherframe_transcode_seconds_of_media_total` | none | Seconds of source media transcoded successfully. |
 | `cipherframe_key_request_duration_seconds` | `outcome` | Content key requests at the edge: served (2xx), denied (401, 403, 429), not_found, error. |
 | `cipherframe_anomalies_total` | `kind` | Anomaly events newly recorded (key_replay, key_rate, session_limit, rapid_session_creation, segments_without_key). |

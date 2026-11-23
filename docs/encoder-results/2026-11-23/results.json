@@ -1,0 +1,162 @@
+[
+  {
+    "fixture": "testsrc2",
+    "encoder": "software",
+    "wall_seconds": 9.930239583,
+    "cpu_seconds": 53.116733,
+    "rungs": [
+      {
+        "name": "1080p",
+        "bytes": 11858652,
+        "kbps": 4743.4608,
+        "vmaf": 95.59557
+      },
+      {
+        "name": "720p",
+        "bytes": 4124205,
+        "kbps": 1649.682,
+        "vmaf": 96.201836
+      },
+      {
+        "name": "480p",
+        "bytes": 1682953,
+        "kbps": 673.1812,
+        "vmaf": 96.62662
+      },
+      {
+        "name": "360p",
+        "bytes": 1006619,
+        "kbps": 402.6476,
+        "vmaf": 97.154744
+      },
+      {
+        "name": "240p",
+        "bytes": 578223,
+        "kbps": 231.2892,
+        "vmaf": 96.844434
+      }
+    ],
+    "segments_aligned": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  },
+  {
+    "fixture": "testsrc2",
+    "encoder": "videotoolbox",
+    "wall_seconds": 6.651612459,
+    "cpu_seconds": 9.433702,
+    "rungs": [
+      {
+        "name": "1080p",
+        "bytes": 7688775,
+        "kbps": 3075.5099999999998,
+        "vmaf": 92.44902
+      },
+      {
+        "name": "720p",
+        "bytes": 4363034,
+        "kbps": 1745.2135999999998,
+        "vmaf": 95.733062
+      },
+      {
+        "name": "480p",
+        "bytes": 2196980,
+        "kbps": 878.792,
+        "vmaf": 96.618454
+      },
+      {
+        "name": "360p",
+        "bytes": 1322239,
+        "kbps": 528.8956000000001,
+        "vmaf": 97.735919
+      },
+      {
+        "name": "240p",
+        "bytes": 780224,
+        "kbps": 312.0896,
+        "vmaf": 97.219759
+      }
+    ],
+    "segments_aligned": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  },
+  {
+    "fixture": "mandelbrot",
+    "encoder": "software",
+    "wall_seconds": 17.488724167,
+    "cpu_seconds": 101.662881,
+    "rungs": [
+      {
+        "name": "1080p",
+        "bytes": 11739200,
+        "kbps": 4695.68,
+        "vmaf": 82.403301
+      },
+      {
+        "name": "720p",
+        "bytes": 6489301,
+        "kbps": 2595.7204,
+        "vmaf": 89.798152
+      },
+      {
+        "name": "480p",
+        "bytes": 3031877,
+        "kbps": 1212.7508,
+        "vmaf": 91.606921
+      },
+      {
+        "name": "360p",
+        "bytes": 1829150,
+        "kbps": 731.6600000000001,
+        "vmaf": 92.176603
+      },
+      {
+        "name": "240p",
+        "bytes": 956546,
+        "kbps": 382.6184,
+        "vmaf": 92.904821
+      }
+    ],
+    "segments_aligned": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  },
+  {
+    "fixture": "mandelbrot",
+    "encoder": "videotoolbox",
+    "wall_seconds": 6.715743,
+    "cpu_seconds": 16.808502,
+    "rungs": [
+      {
+        "name": "1080p",
+        "bytes": 7690654,
+        "kbps": 3076.2616000000003,
+        "vmaf": 65.570371
+      },
+      {
+        "name": "720p",
+        "bytes": 4361966,
+        "kbps": 1744.7864000000002,
+        "vmaf": 80.779113
+      },
+      {
+        "name": "480p",
+        "bytes": 2195343,
+        "kbps": 878.1371999999999,
+        "vmaf": 82.603709
+      },
+      {
+        "name": "360p",
+        "bytes": 1362574,
+        "kbps": 545.0296000000001,
+        "vmaf": 82.282064
+      },
+      {
+        "name": "240p",
+        "bytes": 780591,
+        "kbps": 312.2364,
+        "vmaf": 82.232221
+      }
+    ],
+    "segments_aligned": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  }
+]
