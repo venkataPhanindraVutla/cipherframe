@@ -66,8 +66,11 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0059](0059-helm-chart-choices.md) | Helm chart choices: secrets as mounted files, flat config map, masker as a worker sidecar, queue-depth KEDA query, fixed ingress prefixes | none (M9-2) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0060](0060-release-automation-choices.md) | Release automation choices: images from the existing Dockerfiles, masker job, signing and attestation, no CHANGELOG.md | none (M9-6) | Accepted (flagged for owner review) | 2026-11-22 |
 | [0061](0061-load-test-method.md) | Load test method: real-time viewers, ramp until a threshold breaks, raw CSV beside the method | none (M9-4) | Accepted (flagged for owner review) | 2026-11-22 |
+| [0062](0062-cdn-signed-urls.md) | CDN signed URLs: CloudFront and Cloud CDN, a `cdn` delivery setting, the presigned expiry rule, purge on deletion | P16 | Accepted | 2026-11-23 |
+| [0063](0063-hardware-encoders.md) | Hardware encoders: NVENC, VAAPI, QSV and VideoToolbox per worker, software fallback, only VideoToolbox measured | P17 | Accepted | 2026-11-23 |
+| [0064](0064-hevc-and-av1-renditions.md) | HEVC and AV1 renditions: libx265 and SVT-AV1, full ladder per codec, one master with CODECS, per-tenant `extra_codecs` | P18 | Accepted | 2026-11-23 |
 
 ## Open gates
 
-P16 to P20, P21 (worker). See the build plan's
+P19, P20 and P21 (worker). See the build plan's
 decision register.

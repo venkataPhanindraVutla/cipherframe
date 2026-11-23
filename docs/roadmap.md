@@ -9,7 +9,7 @@ Last updated: 2026-11-23.
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M10 next, after gates P16 to P18; M10 may slip to v1.1) |
+| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M10; the owner kept all four extras in v1.0.0 on 2026-11-23) |
 | v2.0.0 | npm, Go and Python SDKs and verifiers, shared conformance vectors | Not started |
 | v2.1.0 | Python ML worker: local speech-to-text, perceptual fingerprint matching, invisible per-asset or per-tenant watermark | Not started |
 
@@ -30,7 +30,7 @@ Last updated: 2026-11-23.
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Done (P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md), [ADR 0046](adr/0046-thumbnails.md), [ADR 0047](adr/0047-quotas-and-per-client-limits.md), [ADR 0048](adr/0048-overlay-watermark-policy.md), [ADR 0049](adr/0049-brand-logo.md)) |
 | M8 CLI (Go) and reference player (TypeScript) | Done ([ADR 0050](adr/0050-reference-player-approach.md), [ADR 0051](adr/0051-cli-conventions.md), [ADR 0052](adr/0052-reference-player-implementation.md)) |
 | M9 Operations and release | Done (P14 decided, [ADR 0053](adr/0053-observability-stack.md); tooling, [ADR 0054](adr/0054-operations-and-release-tooling.md)) |
-| M10 v1 extras (may slip to v1.1) | Not started (gates P16 to P18) |
+| M10 v1 extras | In progress (P16 to P18 decided: [ADR 0062](adr/0062-cdn-signed-urls.md), [ADR 0063](adr/0063-hardware-encoders.md), [ADR 0064](adr/0064-hevc-and-av1-renditions.md); all four extras stay in v1.0.0) |
 
 ### M5 Integrity and anchoring
 
@@ -124,9 +124,6 @@ Each gate is asked of the project owner and recorded as an ADR before its milest
 
 | Gate | Decides | Needed for |
 |---|---|---|
-| P16 | CDN providers and cache and revocation policy | M10 |
-| P17 | Hardware encoder targets | M10 |
-| P18 | HEVC and AV1 policy, including codec licensing | M10 |
 | P19 | SDK package names, scopes and minimum language versions | v2.0.0 |
 | P20 | ML models and their licences (face detection decided in ADR 0036) | v2.1.0 |
 | P21 | How the Python ML worker consumes jobs (face masking decided in ADR 0036) | v2.1.0 |
