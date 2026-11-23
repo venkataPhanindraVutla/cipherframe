@@ -35,7 +35,8 @@ check() {
 }
 
 # The parameters of a signed URL must never appear, whatever their value.
-printf '%s\n' X-Amz-Signature X-Amz-Credential X-Amz-Security-Token > "${tmp}/names"
+# CloudFront signed URLs carry Signature= and Key-Pair-Id=; Cloud CDN ones carry Signature= and KeyName= (ADR 0062).
+printf '%s\n' X-Amz-Signature X-Amz-Credential X-Amz-Security-Token 'Signature=' 'Key-Pair-Id=' 'KeyName=' > "${tmp}/names"
 check signed-url-parameter "${tmp}/names" "$@"
 
 while IFS= read -r line || [ -n "${line}" ]; do
