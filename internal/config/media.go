@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,6 +26,8 @@ const (
 	EnvMaskConcurrency   = "CIPHERFRAME_WORKER_MASK_CONCURRENCY"
 	EnvLadderHeights     = "CIPHERFRAME_WORKER_LADDER_HEIGHTS"
 	EnvX264Preset        = "CIPHERFRAME_WORKER_X264_PRESET"
+	EnvEncoder           = "CIPHERFRAME_WORKER_ENCODER"
+	EnvHWDevice          = "CIPHERFRAME_WORKER_HW_DEVICE"
 )
 
 // Media defaults and ceilings. The ceilings keep a typo from disabling a limit.
@@ -78,6 +81,11 @@ type Media struct {
 	LadderHeights []int
 	// X264Preset is the libx264 preset of both variants (ADR 0038); "medium" by default.
 	X264Preset string
+	// Encoder is what encodes the video (ADR 0063): software (libx264) unless the operator picks a
+	// hardware encoder. A hardware encoder that fails its startup test falls back to software.
+	Encoder media.Encoder
+	// HWDevice is the render node VAAPI and QSV open; DefaultHWDevice when unset.
+	HWDevice string
 }
 
 func (l *loader) media() Media {
@@ -94,6 +102,8 @@ func (l *loader) media() Media {
 		MaskConcurrency:   l.concurrency(EnvMaskConcurrency, defaultMaskConcurrency),
 		LadderHeights:     l.ladderHeights(),
 		X264Preset:        l.x264Preset(),
+		Encoder:           l.encoder(),
+		HWDevice:          l.hwDevice(),
 	}
 }
 
@@ -191,6 +201,39 @@ func (l *loader) x264Preset() string {
 	if !slices.Contains(media.X264Presets(), v) {
 		l.errf("%s must be one of %s", EnvX264Preset, strings.Join(media.X264Presets(), ", "))
 		return media.X264Preset
+	}
+	return v
+}
+
+// encoder reads CIPHERFRAME_WORKER_ENCODER: software unless one of the hardware encoders is named.
+func (l *loader) encoder() media.Encoder {
+	v := l.plain(EnvEncoder, "")
+	if v == "" {
+		return media.EncoderSoftware
+	}
+	if e := media.Encoder(v); e.Valid() {
+		return e
+	}
+	names := make([]string, 0, len(media.Encoders()))
+	for _, e := range media.Encoders() {
+		names = append(names, string(e))
+	}
+	l.errf("%s must be one of %s", EnvEncoder, strings.Join(names, ", "))
+	return media.EncoderSoftware
+}
+
+// hwDevicePattern keeps the device out of FFmpeg's option syntax: a plain path under /dev.
+var hwDevicePattern = regexp.MustCompile(`^/dev/[A-Za-z0-9_./-]+$`)
+
+// hwDevice reads CIPHERFRAME_WORKER_HW_DEVICE, the render node of VAAPI and QSV.
+func (l *loader) hwDevice() string {
+	v := l.plain(EnvHWDevice, "")
+	if v == "" {
+		return media.DefaultHWDevice
+	}
+	if !hwDevicePattern.MatchString(v) || strings.Contains(v, "..") {
+		l.errf("%s must be a device path under /dev, for example %s", EnvHWDevice, media.DefaultHWDevice)
+		return media.DefaultHWDevice
 	}
 	return v
 }
