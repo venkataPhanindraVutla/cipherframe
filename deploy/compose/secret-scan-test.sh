@@ -25,4 +25,13 @@ code=0
 "${here}/secret-scan.sh" "${tmp}/secrets" "${tmp}/out" > "${tmp}/report" 2>&1 || code=$?
 test "${code}" = 1
 grep -q 'LEAK: signed-url-parameter found in .*url.log' "${tmp}/report"
+
+rm "${tmp}/out/url.log"
+for shape in 'GET /x?Expires=1&Signature=abc&Key-Pair-Id=K1' 'GET /x?Expires=1&KeyName=k&Signature=abc'; do
+  printf '%s\n' "${shape}" > "${tmp}/out/cdn.log"
+  code=0
+  "${here}/secret-scan.sh" "${tmp}/secrets" "${tmp}/out" > "${tmp}/report" 2>&1 || code=$?
+  test "${code}" = 1
+  grep -q 'LEAK: signed-url-parameter found in .*cdn.log' "${tmp}/report"
+done
 echo "secret-scan self-test OK"

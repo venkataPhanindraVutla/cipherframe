@@ -120,6 +120,33 @@ what is left over. "Residual" is what a deployer should still plan for.
   hide voices, names on screen or a body. The masker and the worker must run on the same trusted
   node, and a compromised masker can read plaintext frames. It is not a redaction guarantee.
 
+### CDN delivery (M10-1, ADR 0062, 0065)
+
+With the tenant setting `delivery = cdn`, media playlists carry signed URLs of a CDN instead of
+edge URLs. What this changes, stated plainly:
+
+- **Revocation is not immediate for segments.** After a session is revoked, a signed URL it already
+  received still fetches ciphertext from the CDN until the URL expires, at most 10 minutes (sooner
+  if the token expires sooner). The key endpoint stays on edge and refuses a revoked session, so the
+  bytes cannot be decrypted without a key the viewer already holds. A viewer who kept the key can
+  decrypt what they fetched in that window, as in every mode (I8).
+- **Cached ciphertext outlives deletion for a while.** Deletion destroys the content key and the
+  objects first, then queues a purge (CloudFront invalidation or Cloud CDN cache invalidation) that
+  deletion does not wait for. Until the purge completes, or the entry expires if every purge attempt
+  fails, the CDN may still serve the old ciphertext. With the key destroyed those bytes are
+  unreadable. The outcome of the purge is in the audit log.
+- **A signed URL is a bearer credential** for its object, until it expires. It appears in playlists,
+  browser history and the logs of intermediaries and of the CDN itself. Edge never logs it (the
+  end-to-end secret scan checks for the signature parameters). The CDN's own access logs are the
+  operator's to configure and protect.
+- **The signing key** (CloudFront private key, Cloud CDN key) lets its holder mint URLs for any
+  delivery object until the key is rotated at the CDN; it still cannot decrypt anything. Only the edge
+  role reads it. Rotating means adding a new key at the CDN and in the edge's key file, then removing
+  the old one.
+- The CDN reads only the delivery bucket, through origin access control (CloudFront) or the CDN's
+  service agent (Cloud CDN). The source bucket is never behind it (I4). Thumbnails are never served
+  through the CDN.
+
 ### Deletion and retention (M6, ADR 0040, 0042)
 
 - **Assets:** the deletion record, the purge job, the time-to-live setting, the access-trail window.

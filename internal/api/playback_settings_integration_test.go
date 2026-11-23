@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/playback"
 )
 
 func fullSettings() map[string]any {
@@ -124,6 +126,38 @@ func TestPlaybackSettingsApplyToSessions(t *testing.T) {
 	}
 }
 
+// With a CDN configured (ADR 0062) a tenant can choose cdn; without one the request is refused with
+// a problem on the delivery field and nothing is stored.
+func TestPlaybackSettingsCDN(t *testing.T) {
+	h := newHarness(t)
+	key, _ := h.bootstrap("acme")
+	body := fullSettings()
+	body["delivery"] = "cdn"
+	r := h.do(key, "PUT", "/v1/playback-settings", body)
+	h.wantStatus(r, 400, "invalid_request")
+	if got := fieldErrors(r); !reflect.DeepEqual(got, []string{"delivery"}) || !strings.Contains(string(r.raw), "no CDN configured") {
+		t.Fatalf("problem = %s", r.raw)
+	}
+	if g := h.mustOK(h.do(key, "GET", "/v1/playback-settings", nil), 200); g.m["delivery"] != "proxy" {
+		t.Fatalf("the refused setting was stored: %s", g.raw)
+	}
+
+	h = newHarnessWith(t, func(d *api.Deps, h *harness) {
+		svc, err := playback.NewService(playback.Deps{Pool: h.pool, Keyring: h.keyring, EdgeURL: testEdgeURL, CDN: true, Now: h.clk.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Playback = svc
+	})
+	key, _ = h.bootstrap("acme")
+	if put := h.mustOK(h.do(key, "PUT", "/v1/playback-settings", body), 200); put.m["delivery"] != "cdn" {
+		t.Fatalf("PUT = %s", put.raw)
+	}
+	if g := h.mustOK(h.do(key, "GET", "/v1/playback-settings", nil), 200); g.m["delivery"] != "cdn" {
+		t.Fatalf("GET = %s", g.raw)
+	}
+}
+
 func TestPlaybackSettingsValidation(t *testing.T) {
 	h := newHarness(t)
 	key, _ := h.bootstrap("acme")
@@ -153,7 +187,8 @@ func TestPlaybackSettingsValidation(t *testing.T) {
 		"key rpm high":                {with("key_requests_per_minute", 601), []string{"key_requests_per_minute"}},
 		"huge number":                 {with("session_max_seconds", 1<<40), []string{"session_max_seconds"}},
 		"wildcard origin":             {with("allowed_origins", []any{"https://ok.example.com", "https://*.example.com"}), []string{"allowed_origins[1]"}},
-		"unknown delivery":            {with("delivery", "cdn"), []string{"delivery"}},
+		"unknown delivery":            {with("delivery", "bogus"), []string{"delivery"}},
+		"cdn without a CDN":           {with("delivery", "cdn"), []string{"delivery"}},
 		"sessions threshold negative": {with("anomaly_sessions_per_viewer_10m", -1), []string{"anomaly_sessions_per_viewer_10m"}},
 		"sessions threshold high":     {with("anomaly_sessions_per_viewer_10m", 1001), []string{"anomaly_sessions_per_viewer_10m"}},
 		"segments threshold negative": {with("anomaly_segments_without_key", -1), []string{"anomaly_segments_without_key"}},

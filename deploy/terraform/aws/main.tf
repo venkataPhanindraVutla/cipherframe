@@ -111,11 +111,21 @@ data "aws_iam_policy_document" "bucket_tls_only" {
   }
 }
 
+# The delivery bucket's policy with the CDN: the TLS-only rule plus read access for the distribution.
+data "aws_iam_policy_document" "delivery_bucket" {
+  count = var.enable_cdn ? 1 : 0
+
+  source_policy_documents = [
+    data.aws_iam_policy_document.bucket_tls_only["delivery"].json,
+    data.aws_iam_policy_document.cdn_origin[0].json,
+  ]
+}
+
 resource "aws_s3_bucket_policy" "this" {
   for_each = local.buckets
 
   bucket = aws_s3_bucket.this[each.key].id
-  policy = data.aws_iam_policy_document.bucket_tls_only[each.key].json
+  policy = each.key == "delivery" && var.enable_cdn ? data.aws_iam_policy_document.delivery_bucket[0].json : data.aws_iam_policy_document.bucket_tls_only[each.key].json
 
   depends_on = [aws_s3_bucket_public_access_block.this]
 }

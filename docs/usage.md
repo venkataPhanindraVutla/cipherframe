@@ -395,6 +395,10 @@ SeaweedFS is published on the host because presigned URLs are signed for
 `CIPHERFRAME_S3_PUBLIC_ENDPOINT` (`http://localhost:8333`) and must be usable from your browser, while
 the server itself talks to `http://seaweedfs:8333` inside the Compose network.
 
+**CDN delivery.** A tenant can set `delivery` to `cdn` once the deployment has a CDN configured
+(`CIPHERFRAME_CDN_*` above); the settings endpoint refuses it otherwise. Setup, revocation limits and
+purge behaviour are in [cdn.md](cdn.md).
+
 **Presigned delivery and CORS.** A tenant that sets `delivery` to `presigned` (docs/api.md) makes the
 player fetch segments from `CIPHERFRAME_S3_PUBLIC_ENDPOINT` directly. A browser then needs the delivery
 bucket to allow your page's origin to GET, so a CORS rule on the delivery bucket is required (it is
@@ -644,6 +648,13 @@ variable, never its value.
 | `CIPHERFRAME_TSA_URL` | unset (anchoring off) | no | no | Endpoint of an RFC 3161 time-stamping authority (ADR 0041). `https` only; `http` is accepted only when `CIPHERFRAME_ENV=development`, for a local authority. Set on the **worker** role, which runs the `manifest.anchor` job. See [Timestamp anchoring](#timestamp-anchoring-optional). |
 | `CIPHERFRAME_TSA_TIMEOUT` | `10s` | no | no | Go duration for one request to the authority, above zero and at most `2m`. |
 | `CIPHERFRAME_TSA_POLICY_OID` | unset | no | no | Policy the request asks for, dotted decimal such as `1.2.3.4`. Leave unset to accept the authority's default. |
+| `CIPHERFRAME_CDN_PROVIDER` | unset (no CDN) | no | no | `cloudfront` or `cloudcdn`. Turns on the `cdn` delivery setting (ADR 0062, [cdn.md](cdn.md)). Set the CDN variables on **every** role (the key file only on the edge): the api role needs to know a CDN exists, the edge signs, the worker purges. With no provider, any other `CIPHERFRAME_CDN_*` variable is an error. |
+| `CIPHERFRAME_CDN_BASE_URL` | none | with a provider | no | The CDN as browsers reach it: `https://host`, no path or query (`http` only in development). Its origin must be the delivery bucket root. |
+| `CIPHERFRAME_CDN_KEY_ID` | none | with a provider | no | The CloudFront public key ID (of a key in a trusted key group), or the Cloud CDN signing key name. Not secret. |
+| `CIPHERFRAME_CDN_SIGNING_KEY_FILE` | none | on the **edge** role | **yes, file only** | Path of the signing key: an RSA 2048 PEM private key (CloudFront), or the 16-byte Cloud CDN key in URL-safe base64. There is no variable for the key itself; `CIPHERFRAME_CDN_SIGNING_KEY` is refused. Only the **edge** role reads the file, at startup, and refuses to start without it. |
+| `CIPHERFRAME_CDN_CLOUDFRONT_DISTRIBUTION_ID` | none | provider `cloudfront` | no | The distribution the **worker** invalidates after a deletion. |
+| `CIPHERFRAME_CDN_CLOUDCDN_PROJECT` | none | provider `cloudcdn` | no | Project of the URL map the worker invalidates. Credentials come from Application Default Credentials (Workload Identity on GKE). |
+| `CIPHERFRAME_CDN_CLOUDCDN_URL_MAP` | none | provider `cloudcdn` | no | Name of the URL map in front of the delivery bucket's backend bucket. |
 
 Empty values of non-secret variables mean "use the default".
 

@@ -439,6 +439,7 @@ func (e PlaybackSettingsAutoRevoke) Valid() bool {
 
 // Defines values for PlaybackSettingsDelivery.
 const (
+	PlaybackSettingsDeliveryCdn       PlaybackSettingsDelivery = "cdn"
 	PlaybackSettingsDeliveryPresigned PlaybackSettingsDelivery = "presigned"
 	PlaybackSettingsDeliveryProxy     PlaybackSettingsDelivery = "proxy"
 )
@@ -446,6 +447,8 @@ const (
 // Valid indicates whether the value is a known member of the PlaybackSettingsDelivery enum.
 func (e PlaybackSettingsDelivery) Valid() bool {
 	switch e {
+	case PlaybackSettingsDeliveryCdn:
+		return true
 	case PlaybackSettingsDeliveryPresigned:
 		return true
 	case PlaybackSettingsDeliveryProxy:
@@ -481,6 +484,7 @@ func (e PlaybackSettingsInputAutoRevoke) Valid() bool {
 
 // Defines values for PlaybackSettingsInputDelivery.
 const (
+	PlaybackSettingsInputDeliveryCdn       PlaybackSettingsInputDelivery = "cdn"
 	PlaybackSettingsInputDeliveryPresigned PlaybackSettingsInputDelivery = "presigned"
 	PlaybackSettingsInputDeliveryProxy     PlaybackSettingsInputDelivery = "proxy"
 )
@@ -488,6 +492,8 @@ const (
 // Valid indicates whether the value is a known member of the PlaybackSettingsInputDelivery enum.
 func (e PlaybackSettingsInputDelivery) Valid() bool {
 	switch e {
+	case PlaybackSettingsInputDeliveryCdn:
+		return true
 	case PlaybackSettingsInputDeliveryPresigned:
 		return true
 	case PlaybackSettingsInputDeliveryProxy:
@@ -1832,6 +1838,11 @@ type PlaybackSettingsInput struct {
 	// can appear in playlists, browser history and the logs of intermediaries. The key
 	// endpoint is always served by edge, so revocation still applies. In `presigned` mode
 	// the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
+	// `cdn` (ADR 0062): like `presigned`, but the URLs are signed for the deployment's
+	// CDN (CloudFront or Cloud CDN) and point at it, with the same expiry rule. Setting it
+	// is refused with `invalid_request` (field `delivery`) when the deployment has no CDN
+	// configured. After a session is revoked, a URL it already received keeps working
+	// until it expires (at most 10 minutes); the content key is still refused.
 	Delivery *PlaybackSettingsInputDelivery `json:"delivery,omitempty"`
 
 	// HeartbeatIntervalSeconds How often the player sends a heartbeat. Must be less than `token_ttl_seconds` and less
@@ -1874,6 +1885,11 @@ type PlaybackSettingsInputAutoRevoke string
 // can appear in playlists, browser history and the logs of intermediaries. The key
 // endpoint is always served by edge, so revocation still applies. In `presigned` mode
 // the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
+// `cdn` (ADR 0062): like `presigned`, but the URLs are signed for the deployment's
+// CDN (CloudFront or Cloud CDN) and point at it, with the same expiry rule. Setting it
+// is refused with `invalid_request` (field `delivery`) when the deployment has no CDN
+// configured. After a session is revoked, a URL it already received keeps working
+// until it expires (at most 10 minutes); the content key is still refused.
 type PlaybackSettingsInputDelivery string
 
 // PrivacySettings A tenant's effective privacy settings (ADR 0040).

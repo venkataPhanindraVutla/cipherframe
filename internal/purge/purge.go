@@ -66,6 +66,9 @@ type Deps struct {
 	// Signer signs the deletion record with the current signing key (M6-3). It is required.
 	Signer signing.Signer
 	Log    *slog.Logger
+	// CDNQueue, when set, receives an asset.cdn_purge job in the transaction that completes a
+	// deletion (ADR 0062). Nil when the deployment has no CDN.
+	CDNQueue Enqueuer
 	// InFlightWait overrides DefaultInFlightWait when positive.
 	InFlightWait time.Duration
 	// Now defaults to time.Now.
@@ -121,7 +124,8 @@ func Declare(reg *jobs.Registry) error {
 //  4. Enumerate storage under every prefix (never the database alone), delete in batches and list
 //     again until a pass finds nothing. Objects left after maxPasses fail the job (ErrLeftovers).
 //  5. In one transaction: destroy the content keys, drop the registry rows and the manifest, store
-//     the signed deletion record and move the asset to deleted (the tombstone).
+//     the signed deletion record and move the asset to deleted (the tombstone). With a CDN
+//     configured the same transaction queues asset.cdn_purge (cdn.go).
 func (p *Purger) Handle(ctx context.Context, job jobs.Job[DeleteArgs]) error {
 	tenant, assetID := job.Args.TenantID, job.Args.AssetID
 	if tenant.IsZero() || assetID.IsZero() || !db.ValidDeletionReason(job.Args.Reason) {
@@ -369,7 +373,19 @@ func (p *Purger) finish(ctx context.Context, asset db.Asset, t *tally, log *slog
 		if _, err := tx.CompleteAssetDeletion(ctx, asset.TenantID, asset.ID, now); err != nil {
 			return err
 		}
-		_, err = tx.InsertAuditEvent(ctx, db.NewAuditEvent{TenantID: asset.TenantID, Action: AuditAssetPurged, Target: asset.ID.String()})
+		if _, err = tx.InsertAuditEvent(ctx, db.NewAuditEvent{TenantID: asset.TenantID, Action: AuditAssetPurged, Target: asset.ID.String()}); err != nil {
+			return err
+		}
+		// The CDN purge is queued with the tombstone, so it exists exactly when the deletion
+		// completed, and deletion does not wait for it.
+		if p.CDNQueue == nil {
+			return nil
+		}
+		pgxTx, ok := tx.PgxTx()
+		if !ok {
+			return errors.New("purge: the deletion transaction is not a pgx transaction")
+		}
+		_, err = p.CDNQueue.Enqueue(ctx, pgxTx, CDNArgs{TenantID: asset.TenantID, AssetID: asset.ID}, nil)
 		return err
 	})
 	if err != nil {

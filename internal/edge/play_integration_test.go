@@ -25,6 +25,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/auth"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/cdn"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -134,6 +135,8 @@ type env struct {
 	key []byte
 	mgr *contentkey.Manager
 	log *slog.Logger
+	// cdn, when set, is the CDN signer of the edge (play_cdn_integration_test.go).
+	cdn cdn.Signer
 	// keyStore, when set, wraps the database-backed key store the edge uses (fault injection).
 	keyStore func(edge.KeyStore) edge.KeyStore
 	// vx tunes the browser-session route (play_session_integration_test.go); nil means defaults.
@@ -301,7 +304,7 @@ func (e *env) start() {
 		ks = e.keyStore(ks)
 	}
 	p, err := edge.NewPlayback(edge.PlaybackDeps{
-		Keyring: e.keyring, Store: e.repos, Delivery: e.store, KeyStore: ks, ContentKeys: e.mgr, Viewer: e.viewerDeps(), Access: e.access, Anomalies: e.anomalies, Now: e.clk.Now,
+		Keyring: e.keyring, Store: e.repos, Delivery: e.store, CDN: e.cdn, KeyStore: ks, ContentKeys: e.mgr, Viewer: e.viewerDeps(), Access: e.access, Anomalies: e.anomalies, Now: e.clk.Now,
 	})
 	if err != nil {
 		e.t.Fatal(err)
