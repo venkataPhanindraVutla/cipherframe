@@ -21,6 +21,15 @@ func TestPurgeCoversEveryKeyTheSystemWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The renditions of the extra codecs sit beside H.264's under the same prefix (ADR 0064).
+	rHEVC, err := keys.ParseRendition("720p_hevc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rAV1, err := keys.ParseRendition("720p_av1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	src := keys.NewSource(tenant, asset)
 	type written struct {
 		bucket keys.Bucket
@@ -43,6 +52,12 @@ func TestPurgeCoversEveryKeyTheSystemWrites(t *testing.T) {
 			written{keys.Delivery, keys.VariantSegment(tenant, asset, v, r720, 123), KindSegment, v.String()},
 			written{keys.Delivery, keys.VariantSegmentGen(tenant, asset, v, r720, 4, 2), KindSegment, v.String()},
 			written{keys.Delivery, keys.VariantPlaylistGen(tenant, asset, v, r720, 2), KindPlaylist, v.String()},
+			written{keys.Delivery, keys.VariantPlaylist(tenant, asset, v, rHEVC), KindPlaylist, v.String()},
+			written{keys.Delivery, keys.VariantInitSegment(tenant, asset, v, rHEVC), KindInit, v.String()},
+			written{keys.Delivery, keys.VariantSegment(tenant, asset, v, rHEVC, 5), KindSegment, v.String()},
+			written{keys.Delivery, keys.VariantPlaylist(tenant, asset, v, rAV1), KindPlaylist, v.String()},
+			written{keys.Delivery, keys.VariantInitSegment(tenant, asset, v, rAV1), KindInit, v.String()},
+			written{keys.Delivery, keys.VariantSegmentGen(tenant, asset, v, rAV1, 5, 3), KindSegment, v.String()},
 			written{keys.Delivery, keys.VariantPoster(tenant, asset, v), KindPoster, v.String()},
 			written{keys.Delivery, keys.VariantSprite(tenant, asset, v), KindSprite, v.String()},
 			written{keys.Delivery, keys.VariantThumbnails(tenant, asset, v), KindThumbnails, v.String()},

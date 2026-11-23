@@ -231,3 +231,60 @@ func TestMaskedSection(t *testing.T) {
 		t.Errorf("masked-only path in the original: %v", err)
 	}
 }
+
+// The renditions of the extra codecs (ADR 0064) are renditions like the others: named "720p_hevc" and
+// "720p_av1" beside "720p", each is in the top-level tree and every one of its objects has a proof that
+// verifies.
+func TestExtraCodecRenditionsHaveProofs(t *testing.T) {
+	var rends []manifest.RenditionInput
+	for _, name := range []string{"720p", "720p_hevc", "720p_av1"} {
+		r := manifest.RenditionInput{
+			Name: name, Width: 1280, Height: 720, Bandwidth: 1000,
+			Init: obj(name+"/init.mp4", name+"init"), Playlist: obj(name+"/playlist.m3u8", name+"pl"),
+		}
+		for j := range 3 {
+			r.Segments = append(r.Segments, obj(fmt.Sprintf("%s/seg-%d.m4s", name, j), fmt.Sprintf("%sseg%d", name, j)))
+		}
+		rends = append(rends, r)
+	}
+	b, err := manifest.Build(manifest.Input{
+		AssetID: "ast_00000000000000000000000001", TenantID: "ten_00000000000000000000000001",
+		CreatedAt: time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC), PipelineVersion: "v0",
+		Encoder: manifest.Encoder{
+			FFmpeg: "ffmpeg", VideoCodec: "libx264", Preset: "medium", FrameRate: "25/1", SegmentSeconds: 6, KeyframeSeconds: 2, Encryption: "AES-128",
+			Rungs: []manifest.Rung{
+				{Name: "720p", CRF: 23, MaxrateKbps: 2500, BufsizeKbps: 5000, AudioKbps: 96},
+				{Name: "720p_hevc", CRF: 26, MaxrateKbps: 1500, BufsizeKbps: 3000, AudioKbps: 96, Codec: "hevc", VideoCodec: "libx265", Preset: "medium"},
+			},
+		},
+		Renditions: rends, Master: obj("master.m3u8", "master"), SourceSHA256: sha256.Sum256([]byte("src")), SourceSize: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := b.Manifest
+	for _, label := range []string{"rendition:720p_hevc", "rendition:720p_av1", "playlist:720p_hevc", "playlist:720p_av1"} {
+		found := false
+		for _, l := range m.TopLevel.Order {
+			found = found || l == label
+		}
+		if !found {
+			t.Errorf("the top-level tree lacks %s: %v", label, m.TopLevel.Order)
+		}
+	}
+	s, _ := sectionOf(m, Original)
+	for path, h := range paths(s) {
+		p, err := Build(m, Original, path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if err := Verify(*p, sum(t, h)); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+	}
+	for _, path := range []string{"720p_hevc/seg-1.m4s", "720p_av1/init.mp4"} {
+		if _, ok := paths(s)[path]; !ok {
+			t.Errorf("%s is not covered by the manifest", path)
+		}
+	}
+}
