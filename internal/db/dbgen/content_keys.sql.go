@@ -33,6 +33,19 @@ func (q *Queries) DeleteContentKeyByAsset(ctx context.Context, arg DeleteContent
 	return result.RowsAffected(), nil
 }
 
+const deleteContentKeyByID = `-- name: DeleteContentKeyByID :execrows
+DELETE FROM content_keys WHERE id = $1::uuid
+`
+
+// Destroys one content key row by id (re-key, ADR 0068): the row is deleted, not flagged.
+func (q *Queries) DeleteContentKeyByID(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteContentKeyByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const destroyContentKeysByAsset = `-- name: DestroyContentKeysByAsset :many
 DELETE FROM content_keys k
 USING assets a

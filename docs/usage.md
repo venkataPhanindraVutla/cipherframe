@@ -34,12 +34,15 @@ cipherframe list --limit 20 [--cursor C]                  # one page; prints the
 cipherframe delete "$id" --wait > record.json             # waits, then prints the signed deletion record
 cipherframe verify --deletion-record record.json \
   --keys-url "$CIPHERFRAME_SERVER/.well-known/cipherframe-keys.json"
+cipherframe rekey "$id"                                   # queue a content-key re-key (see below)
 ```
 
 - `upload FILE` takes `--mask-faces`, `--ttl 30d` (or `24h`), `--content-type`, `--wait` and
   `--wait-timeout`. It sends the size and a content type, never the file name. An interrupted
   transfer resumes from the server's offset within the same run. If the commit is refused after the
   bytes arrived (a quota, say), run `cipherframe process ID` once the cause is fixed.
+- `rekey ID` queues the audited re-key of a ready asset and prints the job ID (see
+  [Re-keying an asset](#re-keying-an-asset)). It has no `--wait`: read the result from the audit log.
 - `--json` makes stdout one JSON document (the server's response) and errors one JSON object on
   stderr; progress always goes to stderr. `deletion-record ID` and `delete --wait` print the signed
   record in both modes.
@@ -129,6 +132,37 @@ cipherframe verify --manifest manifest.json --keys keys.json --timestamp ts.json
 
 Traces and OTLP metrics are configured with the standard `OTEL_EXPORTER_OTLP_*` variables, not
 `CIPHERFRAME_*` ones; see [observability.md](observability.md).
+
+## Re-keying an asset
+
+Re-keying encrypts every segment of an asset again under a freshly generated content key, signs the
+integrity manifest again and destroys the old key (M10-4, [ADR 0068](adr/0068-content-key-rekey.md)).
+Do it when a content key may have leaked. It is explicit and per asset; nothing re-keys on its own.
+
+```sh
+cipherframe rekey "$id"                    # asset_id  re-key queued (job 123)
+cipherframe audit export | grep asset.rekey  # asset.rekey_requested, then _completed or _failed
+```
+
+The API is `POST /v1/assets/{asset_id}/rekey` (scope `assets:write`, no body) and answers `202` with
+`{"asset_id": "...", "job_id": 123}`. An asset that is not `ready` is `409 asset_not_ready`; one that
+is being deleted, whose masked variant is still being made, or that already has a re-key waiting or
+running is `409 conflict`; another tenant's asset and a deleted one are `404 not_found`. A re-key that
+failed for good (the audit log shows `asset.rekey_failed`) can be requested again.
+
+- The asset keeps playing under its old key until the switch, which is one database transaction. A
+  failed or interrupted attempt changes nothing and is retried by the worker.
+- **Viewers who were playing during the switch** cannot fetch a key any more (`401`) and their old
+  segments are deleted: the player must start a new session. Sessions started afterwards use the new
+  key. With a CDN configured, the asset's CDN purge is queued with the switch.
+- The manifest is signed again (and timestamped again when anchoring is on). `cipherframe verify`
+  works with the new manifest and the new files; the old manifest does not match the new bytes.
+- The worker needs enough storage for both copies of the segments until the old ones are deleted at
+  the end of the job.
+- **What it does not do:** it does not help against plaintext, or keys, that a viewer already saved,
+  and it does not make ciphertext copied earlier unreadable to someone who holds the old key. Bucket
+  versions and backups taken before the re-key still hold the old ciphertext and (in the database
+  backup) the old wrapped key. See [the threat model](threat-model.md#content-key-re-key-m10-4-adr-0068).
 
 ## Running the server
 
@@ -395,6 +429,10 @@ SeaweedFS is published on the host because presigned URLs are signed for
 `CIPHERFRAME_S3_PUBLIC_ENDPOINT` (`http://localhost:8333`) and must be usable from your browser, while
 the server itself talks to `http://seaweedfs:8333` inside the Compose network.
 
+**CDN delivery.** A tenant can set `delivery` to `cdn` once the deployment has a CDN configured
+(`CIPHERFRAME_CDN_*` above); the settings endpoint refuses it otherwise. Setup, revocation limits and
+purge behaviour are in [cdn.md](cdn.md).
+
 **Presigned delivery and CORS.** A tenant that sets `delivery` to `presigned` (docs/api.md) makes the
 player fetch segments from `CIPHERFRAME_S3_PUBLIC_ENDPOINT` directly. A browser then needs the delivery
 bucket to allow your page's origin to GET, so a CORS rule on the delivery bucket is required (it is
@@ -652,6 +690,13 @@ variable, never its value.
 | `CIPHERFRAME_TSA_URL` | unset (anchoring off) | no | no | Endpoint of an RFC 3161 time-stamping authority (ADR 0041). `https` only; `http` is accepted only when `CIPHERFRAME_ENV=development`, for a local authority. Set on the **worker** role, which runs the `manifest.anchor` job. See [Timestamp anchoring](#timestamp-anchoring-optional). |
 | `CIPHERFRAME_TSA_TIMEOUT` | `10s` | no | no | Go duration for one request to the authority, above zero and at most `2m`. |
 | `CIPHERFRAME_TSA_POLICY_OID` | unset | no | no | Policy the request asks for, dotted decimal such as `1.2.3.4`. Leave unset to accept the authority's default. |
+| `CIPHERFRAME_CDN_PROVIDER` | unset (no CDN) | no | no | `cloudfront` or `cloudcdn`. Turns on the `cdn` delivery setting (ADR 0062, [cdn.md](cdn.md)). Set the CDN variables on **every** role (the key file only on the edge): the api role needs to know a CDN exists, the edge signs, the worker purges. With no provider, any other `CIPHERFRAME_CDN_*` variable is an error. |
+| `CIPHERFRAME_CDN_BASE_URL` | none | with a provider | no | The CDN as browsers reach it: `https://host`, no path or query (`http` only in development). Its origin must be the delivery bucket root. |
+| `CIPHERFRAME_CDN_KEY_ID` | none | with a provider | no | The CloudFront public key ID (of a key in a trusted key group), or the Cloud CDN signing key name. Not secret. |
+| `CIPHERFRAME_CDN_SIGNING_KEY_FILE` | none | on the **edge** role | **yes, file only** | Path of the signing key: an RSA 2048 PEM private key (CloudFront), or the 16-byte Cloud CDN key in URL-safe base64. There is no variable for the key itself; `CIPHERFRAME_CDN_SIGNING_KEY` is refused. Only the **edge** role reads the file, at startup, and refuses to start without it. |
+| `CIPHERFRAME_CDN_CLOUDFRONT_DISTRIBUTION_ID` | none | provider `cloudfront` | no | The distribution the **worker** invalidates after a deletion. |
+| `CIPHERFRAME_CDN_CLOUDCDN_PROJECT` | none | provider `cloudcdn` | no | Project of the URL map the worker invalidates. Credentials come from Application Default Credentials (Workload Identity on GKE). |
+| `CIPHERFRAME_CDN_CLOUDCDN_URL_MAP` | none | provider `cloudcdn` | no | Name of the URL map in front of the delivery bucket's backend bucket. |
 
 Empty values of non-secret variables mean "use the default".
 

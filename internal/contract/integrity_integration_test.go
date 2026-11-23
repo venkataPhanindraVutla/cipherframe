@@ -27,6 +27,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms/local"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/purge"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/rekey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/signing"
 )
 
@@ -60,6 +61,9 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	if err := purge.Declare(jreg); err != nil {
 		t.Fatal(err)
 	}
+	if err := rekey.Declare(jreg); err != nil {
+		t.Fatal(err)
+	}
 	queue, err := jobs.NewQueue(pool, jreg, jobs.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -68,9 +72,13 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rekeyer, err := rekey.NewRequester(pool, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(api.New(api.Deps{
 		Log: log, Verifier: auth.NewVerifier(repos, onePepper{}, log, nil), Manager: am, Signing: signer,
-		KeySet: signing.NewKeySet(repos, 1, nil), Repos: repos, Purge: requester,
+		KeySet: signing.NewKeySet(repos, 1, nil), Repos: repos, Purge: requester, Rekey: rekeyer,
 	}).Handler())
 	t.Cleanup(srv.Close)
 
@@ -170,6 +178,11 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	call("POST", "/v1/verify", map[string]any{"sha256": hash}, 200)
 	call("POST", "/v1/verify", map[string]any{"sha256": hash, "asset_id": aid}, 400)
 
+	// Re-key: queued once, then refused while the job is in the queue; an unknown asset is not found.
+	call("POST", "/v1/assets/"+aid+"/rekey", nil, 202)
+	call("POST", "/v1/assets/"+aid+"/rekey", nil, 409)
+	call("POST", "/v1/assets/ast_00000000000000000000000001/rekey", nil, 404)
+
 	// Deletion: the request, the record that is not there yet, and the record once the purge wrote it.
 	call("DELETE", "/v1/assets/"+aid, nil, 202)
 	call("DELETE", "/v1/assets/"+aid, nil, 202)
@@ -206,7 +219,7 @@ func TestIntegrityOperationsMatchSpec(t *testing.T) {
 	call("GET", "/v1/assets/"+aid+"/deletion-record", nil, 200)
 	call("DELETE", "/v1/assets/"+aid, nil, 202)
 
-	for _, op := range []string{"getAssetManifest", "getAssetManifestTimestamp", "getAssetProof", "verifyArtifact", "deleteAsset", "getAssetDeletionRecord"} {
+	for _, op := range []string{"getAssetManifest", "getAssetManifestTimestamp", "getAssetProof", "verifyArtifact", "deleteAsset", "getAssetDeletionRecord", "rekeyAsset"} {
 		if !covered[op] {
 			t.Errorf("operation %s was not exercised", op)
 		}

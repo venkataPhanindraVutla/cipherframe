@@ -27,3 +27,18 @@ output "role_arns" {
   description = "IAM role ARN per server role, for the pod or instance that runs it."
   value       = { for k, r in aws_iam_role.this : k => r.arn }
 }
+
+output "cdn_base_url" {
+  description = "CIPHERFRAME_CDN_BASE_URL, when enable_cdn is true (CIPHERFRAME_CDN_PROVIDER=cloudfront)."
+  value       = var.enable_cdn ? "https://${aws_cloudfront_distribution.cdn[0].domain_name}" : null
+}
+
+output "cdn_key_id" {
+  description = "CIPHERFRAME_CDN_KEY_ID (the CloudFront public key ID), when enable_cdn is true."
+  value       = var.enable_cdn ? aws_cloudfront_public_key.cdn[0].id : null
+}
+
+output "cdn_distribution_id" {
+  description = "CIPHERFRAME_CDN_CLOUDFRONT_DISTRIBUTION_ID, when enable_cdn is true."
+  value       = var.enable_cdn ? aws_cloudfront_distribution.cdn[0].id : null
+}

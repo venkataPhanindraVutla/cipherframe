@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/id"
 )
@@ -130,6 +131,46 @@ func VariantHLSPrefix(t id.TenantID, a id.AssetID, v Variant) string {
 // remove the previous attempt's output.
 func HLSPrefix(t id.TenantID, a id.AssetID) string { return VariantHLSPrefix(t, a, Original) }
 
+// VariantGenPrefix is the prefix of the encrypted objects (media segments and media playlists) of
+// one key generation of a variant (ADR 0068). Generation 0 is the variant's HLS prefix itself, where
+// every asset starts; generation n > 0, made by the n-th re-key, is "k<n>/" under it. It panics on an
+// unknown variant or a negative generation.
+func VariantGenPrefix(t id.TenantID, a id.AssetID, v Variant, gen int) string {
+	if gen < 0 {
+		panic("keys: negative generation")
+	}
+	if gen == 0 {
+		return VariantHLSPrefix(t, a, v)
+	}
+	return VariantHLSPrefix(t, a, v) + "k" + strconv.Itoa(gen) + "/"
+}
+
+// SplitGeneration splits a path relative to a variant's HLS prefix into its key generation and the
+// path inside that generation: "k2/720p/seg-0.m4s" is (2, "720p/seg-0.m4s"), anything else
+// generation 0. Only a "k" followed by a positive number without leading zeros counts, so it
+// cannot be confused with a rendition name (renditions are named like "720p").
+func SplitGeneration(rel string) (gen int, rest string) {
+	dir, tail, ok := strings.Cut(rel, "/")
+	if !ok || len(dir) < 2 || dir[0] != 'k' || dir[1] == '0' {
+		return 0, rel
+	}
+	n, err := strconv.Atoi(dir[1:])
+	if err != nil || n < 1 || dir[1:] != strconv.Itoa(n) {
+		return 0, rel
+	}
+	return n, tail
+}
+
+// WithGeneration moves a path relative to a variant's HLS prefix to key generation gen: the same
+// path inside "k<gen>/", or the bare path for generation 0.
+func WithGeneration(rel string, gen int) string {
+	_, rest := SplitGeneration(rel)
+	if gen == 0 {
+		return rest
+	}
+	return "k" + strconv.Itoa(gen) + "/" + rest
+}
+
 // VariantMaster is the key of a variant's master playlist in the delivery bucket.
 func VariantMaster(t id.TenantID, a id.AssetID, v Variant) string {
 	return VariantHLSPrefix(t, a, v) + "master.m3u8"
@@ -137,7 +178,14 @@ func VariantMaster(t id.TenantID, a id.AssetID, v Variant) string {
 
 // VariantPlaylist is the key of a variant's rendition media playlist in the delivery bucket.
 func VariantPlaylist(t id.TenantID, a id.AssetID, v Variant, r Rendition) string {
-	return VariantHLSPrefix(t, a, v) + renditionName(r) + "/playlist.m3u8"
+	return VariantPlaylistGen(t, a, v, r, 0)
+}
+
+// VariantPlaylistGen is VariantPlaylist for one key generation (ADR 0068). Its media segments are
+// VariantSegmentGen of the same generation; the init segment and the master playlist are shared by
+// every generation.
+func VariantPlaylistGen(t id.TenantID, a id.AssetID, v Variant, r Rendition, gen int) string {
+	return VariantGenPrefix(t, a, v, gen) + renditionName(r) + "/playlist.m3u8"
 }
 
 // VariantInitSegment is the key of a variant's rendition initialization segment.
@@ -147,10 +195,15 @@ func VariantInitSegment(t id.TenantID, a id.AssetID, v Variant, r Rendition) str
 
 // VariantSegment is the key of media segment n (n >= 0) of a variant's rendition.
 func VariantSegment(t id.TenantID, a id.AssetID, v Variant, r Rendition, n int) string {
+	return VariantSegmentGen(t, a, v, r, n, 0)
+}
+
+// VariantSegmentGen is VariantSegment for one key generation (ADR 0068).
+func VariantSegmentGen(t id.TenantID, a id.AssetID, v Variant, r Rendition, n, gen int) string {
 	if n < 0 {
 		panic("keys: negative segment number")
 	}
-	return VariantHLSPrefix(t, a, v) + renditionName(r) + "/seg-" + strconv.Itoa(n) + ".m4s"
+	return VariantGenPrefix(t, a, v, gen) + renditionName(r) + "/seg-" + strconv.Itoa(n) + ".m4s"
 }
 
 // Master is the key of the original variant's master playlist.

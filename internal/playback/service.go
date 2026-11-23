@@ -59,6 +59,9 @@ type Deps struct {
 	// Anomalies raises the session_limit and rapid_session_creation signals (M4-9) and applies
 	// the auto-revoke policy. Nil raises nothing.
 	Anomalies *anomaly.Detector
+	// CDN reports that the deployment has a CDN configured (ADR 0062); without it a tenant cannot
+	// set delivery to cdn.
+	CDN bool
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -72,6 +75,7 @@ type Service struct {
 	secrets *viewerauth.SecretBox // nil without a KMS registry
 	access  *accesslog.Recorder   // nil records nothing
 	anomaly *anomaly.Detector     // nil raises nothing
+	cdn     bool                  // the deployment has a CDN (ADR 0062)
 	now     func() time.Time
 }
 
@@ -86,7 +90,7 @@ func NewService(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	svc := &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, access: d.Access, anomaly: d.Anomalies, now: d.Now}
+	svc := &Service{pool: d.Pool, repos: db.New(d.Pool), keyring: d.Keyring, edge: d.EdgeURL, access: d.Access, anomaly: d.Anomalies, cdn: d.CDN, now: d.Now}
 	if d.KMS != nil {
 		svc.secrets = viewerauth.NewSecretBox(d.KMS)
 	}
@@ -270,7 +274,7 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 	}
 	tok, err := s.keyring.Sign(token.Claims{
 		SessionID: sid.String(), AssetID: asset.ID.String(), TenantID: in.TenantID.String(),
-		Scopes: token.ScopeManifest | token.ScopeKey | token.ScopeSegment, Variant: variant.String(),
+		Scopes: token.ScopeManifest | token.ScopeKey | token.ScopeSegment, Variant: variant.String(), Generation: asset.KeyGeneration,
 		IssuedAt: now, Expiry: tokenExpires,
 	})
 	if err != nil {
@@ -347,7 +351,11 @@ func (s *Service) GetSettings(ctx context.Context, tenantID id.TenantID) (db.Pla
 // PutSettings validates and replaces every setting of the tenant, and records an audit event.
 // Invalid settings return invalid_request with one field error per problem.
 func (s *Service) PutSettings(ctx context.Context, tenantID id.TenantID, actor auth.Actor, in db.PlaybackSettings) (db.PlaybackSettings, error) {
-	if fields := ValidateSettings(in); len(fields) > 0 {
+	fields := ValidateSettings(in)
+	if in.Delivery == db.DeliveryCDN && !s.cdn {
+		fields = append(fields, errs.FieldError{Field: "delivery", Message: "cdn is not available: this deployment has no CDN configured"})
+	}
+	if len(fields) > 0 {
 		return db.PlaybackSettings{}, errs.Invalid("The playback settings are invalid.", fields)
 	}
 	var out db.PlaybackSettings

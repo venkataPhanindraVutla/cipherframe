@@ -114,6 +114,7 @@ func Classify(tenant id.TenantID, asset id.AssetID, bucket keys.Bucket, key stri
 				continue
 			}
 			c.Variant = v.String()
+			_, hls = keys.SplitGeneration(hls) // a re-keyed object is classified like its generation 0 twin (ADR 0068)
 			c.Kind = hlsKind(hls)
 			return c
 		}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/accesslog"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/anomaly"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/cdn"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/contentkey"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/edge/gen"
@@ -93,6 +94,9 @@ type PlaybackDeps struct {
 	Store   PlaybackStore
 	// Delivery is the delivery bucket; only it can presign reads (I4).
 	Delivery storage.DeliveryStore
+	// CDN signs CDN URLs for the delivery bucket (ADR 0062). Nil when the deployment has no CDN:
+	// a tenant whose delivery is still cdn is then served as proxy.
+	CDN cdn.Signer
 	// KeyStore and ContentKeys serve the key endpoint. Without both it answers 503
 	// dependency_unavailable (the server always provides them for the edge role).
 	KeyStore    KeyStore
@@ -121,6 +125,7 @@ type Playback struct {
 	keyring   *token.Keyring
 	store     PlaybackStore
 	delivery  storage.DeliveryStore
+	cdn       cdn.Signer
 	keyStore  KeyStore
 	keys      ContentKeyReader
 	viewer    *ViewerDeps
@@ -155,7 +160,7 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 	}
 	return &Playback{
 		subtitles: d.Subtitles,
-		keyring:   d.Keyring, store: d.Store, delivery: d.Delivery, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, access: d.Access, anomalies: d.Anomalies, now: d.Now,
+		keyring:   d.Keyring, store: d.Store, delivery: d.Delivery, cdn: d.CDN, keyStore: d.KeyStore, keys: d.ContentKeys, viewer: d.Viewer, access: d.Access, anomalies: d.Anomalies, now: d.Now,
 		settings:  newTTLCache[string, db.PlaybackSettings](settingsCacheMax, playbackCacheTTL, d.Now),
 		viewerCfg: newTTLCache[string, viewerConfig](settingsCacheMax, playbackCacheTTL, d.Now),
 		sessions:  newTTLCache[[sha256.Size]byte, sessionTenant](sessionCacheMax, playbackCacheTTL, d.Now),
@@ -221,7 +226,11 @@ type grant struct {
 	// variant is the variant the session is bound to. Every storage key and the content key are
 	// resolved from it, never from anything the request says (ADR 0036).
 	variant keys.Variant
-	session id.SessionID
+	// generation is the content-key generation the session is bound to (ADR 0068): the media
+	// playlists and segments are read from it, and the key is served only while the asset is still
+	// at it.
+	generation int
+	session    id.SessionID
 	// urlToken is the token to put in rewritten URIs: set only when the tenant has token_in_url on.
 	urlToken string
 	// settings are the tenant's settings the guard used (the key bounds come from here).
@@ -262,10 +271,10 @@ func segmentObject(g grant, rend keys.Rendition, file string) (key, contentType 
 	if err != nil {
 		return "", "", false
 	}
-	return keys.VariantSegment(g.tenant, g.asset, g.variant, rend, n), "video/iso.segment", true
+	return keys.VariantSegmentGen(g.tenant, g.asset, g.variant, rend, n, g.generation), "video/iso.segment", true
 }
 
-// maxPresignTTL is the longest lifetime of a presigned segment URL (ADR 0032).
+// maxPresignTTL is the longest lifetime of a presigned or CDN-signed segment URL (ADR 0032, 0062).
 const maxPresignTTL = 10 * time.Minute
 
 var (
@@ -355,13 +364,26 @@ func (s *server) GetPlaybackMedia(ctx context.Context, req gen.GetPlaybackMediaR
 	if err != nil {
 		return nil, errs.New(errs.NotFound, "No such resource.")
 	}
-	src, err := s.play.readPlaylist(ctx, keys.VariantPlaylist(g.tenant, g.asset, g.variant, rend))
+	src, err := s.play.readPlaylist(ctx, keys.VariantPlaylistGen(g.tenant, g.asset, g.variant, rend, g.generation))
 	if err != nil {
 		return nil, err
 	}
 	var segURI hls.SegmentURIFunc
-	if g.settings.Delivery == db.DeliveryPresigned {
-		ttl, ok := presignTTL(g.tokenExpiry, s.play.now())
+	now := s.play.now()
+	var sign func(key string, ttl time.Duration) (string, error)
+	switch {
+	case g.settings.Delivery == db.DeliveryPresigned:
+		sign = func(key string, ttl time.Duration) (string, error) {
+			r, err := s.play.delivery.PresignGet(ctx, key, ttl)
+			return r.URL, err
+		}
+	case g.settings.Delivery == db.DeliveryCDN && s.play.cdn != nil:
+		sign = func(key string, ttl time.Duration) (string, error) {
+			return s.play.cdn.Sign(key, now.Add(ttl))
+		}
+	}
+	if sign != nil {
+		ttl, ok := presignTTL(g.tokenExpiry, now)
 		if !ok { // the token is about to expire: a URL that lives that short is no use
 			return nil, errs.New(errs.Unauthenticated, msgPlaybackUnauthenticated)
 		}
@@ -370,12 +392,12 @@ func (s *server) GetPlaybackMedia(ctx context.Context, req gen.GetPlaybackMediaR
 			if !ok {
 				return "", errPresignName
 			}
-			r, err := s.play.delivery.PresignGet(ctx, key, ttl)
+			u, err := sign(key, ttl)
 			if err != nil {
-				// storage errors carry no URL or key; still report only that signing failed.
+				// signing errors carry no URL or key; still report only that signing failed.
 				return "", errPresignFailed
 			}
-			return r.URL, nil
+			return u, nil
 		}
 	}
 	out, err := hls.RewriteMediaWith(src, g.urlToken, segURI)

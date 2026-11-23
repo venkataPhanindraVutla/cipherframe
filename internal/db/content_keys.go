@@ -2,7 +2,10 @@ package db
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db/dbgen"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
@@ -178,4 +181,40 @@ func (r *Repos) UpdateContentKeyWrapped(ctx context.Context, u RewrapUpdate) (bo
 		return false, mapError(err)
 	}
 	return n == 1, nil
+}
+
+// SwapContentKey replaces the content key row old by next in the caller's transaction (re-key,
+// ADR 0068): the old row is destroyed, not flagged, and the new one takes its variant, so the
+// asset has exactly one key per variant before and after (invariant I7). It is a state conflict
+// (a state conflict) when old is no longer there, and nothing changes.
+func (r *Repos) SwapContentKey(ctx context.Context, tenantID id.TenantID, old id.ContentKeyID, next NewContentKeyRow) error {
+	oid, err := requirePG(old)
+	if err != nil {
+		return err
+	}
+	n, err := r.q.DeleteContentKeyByID(ctx, oid)
+	if err != nil {
+		return mapError(err)
+	}
+	if n != 1 {
+		return stateConflict()
+	}
+	_, err = r.CreateContentKey(ctx, tenantID, next)
+	return err
+}
+
+// SetKeyGeneration moves the tenant's ready asset from generation from to from+1 in the caller's
+// transaction. It is a state conflict (ErrStateChanged) unless the asset is ready and still at from.
+func (r *Repos) SetKeyGeneration(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, from int, at time.Time) error {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q.SetAssetKeyGeneration(ctx, dbgen.SetAssetKeyGenerationParams{
+		TenantID: tid, ID: aid, FromGeneration: int32(from), ToGeneration: int32(from + 1), At: at.UTC(), //nolint:gosec // generations count re-keys, far below int32
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return stateConflict()
+	}
+	return mapError(err)
 }

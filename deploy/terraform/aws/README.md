@@ -83,6 +83,29 @@ the role (see docs/usage.md). Nothing here outputs a secret. Do not set `CIPHERF
 for AWS. When you use presigned delivery or browser uploads, set `cors_allowed_origins` to your
 player and uploader origins.
 
+## Optional CDN (`enable_cdn`)
+
+`enable_cdn = true` (default `false`) adds a CloudFront distribution in front of the **delivery
+bucket only** (ADR 0062, 0065; setup in [docs/cdn.md](../../../docs/cdn.md)): origin access control
+onto the bucket, a trusted key group, HTTPS only, and a bucket policy that lets this distribution read
+`t/*/a/*`. Create an RSA 2048 key pair yourself (`openssl genrsa -out cdn-key.pem 2048` and
+`openssl rsa -in cdn-key.pem -pubout`), pass only the public half as `cdn_public_key_pem`, and give the
+private half to the edge role as `CIPHERFRAME_CDN_SIGNING_KEY_FILE`; it never goes into Terraform.
+The worker role also gets `cloudfront:CreateInvalidation` on this one distribution, for the purge
+after a deletion.
+
+| Output | Variable |
+| --- | --- |
+| `cdn_base_url` | `CIPHERFRAME_CDN_BASE_URL` |
+| `cdn_key_id` | `CIPHERFRAME_CDN_KEY_ID` |
+| `cdn_distribution_id` | `CIPHERFRAME_CDN_CLOUDFRONT_DISTRIBUTION_ID` |
+
+Also set `CIPHERFRAME_CDN_PROVIDER=cloudfront`. The distribution uses its `cloudfront.net` domain; add a
+custom domain and certificate yourself if you want one. With `bucket_kms_key_arn` set, the key's policy
+must also allow CloudFront (`kms:Decrypt` for the `cloudfront.amazonaws.com` service principal with this
+distribution as the source), which this module cannot change. Cost: CloudFront charges per request and
+per GB out, and per invalidation path beyond the free allowance.
+
 ## Use
 
 ```sh

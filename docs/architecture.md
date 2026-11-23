@@ -14,7 +14,7 @@ verifiably.
 | Role | Responsibility |
 |---|---|
 | Control plane (`api`) | Assets, uploads, sessions, keys, deletion records, webhooks, quotas. Server-to-server only. |
-| Data plane (`edge`) | Session-scoped playlists, the key endpoint, segment delivery (`proxy` or `presigned`). Browser-facing. |
+| Data plane (`edge`) | Session-scoped playlists, the key endpoint, segment delivery (`proxy`, `presigned` or `cdn`). Browser-facing. |
 | Worker | Probe, transcode, package, encrypt, hash, sign, purge, retention sweeps. Runs FFmpeg and FFprobe as separate processes. |
 | CLI | Operator and integration tooling, including a public-key-only verifier. |
 | Reference player | Demo browser player that attaches the session token to every request. |
@@ -470,6 +470,10 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
   token with under a second left is refused as unauthorized. The setting comes from the same 30
   second cache as `token_in_url`. Signing is local (no storage call), URLs are never logged, and
   `proxy` output is byte-identical to before.
+- **CDN delivery** (ADR 0062, 0065): with `delivery = cdn` and a configured `cdn.Signer` the same code
+  path signs `base URL + object key` with the CDN's scheme instead (`internal/cdn`). Without a signer
+  the tenant is served as `proxy`. After a deletion the worker's `asset.cdn_purge` job invalidates the
+  asset's delivery prefix.
 - **Rewriting** (`internal/hls/rewrite.go`) is a strict line rewriter, not a general parser: it accepts
   exactly what the pipeline writes and refuses the rest. Stored playlists never change, and everything
   session-specific (the key URI, the optional token) is added on the way out.
@@ -697,6 +701,18 @@ registers: `asset.ready`, `asset.failed`, `asset.deleted`, `session.revoked`, `s
 Each asset has one active content key (I7), wrapped by a key-encryption key held in a key management
 provider (AWS KMS, Vault Transit, GCP KMS; a development-only local provider is **pending P5**). See
 [encryption.md](encryption.md).
+
+**Re-key (M10-4, [ADR 0068](adr/0068-content-key-rekey.md)).** `POST /v1/assets/{asset_id}/rekey`
+queues `asset.rekey` (package `internal/rekey`, worker role). The job writes the media segments and
+media playlists of every variant, encrypted under a new key, into a generation directory `k<n>/` of
+the variant's HLS prefix while the asset keeps playing under the old key, then in **one transaction**
+under the asset lock signs the manifest again, replaces the content key rows (the old ones are
+deleted: still one key per variant, I7), swaps the registry rows, sets `assets.key_generation` and
+queues the timestamp anchor and the CDN purge when those are configured; the old objects are
+deleted after the commit. A crash before the commit leaves the asset as it was. Playback tokens
+carry the generation the session started on: the edge reads that generation's playlists and
+segments and serves the key only while it is the asset's current generation, so a session that
+began before the switch must start again.
 
 ## Lifecycle
 

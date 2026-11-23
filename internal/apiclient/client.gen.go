@@ -439,6 +439,7 @@ func (e PlaybackSettingsAutoRevoke) Valid() bool {
 
 // Defines values for PlaybackSettingsDelivery.
 const (
+	PlaybackSettingsDeliveryCdn       PlaybackSettingsDelivery = "cdn"
 	PlaybackSettingsDeliveryPresigned PlaybackSettingsDelivery = "presigned"
 	PlaybackSettingsDeliveryProxy     PlaybackSettingsDelivery = "proxy"
 )
@@ -446,6 +447,8 @@ const (
 // Valid indicates whether the value is a known member of the PlaybackSettingsDelivery enum.
 func (e PlaybackSettingsDelivery) Valid() bool {
 	switch e {
+	case PlaybackSettingsDeliveryCdn:
+		return true
 	case PlaybackSettingsDeliveryPresigned:
 		return true
 	case PlaybackSettingsDeliveryProxy:
@@ -481,6 +484,7 @@ func (e PlaybackSettingsInputAutoRevoke) Valid() bool {
 
 // Defines values for PlaybackSettingsInputDelivery.
 const (
+	PlaybackSettingsInputDeliveryCdn       PlaybackSettingsInputDelivery = "cdn"
 	PlaybackSettingsInputDeliveryPresigned PlaybackSettingsInputDelivery = "presigned"
 	PlaybackSettingsInputDeliveryProxy     PlaybackSettingsInputDelivery = "proxy"
 )
@@ -488,6 +492,8 @@ const (
 // Valid indicates whether the value is a known member of the PlaybackSettingsInputDelivery enum.
 func (e PlaybackSettingsInputDelivery) Valid() bool {
 	switch e {
+	case PlaybackSettingsInputDeliveryCdn:
+		return true
 	case PlaybackSettingsInputDeliveryPresigned:
 		return true
 	case PlaybackSettingsInputDeliveryProxy:
@@ -1090,6 +1096,14 @@ type AssetIdValue = string
 type AssetList struct {
 	Items      []Asset `json:"items"`
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AssetRekey defines model for AssetRekey.
+type AssetRekey struct {
+	AssetId string `json:"asset_id"`
+
+	// JobId The ID of the queued `asset.rekey` job.
+	JobId int64 `json:"job_id"`
 }
 
 // AssetState The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`,
@@ -1832,6 +1846,11 @@ type PlaybackSettingsInput struct {
 	// can appear in playlists, browser history and the logs of intermediaries. The key
 	// endpoint is always served by edge, so revocation still applies. In `presigned` mode
 	// the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
+	// `cdn` (ADR 0062): like `presigned`, but the URLs are signed for the deployment's
+	// CDN (CloudFront or Cloud CDN) and point at it, with the same expiry rule. Setting it
+	// is refused with `invalid_request` (field `delivery`) when the deployment has no CDN
+	// configured. After a session is revoked, a URL it already received keeps working
+	// until it expires (at most 10 minutes); the content key is still refused.
 	Delivery *PlaybackSettingsInputDelivery `json:"delivery,omitempty"`
 
 	// HeartbeatIntervalSeconds How often the player sends a heartbeat. Must be less than `token_ttl_seconds` and less
@@ -1874,6 +1893,11 @@ type PlaybackSettingsInputAutoRevoke string
 // can appear in playlists, browser history and the logs of intermediaries. The key
 // endpoint is always served by edge, so revocation still applies. In `presigned` mode
 // the delivery bucket needs a CORS rule that allows the tenant's origins to GET.
+// `cdn` (ADR 0062): like `presigned`, but the URLs are signed for the deployment's
+// CDN (CloudFront or Cloud CDN) and point at it, with the same expiry rule. Setting it
+// is refused with `invalid_request` (field `delivery`) when the deployment has no CDN
+// configured. After a session is revoked, a URL it already received keeps working
+// until it expires (at most 10 minutes); the content key is still refused.
 type PlaybackSettingsInputDelivery string
 
 // PrivacySettings A tenant's effective privacy settings (ADR 0040).
@@ -3205,6 +3229,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/assets/{asset_id}/proof (the `GetAssetProof` operationId).
 	GetAssetProof(ctx context.Context, assetId AssetId, params *GetAssetProofParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RekeyAsset Re-key an asset
+	//
+	// Queues the audited re-key of a `ready` asset (ADR 0068): every encrypted segment of every
+	// variant is decrypted with the asset's content key and encrypted again under a freshly
+	// generated one, the integrity manifest is signed again (and timestamped again when anchoring
+	// is on), and the asset is switched to the new key and the old key destroyed in one
+	// transaction. The asset keeps playing under its old key until that switch. Sessions that
+	// started before the switch can no longer fetch a key (`401`) and must be started again;
+	// sessions started afterwards use the new key. When a CDN is configured the asset's CDN
+	// purge is queued with the switch.
+	//
+	// This limits what a **leaked content key** can still decrypt: segments stored from now on are
+	// unreadable with it. It does not help against plaintext, or keys, that a viewer already saved.
+	//
+	// The response is `202` with the ID of the job; the audit log (`GET /v1/audit-events`) gets
+	// `asset.rekey_requested` now, then `asset.rekey_completed` or `asset.rekey_failed`. An asset
+	// that is not `ready` is `409 asset_not_ready`; one being deleted, or whose masked variant is
+	// still being made, is `409 conflict`; so is an asset whose earlier re-key has not finished
+	// (at most one per asset). A deleted asset, and another tenant's, are `404 not_found`. Requires
+	// the `assets:write` scope.
+	//
+	// Corresponds with POST /v1/assets/{asset_id}/rekey (the `RekeyAsset` operationId).
+	RekeyAsset(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAssetSubtitles List an asset's subtitle tracks
 	//
@@ -4547,6 +4595,40 @@ func (c *HTTPClient) GetAssetManifestTimestamp(ctx context.Context, assetId Asse
 // Corresponds with GET /v1/assets/{asset_id}/proof (the `GetAssetProof` operationId).
 func (c *HTTPClient) GetAssetProof(ctx context.Context, assetId AssetId, params *GetAssetProofParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAssetProofRequest(c.Server, assetId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RekeyAsset Re-key an asset
+//
+// Queues the audited re-key of a `ready` asset (ADR 0068): every encrypted segment of every
+// variant is decrypted with the asset's content key and encrypted again under a freshly
+// generated one, the integrity manifest is signed again (and timestamped again when anchoring
+// is on), and the asset is switched to the new key and the old key destroyed in one
+// transaction. The asset keeps playing under its old key until that switch. Sessions that
+// started before the switch can no longer fetch a key (`401`) and must be started again;
+// sessions started afterwards use the new key. When a CDN is configured the asset's CDN
+// purge is queued with the switch.
+//
+// This limits what a **leaked content key** can still decrypt: segments stored from now on are
+// unreadable with it. It does not help against plaintext, or keys, that a viewer already saved.
+//
+// The response is `202` with the ID of the job; the audit log (`GET /v1/audit-events`) gets
+// `asset.rekey_requested` now, then `asset.rekey_completed` or `asset.rekey_failed`. An asset
+// that is not `ready` is `409 asset_not_ready`; one being deleted, or whose masked variant is
+// still being made, is `409 conflict`; so is an asset whose earlier re-key has not finished
+// (at most one per asset). A deleted asset, and another tenant's, are `404 not_found`. Requires
+// the `assets:write` scope.
+//
+// Corresponds with POST /v1/assets/{asset_id}/rekey (the `RekeyAsset` operationId).
+func (c *HTTPClient) RekeyAsset(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRekeyAssetRequest(c.Server, assetId)
 	if err != nil {
 		return nil, err
 	}
@@ -6879,6 +6961,40 @@ func NewGetAssetProofRequest(server string, assetId AssetId, params *GetAssetPro
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRekeyAssetRequest constructs an http.Request for the RekeyAsset method
+func NewRekeyAssetRequest(server string, assetId AssetId) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "asset_id", assetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/assets/%s/rekey", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -9456,6 +9572,32 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/assets/{asset_id}/proof (the `GetAssetProof` operationId).
 	GetAssetProofWithResponse(ctx context.Context, assetId AssetId, params *GetAssetProofParams, reqEditors ...RequestEditorFn) (*GetAssetProofResponse, error)
+
+	// RekeyAssetWithResponse Re-key an asset
+	//
+	// Queues the audited re-key of a `ready` asset (ADR 0068): every encrypted segment of every
+	// variant is decrypted with the asset's content key and encrypted again under a freshly
+	// generated one, the integrity manifest is signed again (and timestamped again when anchoring
+	// is on), and the asset is switched to the new key and the old key destroyed in one
+	// transaction. The asset keeps playing under its old key until that switch. Sessions that
+	// started before the switch can no longer fetch a key (`401`) and must be started again;
+	// sessions started afterwards use the new key. When a CDN is configured the asset's CDN
+	// purge is queued with the switch.
+	//
+	// This limits what a **leaked content key** can still decrypt: segments stored from now on are
+	// unreadable with it. It does not help against plaintext, or keys, that a viewer already saved.
+	//
+	// The response is `202` with the ID of the job; the audit log (`GET /v1/audit-events`) gets
+	// `asset.rekey_requested` now, then `asset.rekey_completed` or `asset.rekey_failed`. An asset
+	// that is not `ready` is `409 asset_not_ready`; one being deleted, or whose masked variant is
+	// still being made, is `409 conflict`; so is an asset whose earlier re-key has not finished
+	// (at most one per asset). A deleted asset, and another tenant's, are `404 not_found`. Requires
+	// the `assets:write` scope.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/assets/{asset_id}/rekey (the `RekeyAsset` operationId).
+	RekeyAssetWithResponse(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*RekeyAssetResponse, error)
 
 	// ListAssetSubtitlesWithResponse List an asset's subtitle tracks
 	//
@@ -12107,6 +12249,139 @@ func (r GetAssetProofResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAssetProofResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RekeyAssetResponse202Headers the declared response headers of an HTTP 202 response for RekeyAsset
+type RekeyAssetResponse202Headers struct {
+	XRequestId string
+}
+
+// RekeyAssetResponse401Headers the declared response headers of an HTTP 401 response for RekeyAsset
+type RekeyAssetResponse401Headers struct {
+	WWWAuthenticate string
+	XRequestId      string
+}
+
+// RekeyAssetResponse403Headers the declared response headers of an HTTP 403 response for RekeyAsset
+type RekeyAssetResponse403Headers struct {
+	XRequestId string
+}
+
+// RekeyAssetResponse404Headers the declared response headers of an HTTP 404 response for RekeyAsset
+type RekeyAssetResponse404Headers struct {
+	XRequestId string
+}
+
+// RekeyAssetResponse409Headers the declared response headers of an HTTP 409 response for RekeyAsset
+type RekeyAssetResponse409Headers struct {
+	XRequestId string
+}
+
+// RekeyAssetResponse503Headers the declared response headers of an HTTP 503 response for RekeyAsset
+type RekeyAssetResponse503Headers struct {
+	XRequestId string
+}
+
+// RekeyAssetResponseDefaultHeaders the declared response headers of an HTTP default response for RekeyAsset
+type RekeyAssetResponseDefaultHeaders struct {
+	XRequestId string
+}
+
+type RekeyAssetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *AssetRekey
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthenticated
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *RekeyAssetResponse202Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RekeyAssetResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *RekeyAssetResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *RekeyAssetResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *RekeyAssetResponse409Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RekeyAssetResponse503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *RekeyAssetResponseDefaultHeaders
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r RekeyAssetResponse) GetJSON202() *AssetRekey {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RekeyAssetResponse) GetApplicationproblemJSON401() *Unauthenticated {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RekeyAssetResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RekeyAssetResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RekeyAssetResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RekeyAssetResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RekeyAssetResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RekeyAssetResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RekeyAssetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RekeyAssetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RekeyAssetResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -18603,6 +18878,38 @@ func (c *ClientWithResponses) GetAssetProofWithResponse(ctx context.Context, ass
 	return ParseGetAssetProofResponse(rsp)
 }
 
+// RekeyAssetWithResponse Re-key an asset
+//
+// Queues the audited re-key of a `ready` asset (ADR 0068): every encrypted segment of every
+// variant is decrypted with the asset's content key and encrypted again under a freshly
+// generated one, the integrity manifest is signed again (and timestamped again when anchoring
+// is on), and the asset is switched to the new key and the old key destroyed in one
+// transaction. The asset keeps playing under its old key until that switch. Sessions that
+// started before the switch can no longer fetch a key (`401`) and must be started again;
+// sessions started afterwards use the new key. When a CDN is configured the asset's CDN
+// purge is queued with the switch.
+//
+// This limits what a **leaked content key** can still decrypt: segments stored from now on are
+// unreadable with it. It does not help against plaintext, or keys, that a viewer already saved.
+//
+// The response is `202` with the ID of the job; the audit log (`GET /v1/audit-events`) gets
+// `asset.rekey_requested` now, then `asset.rekey_completed` or `asset.rekey_failed`. An asset
+// that is not `ready` is `409 asset_not_ready`; one being deleted, or whose masked variant is
+// still being made, is `409 conflict`; so is an asset whose earlier re-key has not finished
+// (at most one per asset). A deleted asset, and another tenant's, are `404 not_found`. Requires
+// the `assets:write` scope.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/assets/{asset_id}/rekey (the `RekeyAsset` operationId).
+func (c *ClientWithResponses) RekeyAssetWithResponse(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*RekeyAssetResponse, error) {
+	rsp, err := c.RekeyAsset(ctx, assetId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRekeyAssetResponse(rsp)
+}
+
 // ListAssetSubtitlesWithResponse List an asset's subtitle tracks
 //
 // Returns every track of the asset, oldest first (at most 20, so there is no paging). An
@@ -21830,6 +22137,154 @@ func ParseGetAssetProofResponse(rsp *http.Response) (*GetAssetProofResponse, err
 		response.Headers503 = &headers
 	case true:
 		var headers GetAssetProofResponseDefaultHeaders
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRekeyAssetResponse parses an HTTP response from a RekeyAssetWithResponse call
+func ParseRekeyAssetResponse(rsp *http.Response) (*RekeyAssetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RekeyAssetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest AssetRekey
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers RekeyAssetResponse202Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 401:
+		var headers RekeyAssetResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = value
+		}
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers RekeyAssetResponse403Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers RekeyAssetResponse404Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers RekeyAssetResponse409Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 503:
+		var headers RekeyAssetResponse503Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers503 = &headers
+	case true:
+		var headers RekeyAssetResponseDefaultHeaders
 		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

@@ -67,7 +67,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
 | `POST /v1/assets` | yes | no | `assets:write` |
 | `GET /v1/assets`, `GET /v1/assets/{asset_id}`, `GET /v1/assets/{asset_id}/deletion-record` | yes | no | `assets:read` |
-| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
+| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `POST /v1/assets/{asset_id}/rekey`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
 | `GET /v1/assets/{asset_id}/subtitles`, `GET /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/subtitles`, `POST /v1/assets/{asset_id}/transcripts`, `DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:write` |
 | `GET /v1/brand/logo`, `PUT /v1/brand/logo`, `PATCH /v1/brand/logo`, `DELETE /v1/brand/logo` | yes | no | `admin` |
@@ -295,6 +295,13 @@ Verify it with `cipherframe verify --deletion-record` ([integrity.md](integrity.
 call returns `202` again, and queues a new purge only if the earlier job is no longer in the queue
 (this is how a deletion that ran out of retries is restarted). An in-flight processing or masking job
 stops at its next check and removes its own output; it cannot bring the asset back.
+
+**Re-key (M10-4, ADR 0068).** `POST /v1/assets/{asset_id}/rekey` (`assets:write`) queues an audited
+re-encryption of a `ready` asset's segments under a new content key and answers `202` with the job
+ID. The asset keeps playing under the old key until one transaction switches it; sessions that
+started before the switch are refused the key (`401`) and must start a new session. Refused with
+`409 asset_not_ready`, or `409 conflict` while the asset is being deleted, its masked variant is
+still being made, or an earlier re-key is still queued or running. See [usage.md](usage.md#re-keying-an-asset).
 
 **Variants (ADR 0036).** Every asset has an `original` variant. An asset created with `mask_faces:
 true` also gets a `masked` variant, built after the original is `ready`. The asset shows
@@ -567,7 +574,7 @@ the defaults, and `updated_at` is absent until the first `PUT`.
 | `key_requests_per_minute` | 30 | 1 to 600 | Key requests one session may make per minute, rejected ones included (key endpoint, below). |
 | `allowed_origins` | `[]` | at most 20 | Browser origins allowed to play (CORS on edge, see below). |
 | `token_in_url` | `false` | | Put the token in the manifest URL for native HLS players. |
-| `delivery` | `proxy` | `proxy`, `presigned` | How segments reach the player (see below). |
+| `delivery` | `proxy` | `proxy`, `presigned`, `cdn` | How segments reach the player (see below). `cdn` needs a CDN configured on the deployment; without one the request is refused with a field error on `delivery`. |
 | `anomaly_sessions_per_viewer_10m` | 10 | 0 to 1000 | More sessions than this created for one viewer in 10 minutes raises `rapid_session_creation`; 0 turns it off ([anomaly signals](#anomaly-signals-m4-9)). |
 | `anomaly_segments_without_key` | 30 | 0 to 100000 | More segments than this served to a session that never fetched the key raises `segments_without_key`; 0 turns it off. `proxy` delivery only. |
 | `auto_revoke` | `[]` | any of `key_replay`, `key_rate`, `rapid_session_creation`, `segments_without_key` | Kinds whose signal also revokes the session (the viewer's sessions for `rapid_session_creation`). Empty is off. |
@@ -592,7 +599,13 @@ after the token check. With `presigned`, the media playlist the player gets carr
 segment and for each media segment, a presigned GET URL for that object in the delivery bucket, so
 storage or a CDN serves the bytes and edge does not (ADR 0032). The master playlist and the key URI
 (`../key`) are unchanged, so the key endpoint still checks the session on every fetch and revocation
-still applies. The edge segment route keeps working in both modes.
+still applies. The edge segment route keeps working in every mode.
+
+With `cdn` (ADR 0062), the URLs are instead signed URLs of the deployment's CDN (CloudFront or Cloud CDN),
+with the same expiry rule and the same rest: playlists, keys and thumbnails stay on edge. A session
+that is revoked can still fetch the segments it already has URLs for until they expire (at most 10
+minutes); without the key, which the key endpoint refuses, they cannot be decrypted. After an asset
+is deleted a purge removes it from the CDN's cache ([cdn.md](cdn.md)).
 
 - A URL lives until the playback token expires or 10 minutes, whichever is first (at least 1 second;
   a token with under a second left gets `401`). The player gets fresh URLs each time it fetches the
@@ -975,7 +988,7 @@ but is not called by anything: M6 will.
   endpoint.
 - With `token_in_url` on, the token is in URLs: browser history and the logs of proxies and CDNs you
   do not control can hold it, until it expires.
-- With `delivery` set to `presigned`, signed storage URLs are in the playlists, and so possibly in
+- With `delivery` set to `presigned` or `cdn`, signed storage or CDN URLs are in the playlists, and so possibly in
   history and intermediary logs, until they expire (at most 10 minutes). They give read access to
   encrypted segments only; the key still needs a valid session.
 - The concurrency limit counts sessions per `viewer_id`. A caller that gives each of one person's
@@ -990,7 +1003,7 @@ but is not called by anything: M6 will.
 - The anomaly signals catch a client that behaves unlike a player. They do not catch a careful scraper
   that fetches the key like a player, paces its requests and uses one session per viewer ID; nor a
   viewer who fetched the key once and shares it. `segments_without_key` does nothing in `presigned`
-  delivery. See [threat-model.md](threat-model.md#what-the-anomaly-signals-catch-and-miss).
+  or `cdn` delivery. See [threat-model.md](threat-model.md#what-the-anomaly-signals-catch-and-miss).
 - The access trail records who and when, not what was watched, and its `ip` is the connecting peer,
   which is a proxy's address behind one.
 

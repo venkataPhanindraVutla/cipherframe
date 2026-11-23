@@ -189,3 +189,11 @@ WHERE expires_at IS NOT NULL AND expires_at <= sqlc.arg(now)::timestamptz
   AND state NOT IN ('deleting', 'deleted')
 ORDER BY expires_at, id
 LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: SetAssetKeyGeneration :one
+-- Moves a ready asset from one key generation to the next (re-key, ADR 0068). It changes nothing
+-- unless the asset is still ready and still at the generation the caller read.
+UPDATE assets SET key_generation = sqlc.arg(to_generation)::integer, updated_at = sqlc.arg(at)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid AND id = sqlc.arg(id)::uuid
+  AND state = 'ready' AND key_generation = sqlc.arg(from_generation)::integer
+RETURNING *;

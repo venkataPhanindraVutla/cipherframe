@@ -75,6 +75,7 @@ type Config struct {
 	KMS          KMS
 	Media        Media
 	TSA          TSA
+	CDN          CDN
 	Retention    Retention
 	Metrics      Metrics
 }
@@ -143,6 +144,12 @@ func (c *Config) LogValue() slog.Value {
 			slog.String("url", c.TSA.URL),
 			slog.Duration("timeout", c.TSA.Timeout),
 			slog.String("policy_oid", c.TSA.PolicyOID),
+		),
+		slog.Group("cdn",
+			slog.String("provider", c.CDN.Provider),
+			slog.String("base_url", c.CDN.BaseURL),
+			slog.String("key_id", c.CDN.KeyID),
+			slog.Bool("signing_key_file_set", c.CDN.SigningKeyFile != ""),
 		),
 		slog.Group("kms",
 			slog.String("provider", c.KMS.Provider),

@@ -113,10 +113,10 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 
 ### M10 v1 extras
 
-- [ ] M10-1 CDN signed URLs
+- [x] M10-1 CDN signed URLs ([ADR 0062](adr/0062-cdn-signed-urls.md), [ADR 0065](adr/0065-cdn-implementation.md), [cdn.md](cdn.md), `internal/cdn`)
 - [x] M10-2 Hardware-accelerated encoding with software fallback ([hardware-encoders.md](hardware-encoders.md), [ADR 0066](adr/0066-hardware-encoder-implementation.md); only VideoToolbox measured, NVENC, VAAPI and QSV not verified on hardware)
 - [ ] M10-3 HEVC and AV1 renditions, off by default
-- [ ] M10-4 Audited content-key re-key operation
+- [x] M10-4 Audited content-key re-key operation ([ADR 0068](adr/0068-content-key-rekey.md), `internal/rekey`)
 
 ## Open decision gates
 
@@ -150,6 +150,7 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0059](adr/0059-helm-chart-choices.md) Helm chart: masker as a worker sidecar, flat config map, KEDA query
 - [ADR 0060](adr/0060-release-automation-choices.md) Release automation: images compile Go in the Dockerfile, no CHANGELOG.md, SPDX only
 - [ADR 0061](adr/0061-load-test-method.md) Load test method
+- [ADR 0065](adr/0065-cdn-implementation.md) CDN implementation: signing key read by edge only, purge job on the worker, Cloud CDN purge over REST, Terraform CDN
 
 ## Follow-ups
 
