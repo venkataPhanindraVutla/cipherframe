@@ -45,7 +45,7 @@ func testSegment(baseVideo uint32, cts []int32, version byte) []byte {
 		samples = binary.BigEndian.AppendUint32(samples, uint32(c)) //nolint:gosec // negative offsets are the point
 	}
 	flags := uint32(0x1 | 0x100 | 0x200 | 0x800)
-	hdr := append([]byte{version}, byte(flags>>16), byte(flags>>8), byte(flags))
+	hdr := append([]byte{version}, byte(flags>>16), byte(flags>>8), byte(flags&0xff))
 	trunBox := mp4box("trun", hdr, u32s(uint32(len(cts)), 0), samples) //nolint:gosec // small test data
 	tfdt := mp4box("tfdt", []byte{1, 0, 0, 0}, binary.BigEndian.AppendUint64(nil, uint64(baseVideo)))
 	audio := mp4box("traf", tfhd(1), mp4box("tfdt", []byte{0, 0, 0, 0}, u32s(0)), mp4box("trun", []byte{0, 0, 0x01, 0x00}, u32s(0, 0)))

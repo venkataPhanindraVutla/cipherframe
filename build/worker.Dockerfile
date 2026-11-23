@@ -262,7 +262,7 @@ RUN ./configure \
         --enable-parser=h264,aac \
         --enable-encoder=libx264,aac,wrapped_avframe \
         --enable-muxer=mp4,matroska,null \
-        --enable-filter=testsrc2,sine,anullsrc,scale,format,aresample,null,anull,setsar,fps,ssim,psnr \
+        --enable-filter=testsrc2,mandelbrot,sine,anullsrc,scale,format,aresample,null,anull,setsar,fps,ssim,psnr \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg-fixtures/bin/ffmpeg \
@@ -274,6 +274,8 @@ RUN ./configure \
 # own FFmpeg makes the renditions; this one, and its ffprobe (which can read the HLS output), only compare
 # them with the source and read their keyframes.
 FROM toolchain AS vmaf
+# libvmaf embeds its models with xxd and silently builds without them when it is missing.
+RUN apt-get update && apt-get install -y --no-install-recommends xxd && rm -rf /var/lib/apt/lists/*
 ARG VMAF_VERSION=3.0.0
 ARG VMAF_SHA256=7178c4833639e6b989ecae73131d02f70735fdb3fc2c7d84bc36c9c3461d93b1
 RUN fetch https://github.com/Netflix/vmaf/archive/refs/tags/v${VMAF_VERSION}.tar.gz \
@@ -282,7 +284,9 @@ RUN mkdir /src/vmaf && tar -xzf /src/vmaf.tar.gz -C /src/vmaf --strip-components
 WORKDIR /src/vmaf/libvmaf
 RUN meson setup build --prefix=${PREFIX} --libdir=lib --buildtype=release --default-library=static \
         -Denable_tests=false -Denable_docs=false -Dbuilt_in_models=true \
-    && ninja -C build install
+    && ninja -C build install \
+    # libvmaf's SVM code is C++ but its pkg-config file does not say so, which a static link needs.
+    && sed -i '/^Libs:/s/$/ -lstdc++/' ${PREFIX}/lib/pkgconfig/libvmaf.pc
 
 FROM ffmpeg-src AS ffmpeg-measure
 COPY --from=dav1d /opt/deps /opt/deps
@@ -301,6 +305,7 @@ RUN ./configure \
         --enable-demuxer=mov,hls \
         --enable-decoder=h264,hevc,libdav1d \
         --enable-parser=h264,hevc,av1 \
+        --enable-encoder=wrapped_avframe \
         --enable-muxer=null \
         --enable-filter=scale,format,setsar,setpts,null,libvmaf \
     && make -j"$(nproc)" \
