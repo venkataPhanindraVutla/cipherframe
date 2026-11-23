@@ -158,7 +158,9 @@ func (p *Purger) Handle(ctx context.Context, job jobs.Job[DeleteArgs]) error {
 		}
 	}
 
-	active, err := ActiveJobs(ctx, p.Pool, assetID, "asset.process", "asset.mask")
+	// "asset.rekey" is package rekey's JobKind, which cannot be imported here; it stops at its
+	// switch when the asset is no longer ready and removes what it staged.
+	active, err := ActiveJobs(ctx, p.Pool, assetID, "asset.process", "asset.mask", "asset.rekey")
 	if err != nil {
 		return err
 	}

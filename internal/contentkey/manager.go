@@ -58,28 +58,45 @@ func (m *Manager) Create(ctx context.Context, tx *db.Repos, tenant id.TenantID, 
 		return ContentKey{}, err
 	}
 
+	ck, row, err := m.Generate(ctx, asset, variant)
+	if err != nil {
+		return ContentKey{}, err
+	}
+	if _, err := tx.CreateContentKey(ctx, tenant, row); err != nil {
+		ck.Zero()
+		return ContentKey{}, err
+	}
+	return ck, nil
+}
+
+// Generate makes a fresh content key for one variant of the asset and wraps it with the current
+// provider, without storing anything. It returns the plaintext key, which the caller should Zero
+// when finished, and the row that holds it wrapped: Create inserts it, and a re-key hands it to
+// db.Repos.SwapContentKey once the media it encrypts is in place (ADR 0068). Provider failures are
+// mapped like kms.ToAppError, and no failure yields a key.
+func (m *Manager) Generate(ctx context.Context, asset id.AssetID, variant keys.Variant) (ContentKey, db.NewContentKeyRow, error) {
+	if asset.IsZero() || !variant.Valid() {
+		return ContentKey{}, db.NewContentKeyRow{}, errs.New(errs.InvalidRequest, "an asset and a variant are required")
+	}
 	key := make([]byte, KeyBytes)
 	defer clear(key)
 	if _, err := rand.Read(key); err != nil {
-		return ContentKey{}, errs.Wrap(errs.InternalError, "internal error", errors.New("contentkey: no randomness available"))
+		return ContentKey{}, db.NewContentKeyRow{}, errs.Wrap(errs.InternalError, "internal error", errors.New("contentkey: no randomness available"))
 	}
 
 	keyID := id.New[id.ContentKeyKind]()
 	wrapped, err := m.wrap(ctx, key, asset, keyID)
 	if err != nil {
-		return ContentKey{}, err
+		return ContentKey{}, db.NewContentKeyRow{}, err
 	}
-	if _, err := tx.CreateContentKey(ctx, tenant, db.NewContentKeyRow{
+	return newContentKey(keyID, asset, key), db.NewContentKeyRow{
 		ID:              keyID,
 		AssetID:         asset,
 		Variant:         variant,
 		KEK:             db.KEKRef{Provider: wrapped.Provider, KeyID: wrapped.KeyID, Version: wrapped.Version},
 		EnvelopeVersion: EnvelopeVersion,
 		Wrapped:         wrapped.Ciphertext,
-	}); err != nil {
-		return ContentKey{}, err
-	}
-	return newContentKey(keyID, asset, key), nil
+	}, nil
 }
 
 // wrap wraps key for the slot (asset, keyID) under the current provider's current KEK. The
