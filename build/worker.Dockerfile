@@ -16,10 +16,19 @@
 # - Targets: the default (last) target is the worker image. `fixtures` is a test-only stage that
 #   holds an FFmpeg with the lavfi test sources; it never ships (see internal/media/testmedia).
 #   `tools` exports the binaries for CI (docker build --target tools --output type=local,dest=out).
+# - Hardware encoders (ADR 0063, ADR 0066) cannot live in a static FFmpeg: libva and the NVIDIA
+#   driver load their drivers with dlopen, which a static glibc cannot do. They are a second image,
+#   target `worker-hw`: the same server binary and a dynamically linked FFmpeg with h264_nvenc
+#   (nv-codec-headers, MIT), h264_vaapi (libva, MIT) and h264_qsv (libvpl, MIT), on a Debian base
+#   (trixie, which has libvpl and the Intel GPU runtime) that carries the runtime libraries. It adds
+#   no --enable-nonfree. The default target stays the static, distroless worker. libvpl exists for
+#   amd64 only in Debian, so build `worker-hw` for linux/amd64 (--platform linux/amd64).
 
 ARG DEBIAN_IMAGE=debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 ARG GO_IMAGE=golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+# The hardware image is built on Debian trixie: bookworm has no libvpl and no Intel GPU runtime.
+ARG DEBIAN_HW_IMAGE=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 # ---------------------------------------------------------------------------------------------
 # Toolchain: Debian bookworm from a fixed snapshot.
@@ -120,6 +129,73 @@ RUN ./configure \
     && /opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf > /opt/ffmpeg/buildconf.txt
 
 # ---------------------------------------------------------------------------------------------
+# Toolchain of the hardware image: Debian trixie from the same snapshot date, with the same fetch helper.
+FROM ${DEBIAN_HW_IMAGE} AS toolchain-hw
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
+RUN rm -f /etc/apt/sources.list.d/* /etc/apt/sources.list \
+    && echo "deb http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ trixie main" > /etc/apt/sources.list \
+    && echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99snapshot \
+    && echo 'Acquire::Retries "5";' >> /etc/apt/apt.conf.d/99snapshot \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates g++ gcc libc6-dev make nasm pkg-config xz-utils libva-dev libvpl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------------------------
+# nv-codec-headers (MIT): the header-only NVENC interface. FFmpeg loads libnvidia-encode.so at run
+# time (dlopen), so nothing from NVIDIA is linked or shipped. n12.2.72.0 needs driver 550.54 or newer.
+FROM toolchain AS nvcodec
+ARG NVCODEC_VERSION=n12.2.72.0
+ARG NVCODEC_SHA256=dbeaec433d93b850714760282f1d0992b1254fc3b5a6cb7d76fc1340a1e47563
+RUN fetch https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/${NVCODEC_VERSION}.tar.gz \
+        ${NVCODEC_SHA256} /src/nvcodec.tar.gz
+RUN mkdir /src/nvcodec && tar -xzf /src/nvcodec.tar.gz -C /src/nvcodec --strip-components=1
+WORKDIR /src/nvcodec
+RUN make install PREFIX=${PREFIX}
+
+# ---------------------------------------------------------------------------------------------
+# The hardware-capable FFmpeg: the build above plus h264_nvenc, h264_vaapi and h264_qsv and the
+# hwupload filter. Linked dynamically, against glibc, libva and libvpl only (x264 and dav1d stay
+# static); libvpl is a C++ library, so libstdc++ comes with it. The readelf check below fails the build
+# if any other shared library appears. libva and libvpl are the
+# Debian trixie packages of the pinned snapshot (MIT).
+FROM toolchain-hw AS ffmpeg-hw
+COPY --from=ffmpeg-src /src/ffmpeg /src/ffmpeg
+COPY --from=x264 /opt/deps /opt/deps
+COPY --from=dav1d /opt/deps /opt/deps
+COPY --from=nvcodec /opt/deps /opt/deps
+ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
+WORKDIR /src/ffmpeg
+RUN ./configure \
+        --prefix=/opt/ffmpeg-hw \
+        --extra-cflags=-I/opt/deps/include \
+        --extra-ldflags="-L/opt/deps/lib" \
+        --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug \
+        --disable-ffplay --disable-avdevice \
+        --enable-gpl --enable-libx264 --enable-libdav1d \
+        --enable-ffnvcodec --enable-nvenc --enable-vaapi --enable-libvpl \
+        --enable-protocol=file,pipe \
+        --enable-demuxer=mov,matroska,rawvideo \
+        --enable-decoder=h264,hevc,vp8,vp9,libdav1d,aac,opus,mp3,mp3float,rawvideo \
+        --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
+        --enable-encoder=libx264,aac,mjpeg,h264_nvenc,h264_vaapi,h264_qsv \
+        --enable-muxer=mp4,hls,null,image2 \
+        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer,hwupload \
+    && make -j"$(nproc)" \
+    && make install \
+    && strip /opt/ffmpeg-hw/bin/ffmpeg /opt/ffmpeg-hw/bin/ffprobe \
+    && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -buildconf > /opt/ffmpeg-hw/buildconf.txt
+
+# The build's own checks, in a stage of their own so a failed check does not repeat the compile.
+FROM ffmpeg-hw AS ffmpeg-hw-checked
+RUN readelf -d /opt/ffmpeg-hw/bin/ffmpeg | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | sort > /tmp/needed \
+    && cat /tmp/needed \
+    && ! grep -vE '^(ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libva\.so|libva-drm\.so|libvpl\.so|libstdc\+\+\.so|libgcc_s\.so)' /tmp/needed \
+    && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -encoders > /tmp/encoders \
+    && for e in h264_nvenc h264_vaapi h264_qsv libx264 aac mjpeg; do grep -qw "$e" /tmp/encoders || { echo "missing encoder $e" >&2; exit 1; }; done \
+    && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -filters | grep -qw hwupload
+
+# ---------------------------------------------------------------------------------------------
 # Test-only FFmpeg: lavfi test sources to generate fixtures at test time (internal/media/testmedia),
 # plus the h264/aac decoders and the ssim and psnr filters the pipeline test uses to measure quality.
 # Those measuring filters live here and NEVER in the shipped build above.
@@ -179,6 +255,40 @@ RUN mkdir -p /out/licenses \
            /tmp/SOURCE.md.in > /out/licenses/SOURCE.md
 
 # ---------------------------------------------------------------------------------------------
+# Licence texts and the written source offer of the hardware image.
+FROM ffmpeg-hw-checked AS licenses-hw
+ARG FFMPEG_VERSION=9.0.2
+ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+ARG X264_COMMIT=b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+ARG X264_SHA256=6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224
+ARG DAV1D_VERSION=1.5.4
+ARG DAV1D_SHA256=686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
+ARG NVCODEC_VERSION=n12.2.72.0
+ARG NVCODEC_SHA256=dbeaec433d93b850714760282f1d0992b1254fc3b5a6cb7d76fc1340a1e47563
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
+COPY --from=x264 /src/x264/COPYING /out/x264-COPYING
+COPY --from=dav1d /src/dav1d/COPYING /out/dav1d-COPYING
+COPY --from=nvcodec /src/nvcodec/README /out/nvcodec-README
+COPY build/worker-hw-SOURCE.md.in /tmp/SOURCE.md.in
+RUN mkdir -p /out/licenses \
+    && cp /src/ffmpeg/COPYING.GPLv2 /src/ffmpeg/COPYING.GPLv3 /src/ffmpeg/COPYING.LGPLv2.1 \
+          /src/ffmpeg/COPYING.LGPLv3 /src/ffmpeg/LICENSE.md /src/ffmpeg/CREDITS /out/licenses/ \
+    && cp /out/x264-COPYING /out/licenses/x264-COPYING.GPLv2 \
+    && cp /out/dav1d-COPYING /out/licenses/dav1d-COPYING.BSD-2-Clause \
+    && cp /usr/share/doc/libva-dev/copyright /out/licenses/libva-copyright \
+    && cp /usr/share/doc/libvpl-dev/copyright /out/licenses/libvpl-copyright \
+    && LIBVA_VERSION="$(dpkg-query -W -f='${Version}' libva-dev)" \
+    && LIBVPL_VERSION="$(dpkg-query -W -f='${Version}' libvpl-dev)" \
+    && sed -e "s|@FFMPEG_VERSION@|${FFMPEG_VERSION}|g" -e "s|@FFMPEG_SHA256@|${FFMPEG_SHA256}|g" \
+           -e "s|@X264_COMMIT@|${X264_COMMIT}|g" -e "s|@X264_SHA256@|${X264_SHA256}|g" \
+           -e "s|@DAV1D_VERSION@|${DAV1D_VERSION}|g" -e "s|@DAV1D_SHA256@|${DAV1D_SHA256}|g" \
+           -e "s|@NVCODEC_VERSION@|${NVCODEC_VERSION}|g" -e "s|@NVCODEC_SHA256@|${NVCODEC_SHA256}|g" \
+           -e "s|@LIBVA_VERSION@|${LIBVA_VERSION}|g" -e "s|@LIBVPL_VERSION@|${LIBVPL_VERSION}|g" \
+           -e "s|@DEBIAN_SNAPSHOT@|${DEBIAN_SNAPSHOT}|g" \
+           -e '/@BUILDCONF@/{r /opt/ffmpeg-hw/buildconf.txt' -e 'd}' \
+           /tmp/SOURCE.md.in > /out/licenses/SOURCE.md
+
+# ---------------------------------------------------------------------------------------------
 # The Cipherframe server binary.
 FROM ${GO_IMAGE} AS server
 ARG VERSION=dev
@@ -195,6 +305,36 @@ RUN CGO_ENABLED=0 go build -trimpath \
 FROM scratch AS tools
 COPY --from=ffmpeg /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe /
 COPY --from=fixtures /opt/ffmpeg-fixtures/bin/ffmpeg /ffmpeg-fixtures
+
+# ---------------------------------------------------------------------------------------------
+# The hardware worker image (docker build --target worker-hw). Debian, not distroless: libva and the
+# NVIDIA runtime load drivers with dlopen. Runtime pieces, all from the pinned snapshot:
+#   libva2, libva-drm2  the VAAPI client
+#   libvpl2, libmfx-gen1.2  the oneVPL dispatcher and its Intel GPU runtime (Quick Sync)
+#   intel-media-va-driver   the Intel VAAPI driver; mesa-va-drivers  the AMD VAAPI driver
+# This target is for linux/amd64: libvpl and the Intel packages are not built for arm64 in Debian.
+# NVENC needs the host's NVIDIA driver and the NVIDIA container runtime, which mounts
+# libnvidia-encode.so into the container; nothing from NVIDIA is in the image.
+FROM ${DEBIAN_HW_IMAGE} AS worker-hw
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
+RUN rm -f /etc/apt/sources.list.d/* /etc/apt/sources.list \
+    && echo "deb http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ trixie main" > /etc/apt/sources.list \
+    && echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99snapshot \
+    && echo 'Acquire::Retries "5";' >> /etc/apt/apt.conf.d/99snapshot \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libva2 libva-drm2 libvpl2 mesa-va-drivers \
+        libmfx-gen1.2 intel-media-va-driver \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
+COPY --from=ffmpeg-hw-checked /opt/ffmpeg-hw/bin/ffmpeg /opt/ffmpeg-hw/bin/ffprobe /usr/local/bin/
+COPY --from=server /out/cipherframe-server /usr/local/bin/cipherframe-server
+COPY --from=licenses-hw /out/licenses/ /usr/share/licenses/ffmpeg/
+ENV CIPHERFRAME_FFMPEG_PATH=/usr/local/bin/ffmpeg \
+    CIPHERFRAME_FFPROBE_PATH=/usr/local/bin/ffprobe \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+USER 65532
+ENTRYPOINT ["/usr/local/bin/cipherframe-server"]
+CMD ["--role=worker"]
 
 # ---------------------------------------------------------------------------------------------
 # The worker image (default target).
