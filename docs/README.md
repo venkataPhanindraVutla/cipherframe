@@ -4,6 +4,7 @@
 |---|---|
 | [architecture.md](architecture.md) | Roles, storage, state, lifecycle |
 | [threat-model.md](threat-model.md) | Assets, actors, threats, what is out of scope |
+| [cdn.md](cdn.md) | CDN delivery: setup for CloudFront and Cloud CDN, revocation limits, purge on deletion |
 | [disaster-recovery.md](disaster-recovery.md) | What to back up, restore order, losing the KEK, signing keys or peppers |
 | [privacy.md](privacy.md) | Personal data handling, privacy settings |
 | [encryption.md](encryption.md) | Segment encryption, envelope keys, providers |

@@ -14,7 +14,7 @@ verifiably.
 | Role | Responsibility |
 |---|---|
 | Control plane (`api`) | Assets, uploads, sessions, keys, deletion records, webhooks, quotas. Server-to-server only. |
-| Data plane (`edge`) | Session-scoped playlists, the key endpoint, segment delivery (`proxy` or `presigned`). Browser-facing. |
+| Data plane (`edge`) | Session-scoped playlists, the key endpoint, segment delivery (`proxy`, `presigned` or `cdn`). Browser-facing. |
 | Worker | Probe, transcode, package, encrypt, hash, sign, purge, retention sweeps. Runs FFmpeg and FFprobe as separate processes. |
 | CLI | Operator and integration tooling, including a public-key-only verifier. |
 | Reference player | Demo browser player that attaches the session token to every request. |
@@ -466,6 +466,10 @@ player -- GET init.mp4 / seg-N.m4s     -->  guard --> storage.Get(segment)  --> 
   token with under a second left is refused as unauthorized. The setting comes from the same 30
   second cache as `token_in_url`. Signing is local (no storage call), URLs are never logged, and
   `proxy` output is byte-identical to before.
+- **CDN delivery** (ADR 0062, 0065): with `delivery = cdn` and a configured `cdn.Signer` the same code
+  path signs `base URL + object key` with the CDN's scheme instead (`internal/cdn`). Without a signer
+  the tenant is served as `proxy`. After a deletion the worker's `asset.cdn_purge` job invalidates the
+  asset's delivery prefix.
 - **Rewriting** (`internal/hls/rewrite.go`) is a strict line rewriter, not a general parser: it accepts
   exactly what the pipeline writes and refuses the rest. Stored playlists never change, and everything
   session-specific (the key URI, the optional token) is added on the way out.
