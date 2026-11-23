@@ -71,6 +71,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0064](0064-hevc-and-av1-renditions.md) | HEVC and AV1 renditions: libx265 and SVT-AV1, full ladder per codec, one master with CODECS, per-tenant `extra_codecs` | P18 | Accepted | 2026-11-23 |
 | [0065](0065-cdn-implementation.md) | CDN implementation: stdlib signers, key read by edge only, purge job on the worker queued with the tombstone, Cloud CDN purge over REST, Terraform CDN | none (M10-1, details under P16) | Accepted (flagged for owner review) | 2026-11-23 |
 | [0066](0066-hardware-encoder-implementation.md) | Hardware encoder implementation: one argument mapping, whole-transcode software retry, probe through rawvideo, a separate dynamically linked `worker-hw` image, VideoToolbox `-q:v` | none (M10-2) | Accepted (flagged for owner review) | 2026-11-23 |
+| [0067](0067-hevc-av1-implementation.md) | HEVC and AV1 implementation: setting and per-asset snapshot, worker capability table, one FFmpeg run per codec, `_hevc` and `_av1` rendition names, recorded failure reasons, measured quality settings | none (M10-3) | Accepted (flagged for owner review) | 2026-11-23 |
 | [0068](0068-content-key-rekey.md) | Content-key re-key: per-asset job over every variant, generation directories `k<n>/`, sessions bound to a key generation, audit events, flat `rekey` command | none (M10-4) | Accepted (flagged for owner review) | 2026-11-23 |
 
 ## Open gates

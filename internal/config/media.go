@@ -86,6 +86,10 @@ type Media struct {
 	Encoder media.Encoder
 	// HWDevice is the render node VAAPI and QSV open; DefaultHWDevice when unset.
 	HWDevice string
+	// Codecs are the extra codecs (HEVC, AV1) the worker's FFmpeg can encode (ADR 0064). Like the
+	// encoder after its startup test this is found when the worker starts, not configured: an operator's
+	// own FFmpeg may lack them, and the worker then makes H.264 only.
+	Codecs []media.Codec
 }
 
 func (l *loader) media() Media {

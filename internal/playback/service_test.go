@@ -69,6 +69,7 @@ func TestValidateSettingsRanges(t *testing.T) {
 			s.TokenTTLSeconds, s.HeartbeatIntervalSeconds, s.IdleTimeoutSeconds = 3600, 600, 3600
 			s.SessionMaxSeconds, s.MaxSessionsPerViewer, s.KeyFetchesPerToken, s.KeyRequestsPerMinute = 86400, 100, 1000, 600
 		},
+		"both extra codecs":        func(s *db.PlaybackSettings) { s.ExtraCodecs = []string{"hevc", "av1"} },
 		"heartbeat just below ttl": func(s *db.PlaybackSettings) { s.HeartbeatIntervalSeconds, s.TokenTTLSeconds = 59, 60 },
 	}
 	for name, e := range ok {
@@ -99,6 +100,8 @@ func TestValidateSettingsRanges(t *testing.T) {
 		"fetches high":      {func(s *db.PlaybackSettings) { s.KeyFetchesPerToken = 1001 }, "key_fetches_per_token"},
 		"rpm zero":          {func(s *db.PlaybackSettings) { s.KeyRequestsPerMinute = 0 }, "key_requests_per_minute"},
 		"rpm high":          {func(s *db.PlaybackSettings) { s.KeyRequestsPerMinute = 601 }, "key_requests_per_minute"},
+		"codec unknown":     {func(s *db.PlaybackSettings) { s.ExtraCodecs = []string{"hevc", "vp9"} }, "extra_codecs[1]"},
+		"codec repeated":    {func(s *db.PlaybackSettings) { s.ExtraCodecs = []string{"av1", "av1"} }, "extra_codecs[1]"},
 		"21 origins": {func(s *db.PlaybackSettings) {
 			for i := range 21 {
 				s.AllowedOrigins = append(s.AllowedOrigins, "https://h"+strings.Repeat("a", i+1)+".example.com")

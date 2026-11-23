@@ -34,6 +34,8 @@ type NewUploadAsset struct {
 	S3UploadID  string // empty for tus; set when the multipart upload was already created
 	ExpiresAt   time.Time
 	MaskFaces   bool // ADR 0036
+	// ExtraCodecs is the tenant's extra_codecs setting at creation (ADR 0064); nil or empty means H.264 only.
+	ExtraCodecs []string
 	// AssetExpiresAt is when the retention job deletes the asset (M6-4); nil means never.
 	AssetExpiresAt *time.Time
 }
@@ -51,7 +53,7 @@ func (r *Repos) CreateUploadAsset(ctx context.Context, in NewUploadAsset) (Asset
 	row, err := r.q.CreateUploadAsset(ctx, dbgen.CreateUploadAssetParams{
 		ID: aid, SizeBytes: in.SizeBytes, ContentType: strPtr(in.ContentType), UploadMethod: string(in.Method),
 		SourceKey: in.SourceKey, S3UploadID: strPtr(in.S3UploadID), UploadExpiresAt: in.ExpiresAt, MaskFaces: in.MaskFaces,
-		ExpiresAt: utcPtr(in.AssetExpiresAt), ClientID: cid, TenantID: tid,
+		ExpiresAt: utcPtr(in.AssetExpiresAt), ClientID: cid, TenantID: tid, ExtraCodecs: append([]string{}, in.ExtraCodecs...),
 	})
 	if err != nil {
 		return Asset{}, mapError(err)

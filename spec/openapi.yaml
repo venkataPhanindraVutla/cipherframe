@@ -4394,6 +4394,35 @@ components:
           description: |
             How many faces the masker found. Absent until it has run. `0` means the masked variant
             was published but no face was found; the embedding application may want to warn.
+    ExtraCodec:
+      type: string
+      enum: [hevc, av1]
+      description: An optional video codec made beside H.264 (ADR 0064).
+    ExtraCodecs:
+      type: object
+      additionalProperties: false
+      required: [requested, failed]
+      properties:
+        requested:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtraCodec"
+          description: The tenant's `extra_codecs` setting when the asset was created.
+        failed:
+          type: array
+          description: |
+            The requested codecs that were not made, each with a stable lower_snake_case `reason`
+            (`encoder_unavailable`, `transcode_failed`, `transcode_timeout` or `output_invalid`). Empty
+            until the asset is `ready`. The asset is playable in H.264 either way.
+          items:
+            type: object
+            additionalProperties: false
+            required: [codec, reason]
+            properties:
+              codec:
+                $ref: "#/components/schemas/ExtraCodec"
+              reason:
+                type: string
     SubtitleTrack:
       type: object
       additionalProperties: false
@@ -4490,6 +4519,12 @@ components:
           allOf:
             - $ref: "#/components/schemas/Masking"
           description: Present exactly when `mask_faces` is true. `pending` until the masked variant is built.
+        extra_codecs:
+          allOf:
+            - $ref: "#/components/schemas/ExtraCodecs"
+          description: |
+            Present only when the asset was created with extra codecs on (the tenant's `extra_codecs`
+            setting at that time, ADR 0064). Changing the setting later does not change it.
         size_bytes:
           type: integer
           format: int64
@@ -5442,6 +5477,19 @@ components:
           items:
             type: string
             enum: [key_replay, key_rate, rapid_session_creation, segments_without_key]
+        extra_codecs:
+          type: array
+          maxItems: 2
+          uniqueItems: true
+          description: |
+            Video codecs made beside H.264 for assets uploaded from now on (ADR 0064): any of `hevc`
+            and `av1`. Empty, the default, means H.264 only. Each listed codec adds a full ladder, so
+            more storage and transcode time. Existing assets are not re-encoded. Turning a codec on is
+            refused with `invalid_request` (field `extra_codecs[i]`) when no worker seen in the last 5
+            minutes reports an encoder for it. The master playlist then lists every codec, H.264
+            first, and the player picks one it can decode.
+          items:
+            $ref: "#/components/schemas/ExtraCodec"
     PlaybackSettings:
       description: A tenant's effective playback settings.
       type: object
@@ -5460,6 +5508,7 @@ components:
         - anomaly_sessions_per_viewer_10m
         - anomaly_segments_without_key
         - auto_revoke
+        - extra_codecs
       properties:
         token_ttl_seconds:
           type: integer
@@ -5496,6 +5545,10 @@ components:
           items:
             type: string
             enum: [key_replay, key_rate, rapid_session_creation, segments_without_key]
+        extra_codecs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtraCodec"
         updated_at:
           type: string
           format: date-time

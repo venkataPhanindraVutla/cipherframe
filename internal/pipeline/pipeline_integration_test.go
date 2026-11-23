@@ -152,6 +152,11 @@ func (r *rig) commit(file string) (db.Asset, [sha256.Size]byte) { return r.commi
 
 // commitAs is commit for an asset created with or without mask_faces (ADR 0036).
 func (r *rig) commitAs(file string, maskFaces bool) (db.Asset, [sha256.Size]byte) {
+	return r.commitWith(file, maskFaces, nil)
+}
+
+// commitWith is commitAs for an asset that also asks for extra codecs (ADR 0064).
+func (r *rig) commitWith(file string, maskFaces bool, extra []string) (db.Asset, [sha256.Size]byte) {
 	r.t.Helper()
 	ctx := context.Background()
 	data, err := os.ReadFile(file) //nolint:gosec // a fixture the test just generated
@@ -162,7 +167,7 @@ func (r *rig) commitAs(file string, maskFaces bool) (db.Asset, [sha256.Size]byte
 	srcKey := keys.NewSource(r.tenant.ID, assetID)
 	a, err := r.repos.CreateUploadAsset(ctx, db.NewUploadAsset{
 		ID: assetID, TenantID: r.tenant.ID, ClientID: r.client.ID, SizeBytes: int64(len(data)), ContentType: "video/mp4",
-		Method: db.UploadMultipart, SourceKey: srcKey, ExpiresAt: time.Now().Add(time.Hour), MaskFaces: maskFaces,
+		Method: db.UploadMultipart, SourceKey: srcKey, ExpiresAt: time.Now().Add(time.Hour), MaskFaces: maskFaces, ExtraCodecs: extra,
 	})
 	if err != nil {
 		r.t.Fatal(err)
@@ -521,7 +526,9 @@ func checkManifest(t *testing.T, r *rig, a db.Asset, sourceSum [sha256.Size]byte
 	for _, art := range doc.Artifacts {
 		check(art.Path, art.SHA256)
 	}
-	if n != 4*4 || len(doc.Artifacts) != 5 {
+	// Four segments per rendition, a playlist per rendition and the master (the renditions of the extra
+	// codecs are in the manifest like H.264's).
+	if n != len(doc.Renditions)*4 || len(doc.Artifacts) != len(doc.Renditions)+1 {
 		t.Errorf("manifest lists %d segments and %d playlists", n, len(doc.Artifacts))
 	}
 	// The poster, the sprite sheet and the thumbnail track are in the signed manifest, by hash, and
@@ -612,6 +619,7 @@ func checkEncryption(t *testing.T, r *rig, a db.Asset, key []byte) {
 // the decrypted segment with its init segment, must be the same in every rendition, and
 // each segment must begin with a keyframe.
 func checkAlignment(t *testing.T, r *rig, a db.Asset, key []byte) {
+	codecOf := func(name string) string { _, c, _ := strings.Cut(name, "_"); return c }
 	type start struct{ video, audio float64 }
 	starts := map[string][]start{}
 	var order []string
@@ -653,7 +661,15 @@ func checkAlignment(t *testing.T, r *rig, a db.Asset, key []byte) {
 			if s.video != ref[n].video {
 				t.Errorf("segment %d: %s starts at %.6f s but %s at %.6f s", n, name, s.video, order[0], ref[n].video)
 			}
-			if math.Abs(s.audio-ref[n].audio) > 1e-6 {
+			// Audio starts every segment at the same time in all renditions of a codec. Across codecs it
+			// can differ by a few AAC frames (21 ms each): the HLS muxer cuts at the first video packet's
+			// decode time, which an encoder that reorders frames (H.264's B-frames) puts earlier than one
+			// that does not (SVT-AV1), while the video presentation times are made equal (TSOffset).
+			tol := 1e-6
+			if codecOf(name) != codecOf(order[0]) {
+				tol = 0.1
+			}
+			if math.Abs(s.audio-ref[n].audio) > tol {
 				t.Errorf("segment %d: %s audio starts at %.6f s but %s at %.6f s", n, name, s.audio, order[0], ref[n].audio)
 			}
 		}
@@ -899,4 +915,64 @@ func probeStreamDuration(t *testing.T, tools media.Tools, file, typ string) floa
 		}
 	}
 	return end + 1.0/29.97
+}
+
+// An asset that asked for HEVC and AV1 gets a three-codec ladder (ADR 0064): every rendition of every
+// codec is encrypted and signed like H.264's, and the segments of all of them start at the same
+// timestamps (the checks of the H.264-only test, applied to all twelve renditions: every segment's video
+// starts at exactly the same time in all of them, its audio within a codec and to a few frames across).
+func TestPipelineExtraCodecsEndToEnd(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	have, err := r.tools.EncodableCodecs(ctx, media.EncoderSoftware)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(have) != len(media.ExtraCodecs()) {
+		t.Skipf("this FFmpeg can encode only %v of the extra codecs", have)
+	}
+	r.proc.Codecs = have
+	src := generate(t, testmedia.Spec{Name: "source.mp4", Width: 1280, Height: 720, Duration: 20 * time.Second, FPS: 30, Audio: true})
+	asset, sourceSum := r.commitWith(src, false, []string{"hevc", "av1"})
+	t0 := time.Now()
+	if err := r.process(asset); err != nil {
+		t.Fatalf("asset.process: %v\n%s", err, r.logs.String())
+	}
+	t.Logf("asset.process with three codecs took %s", time.Since(t0).Round(time.Millisecond))
+	a, err := r.repos.GetAsset(ctx, asset.TenantID, asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.State != db.AssetReady || len(a.ExtraCodecFailures) != 0 {
+		t.Fatalf("asset = %s, failures %v\n%s", a.State, a.ExtraCodecFailures, r.logs.String())
+	}
+	sum := summaryOf(t, a)
+	families := map[string]int{}
+	for _, s := range sum {
+		switch {
+		case strings.HasSuffix(s.Name, "_hevc"):
+			families["hvc1"]++
+			if !strings.HasPrefix(s.Codecs, "hvc1.") || !strings.HasSuffix(s.Codecs, ",mp4a.40.2") {
+				t.Errorf("%s: codecs %q", s.Name, s.Codecs)
+			}
+		case strings.HasSuffix(s.Name, "_av1"):
+			families["av01"]++
+			if !strings.HasPrefix(s.Codecs, "av01.") || !strings.HasSuffix(s.Codecs, ",mp4a.40.2") {
+				t.Errorf("%s: codecs %q", s.Name, s.Codecs)
+			}
+		default:
+			families["avc1"]++
+			if !strings.HasPrefix(s.Codecs, "avc1.") {
+				t.Errorf("%s: codecs %q", s.Name, s.Codecs)
+			}
+		}
+	}
+	if len(sum) != 12 || families["avc1"] != 4 || families["hvc1"] != 4 || families["av01"] != 4 {
+		t.Fatalf("renditions %v (%v)", sum, families)
+	}
+	t.Logf("master playlist:\n%s", r.get(r.buckets.Delivery, keys.Master(a.TenantID, a.ID)))
+	checkManifest(t, r, a, sourceSum)
+	key := r.key(a)
+	checkEncryption(t, r, a, key)
+	checkAlignment(t, r, a, key)
 }

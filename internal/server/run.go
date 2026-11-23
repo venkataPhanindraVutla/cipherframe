@@ -316,7 +316,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 			}
 			services = append(services, s)
 		}
-		services = append(services, workerService{w: w}, ret, webhookService{d: &webhook.Dispatcher{
+		services = append(services, workerService{w: w}, ret, newCapabilityService(repos, cfg.Media.Codecs, log), webhookService{d: &webhook.Dispatcher{
 			Pool: pool, Secrets: viewerauth.NewSecretBox(kmsReg), Client: outbound.New(outbound.Options{Timeout: webhook.AttemptTimeout}), Log: log,
 		}})
 	}

@@ -115,7 +115,7 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 
 - [x] M10-1 CDN signed URLs ([ADR 0062](adr/0062-cdn-signed-urls.md), [ADR 0065](adr/0065-cdn-implementation.md), [cdn.md](cdn.md), `internal/cdn`)
 - [x] M10-2 Hardware-accelerated encoding with software fallback ([hardware-encoders.md](hardware-encoders.md), [ADR 0066](adr/0066-hardware-encoder-implementation.md); only VideoToolbox measured, NVENC, VAAPI and QSV not verified on hardware)
-- [ ] M10-3 HEVC and AV1 renditions, off by default
+- [x] M10-3 HEVC and AV1 renditions, off by default ([ADR 0067](adr/0067-hevc-av1-implementation.md), [codecs.md](codecs.md); libx265 and SVT-AV1 measured in the worker image, hardware HEVC and AV1 encoders not verified on hardware)
 - [x] M10-4 Audited content-key re-key operation ([ADR 0068](adr/0068-content-key-rekey.md), `internal/rekey`)
 
 ## Open decision gates

@@ -143,7 +143,9 @@ type seeded struct {
 	oldManifest []byte
 }
 
-var renditionNames = []string{"720p", "480p"}
+// renditionNames are an asset's renditions: two H.264 rungs and one of each extra codec, whose names
+// carry the codec (ADR 0064). A re-key must treat all of them alike.
+var renditionNames = []string{"720p", "480p", "720p_hevc", "720p_av1"}
 
 const segmentsPerRendition = 3
 
@@ -439,8 +441,8 @@ func TestRekeyReplacesTheKeyOfEveryVariantAndKeepsTheAssetVerifiable(t *testing.
 			t.Errorf("a registered %s of the %s variant is not stored", a.Kind, a.Variant)
 		}
 	}
-	if n := r.count(`SELECT count(*) FROM asset_artifacts WHERE asset_id = $1 AND kind = 'segment'`, s.asset.ID.UUID()); n != 2*2*segmentsPerRendition {
-		t.Errorf("%d segment rows, want %d", n, 2*2*segmentsPerRendition)
+	if n := r.count(`SELECT count(*) FROM asset_artifacts WHERE asset_id = $1 AND kind = 'segment'`, s.asset.ID.UUID()); n != 2*len(renditionNames)*segmentsPerRendition {
+		t.Errorf("%d segment rows, want %d", n, 2*len(renditionNames)*segmentsPerRendition)
 	}
 
 	// The new manifest verifies with the public keys alone, for every object of both variants; the

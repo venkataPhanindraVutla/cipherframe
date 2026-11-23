@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"time"
@@ -120,7 +121,9 @@ type Completion struct {
 	// after the compare-and-set succeeds, so a caller that runs it in a transaction gets a ready
 	// asset and its manifest together or neither.
 	Manifest *AssetManifest
-	At       time.Time
+	// ExtraCodecFailures are the requested extra codecs that were not made (ADR 0064); nil for none.
+	ExtraCodecFailures []CodecFailure
+	At                 time.Time
 }
 
 // CompleteProcessing moves the asset processing -> ready with a compare-and-set and records the
@@ -137,8 +140,14 @@ func (r *Repos) CompleteProcessing(ctx context.Context, tenantID id.TenantID, as
 		c.At = time.Now().UTC()
 	}
 	ms := max(c.Duration.Milliseconds(), 1)
+	failures := []byte("[]")
+	if len(c.ExtraCodecFailures) > 0 {
+		if failures, err = json.Marshal(c.ExtraCodecFailures); err != nil {
+			return Asset{}, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
+		}
+	}
 	row, err := r.q.CompleteAssetProcessing(ctx, dbgen.CompleteAssetProcessingParams{
-		At: c.At, DurationMs: ms, Renditions: c.Renditions, TenantID: tid, ID: aid,
+		At: c.At, DurationMs: ms, Renditions: c.Renditions, ExtraCodecFailures: failures, TenantID: tid, ID: aid,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

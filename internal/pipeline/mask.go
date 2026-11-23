@@ -188,7 +188,6 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	if _, err := p.transcode(ctx, asset, spec, false, log); err != nil {
 		return err
 	}
-	_ = os.Remove(maskedPath) // plaintext no longer needed on disk
 	outs := make([]media.RenditionOutput, 0, len(renditions))
 	for _, r := range renditions {
 		o, err := media.ReadRenditionOutput(spec.RenditionDir(r), r)
@@ -200,6 +199,14 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	if err := media.CheckAligned(outs, alignTolerance); err != nil {
 		return permanent(FailureTranscode, err)
 	}
+	// The masked variant gets the same extra codecs as the original (ADR 0064), made from the masked
+	// file. One that cannot be made is logged and left out of the masked variant's manifest; the
+	// asset's extra_codecs record belongs to the original variant, which is already ready or about to be.
+	extras, _, err := p.extraCodecs(ctx, asset, maskedPath, dir, info, logo, outs, log)
+	if err != nil {
+		return err
+	}
+	_ = os.Remove(maskedPath) // plaintext no longer needed on disk
 	// Nothing is published before the original is: the manifest to re-sign needs it, and an asset
 	// that failed or was deleted meanwhile gets no masked output.
 	ready, err := p.waitReady(ctx, asset, log)
@@ -209,7 +216,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	if src.Size != ready.SourceSizeBytes || !bytes.Equal(src.SHA256[:], ready.SourceSHA256) {
 		return permanent(FailureSourceMismatch, errors.New("the stored source is not the one that was processed"))
 	}
-	pub, err := p.publish(ctx, asset, keys.Masked, key, outs, readThumbnails(spec, log), info, log)
+	pub, err := p.publish(ctx, asset, keys.Masked, key, withExtras(outs, extras), readThumbnails(spec, log), info, log)
 	if err != nil {
 		return err
 	}
@@ -225,7 +232,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 		}
 		at := p.Now().UTC()
 		var sealed *db.AssetManifest
-		if sealed, err = p.sealMasked(ctx, asset, current, renditions, pub, logo.manifestLogo(), *out.FacesDetected, *out.Frames, at); err != nil {
+		if sealed, err = p.sealMasked(ctx, asset, current, renditions, extras, pub, logo.manifestLogo(), *out.FacesDetected, *out.Frames, at); err != nil {
 			return err
 		}
 		err = p.Repo.CompleteMasking(ctx, asset.TenantID, asset.ID, pub.artifacts, *sealed, current.PayloadSHA256, *out.FacesDetected, at)

@@ -45,7 +45,21 @@ func checkMediaTools(ctx context.Context, cfg *config.Config, log *slog.Logger) 
 	log.InfoContext(ctx, "ffmpeg capabilities verified",
 		slog.String("ffmpeg", cfg.Media.FFmpegPath), slog.String("ffprobe", cfg.Media.FFprobePath))
 	selectEncoder(ctx, tools, cfg, log)
+	detectCodecs(ctx, tools, cfg, log)
 	return nil
+}
+
+// detectCodecs finds the extra codecs this FFmpeg can encode (ADR 0064). A build without them is
+// fine: the worker makes H.264 only and reports no extra codec, so the settings endpoint will not
+// let a tenant ask for one on its account. A listing that fails is the same as an empty one.
+func detectCodecs(ctx context.Context, tools media.Tools, cfg *config.Config, log *slog.Logger) {
+	codecs, err := tools.EncodableCodecs(ctx, cfg.Media.Encoder)
+	if err != nil {
+		log.WarnContext(ctx, "could not list the FFmpeg encoders; extra codecs are off for this worker")
+		return
+	}
+	cfg.Media.Codecs = codecs
+	log.InfoContext(ctx, "extra codecs this worker can encode", slog.Any("codecs", codecs))
 }
 
 // selectEncoder runs the startup test encode of a hardware encoder (ADR 0063). The test's error is
@@ -104,6 +118,7 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Q
 		X264Preset:       cfg.Media.X264Preset,
 		Encoder:          cfg.Media.Encoder,
 		HWDevice:         cfg.Media.HWDevice,
+		Codecs:           cfg.Media.Codecs,
 		WorkDir:          cfg.Media.WorkDir,
 		TranscodeTimeout: cfg.Media.TranscodeTimeout,
 		Tasks:            pipeline.DBTasks{Pool: pool, Queue: inserter},

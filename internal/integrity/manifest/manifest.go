@@ -216,13 +216,19 @@ type Logo struct {
 	WidthPercent   int    `json:"width_percent"`
 }
 
-// Rung is the encoder setting of one rendition.
+// Rung is the encoder setting of one rendition. The three members after AudioKbps are set only for the
+// renditions of an extra codec (ADR 0064): Codec is "hevc" or "av1", VideoCodec the FFmpeg encoder that
+// made it and Preset that encoder's preset when it has one. They are absent for H.264's rungs, so a
+// manifest without extra codecs is byte for byte what it was before they existed.
 type Rung struct {
 	Name        string `json:"name"`
 	CRF         int    `json:"crf"`
 	MaxrateKbps int    `json:"maxrate_kbps"`
 	BufsizeKbps int    `json:"bufsize_kbps"`
 	AudioKbps   int    `json:"audio_kbps"`
+	Codec       string `json:"codec,omitempty"`
+	VideoCodec  string `json:"video_codec,omitempty"`
+	Preset      string `json:"preset,omitempty"`
 }
 
 // Object is one stored object: its path, SHA-256 (hex) and size in bytes.

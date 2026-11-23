@@ -166,6 +166,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 	if err != nil {
 		return Created{}, err
 	}
+	// The tenant's extra_codecs setting is fixed on the asset now (ADR 0064): a later change of the
+	// setting does not reach an asset that is already uploaded.
+	playback, err := s.repos.GetPlaybackSettings(ctx, in.TenantID)
+	if err != nil {
+		return Created{}, err
+	}
 	tok, err := NewToken()
 	if err != nil {
 		return Created{}, errs.Wrap(errs.InternalError, "An internal error occurred.", err)
@@ -192,7 +198,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 		asset, err = r.CreateUploadAsset(ctx, db.NewUploadAsset{
 			ID: assetID, TenantID: in.TenantID, ClientID: in.Actor.ClientID, SizeBytes: in.SizeBytes,
 			ContentType: in.ContentType, Method: in.Method, SourceKey: key, S3UploadID: uploadID, ExpiresAt: expires,
-			MaskFaces: in.MaskFaces, AssetExpiresAt: expiry,
+			MaskFaces: in.MaskFaces, AssetExpiresAt: expiry, ExtraCodecs: playback.ExtraCodecs,
 		})
 		if err != nil {
 			return err

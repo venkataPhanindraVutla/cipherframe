@@ -1,0 +1,272 @@
+[
+  {
+    "fixture": "testsrc2",
+    "codec": "h264",
+    "wall_seconds": 16.553285341,
+    "cpu_seconds": 65.928444,
+    "rungs": [
+      {
+        "name": "1080p",
+        "bytes": 11863416,
+        "kbps": 4745.3664,
+        "vmaf": 95.589893,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "720p",
+        "bytes": 4129394,
+        "kbps": 1651.7576000000001,
+        "vmaf": 96.328301,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "480p",
+        "bytes": 1688142,
+        "kbps": 675.2568,
+        "vmaf": 96.646009,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "360p",
+        "bytes": 1011808,
+        "kbps": 404.7232,
+        "vmaf": 97.272155,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "240p",
+        "bytes": 583412,
+        "kbps": 233.3648,
+        "vmaf": 96.97614,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "hevc",
+    "wall_seconds": 35.288898682,
+    "cpu_seconds": 140.477508,
+    "rungs": [
+      {
+        "name": "1080p_hevc",
+        "bytes": 7105928,
+        "kbps": 2842.3712,
+        "vmaf": 91.367407,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "720p_hevc",
+        "bytes": 3479786,
+        "kbps": 1391.9144000000001,
+        "vmaf": 95.7033,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "480p_hevc",
+        "bytes": 1238070,
+        "kbps": 495.22799999999995,
+        "vmaf": 95.934613,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "360p_hevc",
+        "bytes": 775916,
+        "kbps": 310.3664,
+        "vmaf": 96.947247,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "240p_hevc",
+        "bytes": 467269,
+        "kbps": 186.9076,
+        "vmaf": 96.391588,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "av1",
+    "wall_seconds": 24.295329011,
+    "cpu_seconds": 93.530367,
+    "rungs": [
+      {
+        "name": "1080p_av1",
+        "bytes": 8120094,
+        "kbps": 3248.0376,
+        "vmaf": 93.03268,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "720p_av1",
+        "bytes": 3319873,
+        "kbps": 1327.9492,
+        "vmaf": 95.743653,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "480p_av1",
+        "bytes": 1214430,
+        "kbps": 485.77200000000005,
+        "vmaf": 96.865796,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "360p_av1",
+        "bytes": 733074,
+        "kbps": 293.2296,
+        "vmaf": 97.329059,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "240p_av1",
+        "bytes": 510314,
+        "kbps": 204.12560000000002,
+        "vmaf": 97.505887,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "h264",
+    "wall_seconds": 32.497244514,
+    "cpu_seconds": 129.507092,
+    "rungs": [
+      {
+        "name": "1080p",
+        "bytes": 11745393,
+        "kbps": 4698.1572,
+        "vmaf": 77.017241,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "720p",
+        "bytes": 6495118,
+        "kbps": 2598.0472,
+        "vmaf": 87.295332,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "480p",
+        "bytes": 3055609,
+        "kbps": 1222.2436,
+        "vmaf": 90.132467,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "360p",
+        "bytes": 1837948,
+        "kbps": 735.1792,
+        "vmaf": 91.306249,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "240p",
+        "bytes": 961717,
+        "kbps": 384.6868,
+        "vmaf": 92.256769,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "hevc",
+    "wall_seconds": 43.701752102,
+    "cpu_seconds": 174.179886,
+    "rungs": [
+      {
+        "name": "1080p_hevc",
+        "bytes": 7116911,
+        "kbps": 2846.7644,
+        "vmaf": 71.96065,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "720p_hevc",
+        "bytes": 3989628,
+        "kbps": 1595.8512,
+        "vmaf": 84.409333,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "480p_hevc",
+        "bytes": 1858150,
+        "kbps": 743.26,
+        "vmaf": 88.871199,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "360p_hevc",
+        "bytes": 1081226,
+        "kbps": 432.4904,
+        "vmaf": 90.151605,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "240p_hevc",
+        "bytes": 621573,
+        "kbps": 248.6292,
+        "vmaf": 91.077547,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "av1",
+    "wall_seconds": 37.657330599,
+    "cpu_seconds": 146.427534,
+    "rungs": [
+      {
+        "name": "1080p_av1",
+        "bytes": 8006122,
+        "kbps": 3202.4488,
+        "vmaf": 72.463043,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "720p_av1",
+        "bytes": 2463364,
+        "kbps": 985.3456,
+        "vmaf": 82.335449,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "480p_av1",
+        "bytes": 1252667,
+        "kbps": 501.06679999999994,
+        "vmaf": 89.228787,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "360p_av1",
+        "bytes": 768136,
+        "kbps": 307.2544,
+        "vmaf": 91.667548,
+        "first_pts": 0.066667
+      },
+      {
+        "name": "240p_av1",
+        "bytes": 483287,
+        "kbps": 193.3148,
+        "vmaf": 92.995807,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  }
+]

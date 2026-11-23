@@ -525,17 +525,26 @@ docker run --rm --entrypoint /usr/local/bin/ffmpeg cipherframe-worker -hide_bann
 The FFmpeg in it is configured with `--disable-everything --disable-network --disable-autodetect`
 and only what ADR 0024 lists: `file` and `pipe` protocols; MP4/MOV and Matroska/WebM input; H.264,
 HEVC, VP8, VP9, AV1 (through dav1d, because FFmpeg's own AV1 decoder needs a hardware accelerator),
-AAC, Opus and MP3 decoding; libx264 and AAC encoding; MP4 and HLS (fMP4) output; and the
+AAC, Opus and MP3 decoding; libx264, libx265 (HEVC), SVT-AV1 (AV1) and AAC encoding; MP4 and HLS (fMP4) output; and the
 `scale`, `format`, `aresample`, `null`, `anull`, `setsar`, `fps`, `split`, `transpose`, `hflip`,
 `vflip`, `trim`, `setpts`, `tile`, `overlay` and `colorchannelmixer` filters (`split` fans the decoded frames out to one scaled branch per rendition; `transpose`, `hflip` and `vflip` apply a rotated phone video's display matrix; `trim`, `setpts` and `tile` make the thumbnails; `overlay` and `colorchannelmixer` draw the brand logo, which arrives as raw pixels through the `rawvideo` demuxer). Everything is pinned by
 SHA-256 or digest. `/usr/share/licenses/ffmpeg/` holds the licence texts and `SOURCE.md`, the
 written source offer with the exact sources and configure line. The image's `ENV` points
 `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH` at `/usr/local/bin`.
 
+**HEVC and AV1 renditions (M10-3, off by default).** The worker image can also make HEVC (libx265) and AV1 (SVT-AV1)
+renditions beside H.264. A tenant turns them on with `extra_codecs` in `PUT /v1/playback-settings` (`["hevc"]`,
+`["av1"]` or both); it applies to assets uploaded afterwards, each codec adds a full ladder of renditions and the
+master playlist lists all of them, H.264 first, so the player picks one it can decode. The settings call is
+refused while no worker seen in the last 5 minutes can encode the codec (an operator's own FFmpeg may lack
+`libx265` or `libsvtav1`; the worker starts anyway and reports what it has). An asset shows what it asked for and
+what it did not get in `extra_codecs` (`requested`, `failed` with a reason). Storage, transcode time, the player
+matrix and licensing are in [codecs.md](codecs.md).
+
 **Hardware encoders (M10-2).** The static image above cannot use a GPU: libva and the NVIDIA runtime
 load their drivers with `dlopen`. `docker build -f build/worker.Dockerfile --target worker-hw -t cipherframe-worker-hw .`
-builds a second image with a dynamically linked FFmpeg that has `h264_nvenc`, `h264_vaapi` and `h264_qsv`
-(Debian base, no `--enable-nonfree`). Set `CIPHERFRAME_WORKER_ENCODER` and give the container the device;
+builds a second image with a dynamically linked FFmpeg that has the NVENC, VAAPI and QSV encoders of H.264, HEVC and AV1
+(`h264_nvenc`, `hevc_vaapi`, `av1_qsv` and so on; Debian base, no `--enable-nonfree`). Set `CIPHERFRAME_WORKER_ENCODER` and give the container the device;
 [hardware-encoders.md](hardware-encoders.md) has the setup per encoder and what was and was not measured.
 
 **Rebuild the worker image after upgrading to the brand logo (M7-4, ADR 0049).** The startup check now
@@ -550,7 +559,8 @@ refuses to start if a required piece is missing. The error lists everything miss
 example `missing encoder(s): libx264; missing muxer(s): hls`.
 
 **Using your own FFmpeg.** Set `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH`. Your build
-needs libx264 and the native AAC encoder; the `mp4` and `hls` muxers; the `mov` and `matroska`
+needs libx264 and the native AAC encoder (and, only if you want HEVC or AV1 renditions, `libx265` or `libsvtav1`: the startup
+check does not require them, the worker reports whether it has them); the `mp4` and `hls` muxers; the `mov` and `matroska`
 demuxers; the H.264, HEVC, VP8, VP9, AAC, Opus and MP3 decoders and an AV1 decoder (`libdav1d` or
 `libaom-av1`); the `file` and `pipe` protocols; and the filters above (including `split`). A distribution FFmpeg usually
 has all of them. If something is missing the worker says so at startup. A full-featured FFmpeg is

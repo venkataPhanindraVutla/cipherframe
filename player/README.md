@@ -116,3 +116,9 @@ pnpm e2e
 
 The test changes the tenant's playback and overlay settings (60 second token, 10 second heartbeat, overlay on):
 use a throwaway tenant.
+
+With `CIPHERFRAME_EXTRA_CODECS="hevc av1"` exported before `prepare-asset.sh` (CI does), the asset has H.264, HEVC and
+AV1 renditions in one master playlist (ADR 0064, [codecs.md](../docs/codecs.md)), and one more test checks that
+hls.js keeps only the variants Chromium decodes (H.264 and AV1; HEVC is not assumed) and plays one. The player has no
+codec setting: `test/multicodec.test.ts` runs the real hls.js over a multi-codec master fixture with a stubbed
+`MediaSource`, which is the same check without a browser.

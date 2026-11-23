@@ -45,6 +45,17 @@ func ValidateSettings(s db.PlaybackSettings) []errs.FieldError {
 		}
 		seenKind[k] = true
 	}
+	seenCodec := map[string]bool{}
+	for i, c := range s.ExtraCodecs {
+		field := "extra_codecs[" + strconv.Itoa(i) + "]"
+		switch {
+		case !db.ValidExtraCodec(c):
+			bad(field, "must be one of "+strings.Join(db.ExtraCodecs, ", "))
+		case seenCodec[c]:
+			bad(field, "must not repeat another entry")
+		}
+		seenCodec[c] = true
+	}
 	// The relations only make sense when both sides are in range.
 	inRange := func(v, lo, hi int) bool { return v >= lo && v <= hi }
 	hbOK := inRange(s.HeartbeatIntervalSeconds, 10, 600)

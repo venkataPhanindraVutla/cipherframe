@@ -90,3 +90,30 @@ test("plays with the token on the key request, survives refreshes, stops when re
   await expect.poll(() => state(page), { timeout: 40_000 }).toBe("revoked");
   await expect(page.locator("cipherframe-player").locator(".status")).toContainText("revoked");
 });
+
+// An asset made with extra codecs (prepare-asset.sh with CIPHERFRAME_EXTRA_CODECS="hevc av1", ADR 0064) has
+// one master playlist with H.264, HEVC and AV1 variants. The player has no codec setting: hls.js keeps the
+// variants this browser can decode and plays one. Chromium decodes H.264 and AV1; HEVC is not assumed.
+test("an asset with HEVC and AV1 renditions plays a variant the browser decodes", async ({ page }) => {
+  const info = (await (await call("GET", `/v1/assets/${asset}`)).json()) as { extra_codecs?: { requested: string[]; failed: unknown[] } };
+  test.skip(!info.extra_codecs, "the asset was prepared without extra codecs");
+  expect(info.extra_codecs?.failed).toEqual([]);
+
+  await open(page);
+  await page.locator("cipherframe-player").getByRole("button", { name: "Play" }).click();
+  await expect.poll(() => time(page), { timeout: 60_000 }).toBeGreaterThan(2);
+
+  const seen = await page.evaluate(() => {
+    const hls = (document.querySelector("cipherframe-player") as unknown as { hls: { levels: { attrs: { CODECS: string } }[]; currentLevel: number } }).hls;
+    const decodable = (codecs: string) => MediaSource.isTypeSupported(`video/mp4; codecs="${codecs}"`);
+    return {
+      codecs: hls.levels.map((l) => l.attrs.CODECS),
+      allDecodable: hls.levels.every((l) => decodable(l.attrs.CODECS)),
+      playing: hls.levels[hls.currentLevel]?.attrs.CODECS,
+    };
+  });
+  // Every variant hls.js kept is one this browser decodes, and H.264 is among them (it is always made).
+  expect(seen.allDecodable).toBe(true);
+  expect(seen.codecs.some((c) => c.startsWith("avc1."))).toBe(true);
+  expect(seen.playing).toMatch(/^(avc1|av01|hvc1|hev1)\./);
+});

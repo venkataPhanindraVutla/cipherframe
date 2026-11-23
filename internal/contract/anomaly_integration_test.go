@@ -96,7 +96,7 @@ func TestAnomalyOperationsMatchSpec(t *testing.T) {
 		"token_ttl_seconds": 600, "heartbeat_interval_seconds": 60, "idle_timeout_seconds": 300,
 		"session_max_seconds": 14400, "max_sessions_per_viewer": 1, "key_fetches_per_token": 20,
 		"key_requests_per_minute": 30, "allowed_origins": []string{}, "token_in_url": false, "delivery": "proxy",
-		"anomaly_sessions_per_viewer_10m": 10, "anomaly_segments_without_key": 30, "auto_revoke": []string{"segments_without_key"},
+		"anomaly_sessions_per_viewer_10m": 10, "anomaly_segments_without_key": 30, "auto_revoke": []string{"segments_without_key"}, "extra_codecs": []string{},
 	}, 200)
 	sess := map[string]any{"asset_id": asset.ID.String(), "viewer_id": "viewer-1"}
 	call(admin, "POST", "/v1/playback-sessions", sess, 201)

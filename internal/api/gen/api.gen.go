@@ -253,6 +253,24 @@ func (e DsseEnvelopePayloadType) Valid() bool {
 	}
 }
 
+// Defines values for ExtraCodec.
+const (
+	Av1  ExtraCodec = "av1"
+	Hevc ExtraCodec = "hevc"
+)
+
+// Valid indicates whether the value is a known member of the ExtraCodec enum.
+func (e ExtraCodec) Valid() bool {
+	switch e {
+	case Av1:
+		return true
+	case Hevc:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
@@ -1064,7 +1082,11 @@ type Asset struct {
 	// ExpiresAt When the retention job deletes the asset. Absent when the asset is kept until deleted
 	// (the default). Set at creation or with `PATCH /v1/assets/{asset_id}`.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	FailedAt  *time.Time `json:"failed_at,omitempty"`
+
+	// ExtraCodecs Present only when the asset was created with extra codecs on (the tenant's `extra_codecs`
+	// setting at that time, ADR 0064). Changing the setting later does not change it.
+	ExtraCodecs *ExtraCodecs `json:"extra_codecs,omitempty"`
+	FailedAt    *time.Time   `json:"failed_at,omitempty"`
 
 	// FailureCode Why the asset failed, for example `upload_aborted` or `quota_transcode_minutes` (the
 	// month's transcode minutes were used up). A stable lower_snake_case code.
@@ -1410,6 +1432,24 @@ type DsseEnvelope struct {
 
 // DsseEnvelopePayloadType defines model for DsseEnvelope.PayloadType.
 type DsseEnvelopePayloadType string
+
+// ExtraCodec An optional video codec made beside H.264 (ADR 0064).
+type ExtraCodec string
+
+// ExtraCodecs defines model for ExtraCodecs.
+type ExtraCodecs struct {
+	// Failed The requested codecs that were not made, each with a stable lower_snake_case `reason`
+	// (`encoder_unavailable`, `transcode_failed`, `transcode_timeout` or `output_invalid`). Empty
+	// until the asset is `ready`. The asset is playable in H.264 either way.
+	Failed []struct {
+		// Codec An optional video codec made beside H.264 (ADR 0064).
+		Codec  ExtraCodec `json:"codec"`
+		Reason string     `json:"reason"`
+	} `json:"failed"`
+
+	// Requested The tenant's `extra_codecs` setting when the asset was created.
+	Requested []ExtraCodec `json:"requested"`
+}
 
 // FieldError defines model for FieldError.
 type FieldError struct {
@@ -1792,6 +1832,7 @@ type PlaybackSettings struct {
 	AnomalySessionsPerViewer10m int                          `json:"anomaly_sessions_per_viewer_10m"`
 	AutoRevoke                  []PlaybackSettingsAutoRevoke `json:"auto_revoke"`
 	Delivery                    PlaybackSettingsDelivery     `json:"delivery"`
+	ExtraCodecs                 []ExtraCodec                 `json:"extra_codecs"`
 	HeartbeatIntervalSeconds    int                          `json:"heartbeat_interval_seconds"`
 	IdleTimeoutSeconds          int                          `json:"idle_timeout_seconds"`
 	KeyFetchesPerToken          int                          `json:"key_fetches_per_token"`
@@ -1854,6 +1895,14 @@ type PlaybackSettingsInput struct {
 	// configured. After a session is revoked, a URL it already received keeps working
 	// until it expires (at most 10 minutes); the content key is still refused.
 	Delivery *PlaybackSettingsInputDelivery `json:"delivery,omitempty"`
+
+	// ExtraCodecs Video codecs made beside H.264 for assets uploaded from now on (ADR 0064): any of `hevc`
+	// and `av1`. Empty, the default, means H.264 only. Each listed codec adds a full ladder, so
+	// more storage and transcode time. Existing assets are not re-encoded. Turning a codec on is
+	// refused with `invalid_request` (field `extra_codecs[i]`) when no worker seen in the last 5
+	// minutes reports an encoder for it. The master playlist then lists every codec, H.264
+	// first, and the player picks one it can decode.
+	ExtraCodecs *[]ExtraCodec `json:"extra_codecs,omitempty"`
 
 	// HeartbeatIntervalSeconds How often the player sends a heartbeat. Must be less than `token_ttl_seconds` and less
 	// than `idle_timeout_seconds`. Default 60.

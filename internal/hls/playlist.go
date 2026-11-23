@@ -1,10 +1,12 @@
 package hls
 
 import (
+	"cmp"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -139,19 +141,19 @@ func ParseMedia(src string) (MediaPlaylist, error) {
 	return p, nil
 }
 
-// RenderMaster returns the canonical master playlist. Variants are listed from the lowest bandwidth
-// to the highest, which is the order players that start at the first entry want for a fast start.
+// RenderMaster returns the canonical master playlist. Variants are listed by codec family, H.264
+// first, then HEVC, then AV1, and within a family from the lowest bandwidth to the highest, which is the
+// order players that start at the first entry want for a fast start: that entry is always H.264, which
+// every player can decode (ADR 0064). With H.264 alone the order is by bandwidth only, as before.
 func RenderMaster(variants []Variant) (string, error) {
 	if len(variants) == 0 {
 		return "", errors.New("hls: a master playlist needs at least one variant")
 	}
-	sorted := append([]Variant(nil), variants...)
-	// Insertion sort: a handful of entries, and it keeps the order of equal bandwidths.
-	for i := 1; i < len(sorted); i++ {
-		for j := i; j > 0 && sorted[j].Bandwidth < sorted[j-1].Bandwidth; j-- {
-			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
-		}
-	}
+	// A stable sort keeps the order of equal bandwidths.
+	sorted := slices.Clone(variants)
+	slices.SortStableFunc(sorted, func(a, b Variant) int {
+		return cmp.Or(cmp.Compare(familyRank(a.Codecs), familyRank(b.Codecs)), cmp.Compare(a.Bandwidth, b.Bandwidth))
+	})
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
 	b.WriteString("#EXT-X-VERSION:" + strconv.Itoa(playlistVersion) + "\n")
@@ -171,6 +173,19 @@ func RenderMaster(variants []Variant) (string, error) {
 			v.Bandwidth, v.AverageBandwidth, v.Width, v.Height, v.Codecs, v.FrameRate, v.URI)
 	}
 	return b.String(), nil
+}
+
+// familyRank orders the codec families of a CODECS string: H.264, HEVC, AV1, anything else last.
+func familyRank(codecs string) int {
+	switch {
+	case strings.HasPrefix(codecs, "avc1"):
+		return 0
+	case strings.HasPrefix(codecs, "hvc1"), strings.HasPrefix(codecs, "hev1"):
+		return 1
+	case strings.HasPrefix(codecs, "av01"):
+		return 2
+	}
+	return 3
 }
 
 // checkURI refuses anything that could break out of a playlist line or an attribute value. URIs

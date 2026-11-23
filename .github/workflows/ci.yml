@@ -471,7 +471,9 @@ jobs:
           echo "::add-mask::${key}"
           case "${key}" in cf_*_*) ;; *) echo "bootstrap did not print a key"; exit 1 ;; esac
           echo "CIPHERFRAME_API_KEY=${key}" >> "$GITHUB_ENV"
-          export CIPHERFRAME_API_KEY="${key}" FIXTURE_FFMPEG="${PWD}/out/tools/ffmpeg-fixtures"
+          # The asset gets HEVC and AV1 renditions beside H.264 (ADR 0064): the player test then runs against
+          # a multi-codec master, and Chromium plays the variant it decodes.
+          export CIPHERFRAME_API_KEY="${key}" FIXTURE_FFMPEG="${PWD}/out/tools/ffmpeg-fixtures" CIPHERFRAME_EXTRA_CODECS="hevc av1"
           echo "CIPHERFRAME_ASSET_ID=$(sh player/e2e/prepare-asset.sh)" >> "$GITHUB_ENV"
       - name: install Chromium
         working-directory: player

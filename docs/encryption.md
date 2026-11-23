@@ -43,7 +43,7 @@ uploaded.
   delivery bucket never contains a token, a session ID or a real key location.
 - **Init segments are not encrypted.** The `EXT-X-MAP` tag comes before the first `EXT-X-KEY`, and by
   RFC 8216 a key applies only to init segments declared after it, so players fetch the init segment
-  without a key. It holds codec configuration (the avcC and esds boxes, track sizes and timescales)
+  without a key. It holds codec configuration (the avcC, hvcC or av1C and esds boxes, track sizes and timescales)
   and no media samples. Anyone who can read the delivery bucket learns the codec, profile, level and
   frame size of a rendition from it; they learn that from the master playlist as well.
 - **Integrity.** The SHA-256 of the stored (encrypted) bytes of every object is recorded in

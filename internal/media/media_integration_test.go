@@ -5,6 +5,7 @@ package media_test
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/hls"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media/testmedia"
 )
@@ -405,5 +407,146 @@ func TestKeyframesAlignedAcrossRenditions(t *testing.T) {
 	}
 	if err := media.CheckAligned(outs, 2*time.Millisecond); err != nil {
 		t.Errorf("%s: segments differ across renditions: %v", enc, err)
+	}
+}
+
+// firstPacketTime is the presentation time of a rendition's first video packet, in seconds.
+func firstPacketTime(t *testing.T, o media.RenditionOutput) float64 {
+	t.Helper()
+	paths := []string{o.InitPath}
+	for _, s := range o.Segments[:1] {
+		paths = append(paths, s.Path)
+	}
+	var joined []byte
+	for _, p := range paths {
+		b, err := os.ReadFile(p) //nolint:gosec // test reads files FFmpeg just wrote under t.TempDir
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined = append(joined, b...)
+	}
+	whole := filepath.Join(t.TempDir(), "first.mp4")
+	if err := os.WriteFile(whole, joined, 0o600); err != nil { //nolint:gosec // path is under t.TempDir
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), tools(t).FFprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", //nolint:gosec // test: argument array
+		"-of", "csv=p=0", "file:"+whole)
+	cmd.Env = []string{"LC_ALL=C"}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("ffprobe: %v", err)
+	}
+	first := math.Inf(1)
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		f, err := strconv.ParseFloat(strings.TrimSpace(line), 64)
+		if err != nil {
+			t.Fatalf("ffprobe printed %q", line)
+		}
+		first = min(first, f)
+	}
+	return first
+}
+
+// HEVC and AV1 next to H.264 (ADR 0064): each extra codec has the full ladder, every rendition of every
+// codec has keyframes every 2 s at the same times, the segments have the same durations everywhere, and
+// each init segment describes its own codec (hvc1, av01) for the master playlist. A worker FFmpeg without
+// an encoder skips that codec, as the worker does.
+func TestExtraCodecsAlignWithH264(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	have, err := tools(t).EncodableCodecs(ctx, media.EncoderSoftware)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(have) == 0 {
+		t.Skip("this FFmpeg has neither libx265 nor libsvtav1")
+	}
+	src := generate(t, testmedia.Spec{Name: "codecs.mp4", Width: 854, Height: 480, Duration: 14 * time.Second, FPS: 30, Audio: true})
+	info := probe(t, src)
+	out := t.TempDir()
+
+	type made struct {
+		codec media.Codec
+		rends []media.Rendition
+		outs  []media.RenditionOutput
+	}
+	var all []made
+	var start time.Duration // where H.264 presents its first picture; the extra codecs are given the same
+	for _, c := range append([]media.Codec{media.CodecH264}, have...) {
+		rends := media.LadderFor(c, info, nil)
+		if len(rends) < 3 {
+			t.Fatalf("%s: ladder has %d rungs", c, len(rends))
+		}
+		spec := media.TranscodeSpec{Source: src, OutDir: filepath.Join(out, string(c)), Info: info, Renditions: rends, Codec: c, TSOffset: start}
+		if err := tools(t).Transcode(ctx, spec, nil); err != nil {
+			t.Fatalf("%s transcode: %v", c, err)
+		}
+		m := made{codec: c, rends: rends}
+		for _, r := range rends {
+			o, err := media.ReadRenditionOutput(spec.RenditionDir(r), r)
+			if err != nil {
+				t.Fatalf("%s %s: %v", c, r.Name, err)
+			}
+			m.outs = append(m.outs, o)
+		}
+		if c == media.CodecH264 {
+			init, err := os.ReadFile(m.outs[0].InitPath) //nolint:gosec // test reads a file FFmpeg just wrote under t.TempDir
+			if err != nil {
+				t.Fatal(err)
+			}
+			seg, err := os.ReadFile(m.outs[0].Segments[0].Path) //nolint:gosec // as above
+			if err != nil {
+				t.Fatal(err)
+			}
+			if start, err = media.FirstVideoPTS(init, seg); err != nil {
+				t.Fatal(err)
+			}
+			// What the container reader says is what ffprobe says (an H.264 encoder with B-frames: two frames).
+			if d := firstPacketTime(t, m.outs[0]) - start.Seconds(); d < -0.001 || d > 0.001 {
+				t.Errorf("FirstVideoPTS = %s but ffprobe finds the first picture at %.4f s", start, firstPacketTime(t, m.outs[0]))
+			}
+		}
+		all = append(all, m)
+	}
+
+	want := map[media.Codec]string{media.CodecH264: "avc1.", media.CodecHEVC: "hvc1.", media.CodecAV1: "av01."}
+	ref := all[0]
+	refKF := keyframeTimes(t, "", ref.outs[0])
+	refFirst := firstPacketTime(t, ref.outs[0])
+	for _, m := range all {
+		// The same segments, in count and duration, as the H.264 ladder's tallest rung, and within the codec.
+		if err := media.CheckAligned(append([]media.RenditionOutput{ref.outs[0]}, m.outs...), 2*time.Millisecond); err != nil {
+			t.Errorf("%s: %v", m.codec, err)
+		}
+		for i, o := range m.outs {
+			init, err := os.ReadFile(o.InitPath) //nolint:gosec // test reads a file FFmpeg just wrote under t.TempDir
+			if err != nil {
+				t.Fatal(err)
+			}
+			cs, err := hls.VideoCodec(init)
+			if err != nil || !strings.HasPrefix(cs, want[m.codec]) {
+				t.Errorf("%s %s: codec string %q, %v; want prefix %s", m.codec, o.Rendition.Name, cs, err, want[m.codec])
+			}
+			if m.codec != media.CodecH264 && !strings.HasSuffix(o.Rendition.Name, "_"+string(m.codec)) {
+				t.Errorf("%s: rendition named %s", m.codec, o.Rendition.Name)
+			}
+			kf := keyframeTimes(t, "", o)
+			if len(kf) != 7 {
+				t.Fatalf("%s %s: %d keyframes for 14 s, want 7: %v", m.codec, o.Rendition.Name, len(kf), kf)
+			}
+			// Keyframes of every rendition of every codec fall on the same times as H.264's.
+			for j := range kf {
+				if d := kf[j] - refKF[j]; d < -0.001 || d > 0.001 {
+					t.Errorf("%s %s: keyframe %d at %.3f s, H.264's is at %.3f s", m.codec, o.Rendition.Name, j, kf[j], refKF[j])
+				}
+			}
+			if i == 0 {
+				// The encoders hold different numbers of frames back for reordering (H.264's B-frames put the
+				// first picture at 0.067 s, SVT-AV1's at 0.021 s); TSOffset makes them present together.
+				if d := firstPacketTime(t, o) - refFirst; d < -0.001 || d > 0.001 {
+					t.Errorf("%s: first packet at %.3f s, H.264's at %.3f s", m.codec, firstPacketTime(t, o), refFirst)
+				}
+			}
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/api"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
@@ -20,6 +21,7 @@ func fullSettings() map[string]any {
 		"key_requests_per_minute": 15, "allowed_origins": []any{"https://app.example.com", "http://localhost:3000"},
 		"token_in_url": false, "delivery": "proxy",
 		"anomaly_sessions_per_viewer_10m": 20, "anomaly_segments_without_key": 50, "auto_revoke": []any{"key_replay"},
+		"extra_codecs": []any{},
 	}
 }
 
@@ -42,7 +44,7 @@ func TestPlaybackSettingsDefaults(t *testing.T) {
 		"token_ttl_seconds": 600.0, "heartbeat_interval_seconds": 60.0, "idle_timeout_seconds": 300.0,
 		"session_max_seconds": 14400.0, "max_sessions_per_viewer": 3.0, "key_fetches_per_token": 20.0,
 		"key_requests_per_minute": 30.0, "allowed_origins": []any{}, "token_in_url": false, "delivery": "proxy",
-		"anomaly_sessions_per_viewer_10m": 10.0, "anomaly_segments_without_key": 30.0, "auto_revoke": []any{},
+		"anomaly_sessions_per_viewer_10m": 10.0, "anomaly_segments_without_key": 30.0, "auto_revoke": []any{}, "extra_codecs": []any{},
 	}
 	if !reflect.DeepEqual(r.m, want) {
 		t.Fatalf("defaults = %s", r.raw)
@@ -196,6 +198,8 @@ func TestPlaybackSettingsValidation(t *testing.T) {
 		"auto_revoke session_limit":   {with("auto_revoke", []any{"session_limit"}), []string{"auto_revoke[0]"}},
 		"auto_revoke unknown":         {with("auto_revoke", []any{"key_rate", "nope"}), []string{"auto_revoke[1]"}},
 		"auto_revoke repeated":        {with("auto_revoke", []any{"key_rate", "key_rate"}), []string{"auto_revoke[1]"}},
+		"extra codec unknown":         {with("extra_codecs", []any{"vp9"}), []string{"extra_codecs[0]"}},
+		"extra codec no worker":       {with("extra_codecs", []any{"hevc", "av1"}), []string{"extra_codecs[0]", "extra_codecs[1]"}},
 		"http origin":                 {with("allowed_origins", []any{"http://example.com"}), []string{"allowed_origins[0]"}},
 		"origin with path":            {with("allowed_origins", []any{"https://example.com/app"}), []string{"allowed_origins[0]"}},
 		"origin with slash":           {with("allowed_origins", []any{"https://example.com/"}), []string{"allowed_origins[0]"}},
@@ -254,14 +258,14 @@ func TestPlaybackSettingsValidation(t *testing.T) {
 		"token_ttl_seconds": 60, "heartbeat_interval_seconds": 10, "idle_timeout_seconds": 30,
 		"session_max_seconds": 300, "max_sessions_per_viewer": 0, "key_fetches_per_token": 1,
 		"key_requests_per_minute": 1, "allowed_origins": []any{}, "token_in_url": true, "delivery": "presigned",
-		"anomaly_sessions_per_viewer_10m": 0, "anomaly_segments_without_key": 0, "auto_revoke": []any{},
+		"anomaly_sessions_per_viewer_10m": 0, "anomaly_segments_without_key": 0, "auto_revoke": []any{}, "extra_codecs": []any{},
 	}), 200)
 	h.mustOK(h.do(key, "PUT", "/v1/playback-settings", map[string]any{
 		"token_ttl_seconds": 3600, "heartbeat_interval_seconds": 600, "idle_timeout_seconds": 3600,
 		"session_max_seconds": 86400, "max_sessions_per_viewer": 100, "key_fetches_per_token": 1000,
 		"key_requests_per_minute": 600, "allowed_origins": []any{"https://a.example.com:8443"}, "token_in_url": false, "delivery": "proxy",
 		"anomaly_sessions_per_viewer_10m": 1000, "anomaly_segments_without_key": 100000,
-		"auto_revoke": []any{"key_replay", "key_rate", "rapid_session_creation", "segments_without_key"},
+		"auto_revoke": []any{"key_replay", "key_rate", "rapid_session_creation", "segments_without_key"}, "extra_codecs": []any{},
 	}), 200)
 }
 
@@ -271,7 +275,7 @@ func TestPlaybackSettingsMissingFields(t *testing.T) {
 
 	r := h.do(key, "PUT", "/v1/playback-settings", `{}`)
 	h.wantStatus(r, 400, "invalid_request")
-	if len(fieldErrors(r)) != 13 {
+	if len(fieldErrors(r)) != 14 {
 		t.Fatalf("empty body: field errors = %v", fieldErrors(r))
 	}
 	// A zero value is not a missing field; null and absent are.
@@ -311,5 +315,68 @@ func TestPlaybackSettingsNeedAdmin(t *testing.T) {
 	got := h.mustOK(h.do(admin, "GET", "/v1/playback-settings", nil), 200)
 	if got.m["max_sessions_per_viewer"] != 5.0 {
 		t.Fatalf("settings written by the admin-only key: %s", got.raw)
+	}
+}
+
+// extra_codecs (ADR 0064): a codec is turned on only while a recently seen worker reports it; one that
+// is already on stays on when workers are down, so unrelated settings can still change.
+func TestPlaybackSettingsExtraCodecsNeedAWorker(t *testing.T) {
+	h := newHarness(t)
+	key, _ := h.bootstrap("acme")
+	ctx := context.Background()
+	with := func(codecs ...any) map[string]any {
+		s := fullSettings()
+		s["extra_codecs"] = append([]any{}, codecs...)
+		return s
+	}
+	report := func(id string, age time.Duration, codecs ...string) {
+		t.Helper()
+		codecs = append([]string{}, codecs...) // an empty list, not NULL
+		if _, err := h.pool.Exec(ctx, `INSERT INTO worker_capabilities (worker_id, codecs, started_at, last_seen_at)
+			VALUES ($1::uuid, $2::text[], now() - interval '1 day', now() - make_interval(secs => $3))
+			ON CONFLICT (worker_id) DO UPDATE SET codecs = EXCLUDED.codecs, last_seen_at = EXCLUDED.last_seen_at`,
+			id, codecs, age.Seconds()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const w1, w2 = "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"
+
+	// No worker has reported anything: refused, with the field that names the codec.
+	r := h.do(key, "PUT", "/v1/playback-settings", with("hevc"))
+	h.wantStatus(r, 400, "invalid_request")
+	if got := fieldErrors(r); !reflect.DeepEqual(got, []string{"extra_codecs[0]"}) || !strings.Contains(string(r.raw), "no recently seen worker") {
+		t.Fatalf("no worker: %v %s", got, r.raw)
+	}
+	// A worker that was last seen long ago does not count.
+	report(w1, time.Hour, "hevc", "av1")
+	h.wantStatus(h.do(key, "PUT", "/v1/playback-settings", with("hevc")), 400, "invalid_request")
+
+	// A fresh worker with HEVC only: HEVC is accepted and AV1 still is not.
+	report(w1, time.Minute, "hevc")
+	got := h.mustOK(h.do(key, "PUT", "/v1/playback-settings", with("hevc")), 200)
+	if !reflect.DeepEqual(got.m["extra_codecs"], []any{"hevc"}) {
+		t.Fatalf("extra_codecs = %v", got.m["extra_codecs"])
+	}
+	r = h.do(key, "PUT", "/v1/playback-settings", with("hevc", "av1"))
+	h.wantStatus(r, 400, "invalid_request")
+	if got := fieldErrors(r); !reflect.DeepEqual(got, []string{"extra_codecs[1]"}) {
+		t.Fatalf("av1: %v", got)
+	}
+	// Another worker with AV1 makes both acceptable.
+	report(w2, 0, "av1")
+	got = h.mustOK(h.do(key, "PUT", "/v1/playback-settings", with("av1", "hevc")), 200)
+	if !reflect.DeepEqual(got.m["extra_codecs"], []any{"av1", "hevc"}) {
+		t.Fatalf("extra_codecs = %v", got.m["extra_codecs"])
+	}
+	// With every worker gone a codec that is already on can be kept while other settings change.
+	report(w1, time.Hour)
+	report(w2, time.Hour)
+	again := with("av1", "hevc")
+	again["token_ttl_seconds"] = 1000
+	h.mustOK(h.do(key, "PUT", "/v1/playback-settings", again), 200)
+	// Emptying the list never needs a worker.
+	got = h.mustOK(h.do(key, "PUT", "/v1/playback-settings", with()), 200)
+	if !reflect.DeepEqual(got.m["extra_codecs"], []any{}) {
+		t.Fatalf("extra_codecs = %v", got.m["extra_codecs"])
 	}
 }

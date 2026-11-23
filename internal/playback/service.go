@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"slices"
+	"strconv"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -36,6 +38,10 @@ const (
 	TransportHeader = "header"
 	TransportURL    = "url"
 )
+
+// WorkerFresh is how recently a worker must have reported its codecs for them to count (ADR 0067).
+// Workers report every minute, so a worker missing for this long is gone or stuck.
+const WorkerFresh = 5 * time.Minute
 
 // MaxViewerIDChars is the longest viewer ID, in characters.
 const MaxViewerIDChars = 128
@@ -343,6 +349,40 @@ func (s *Service) createSession(ctx context.Context, in CreateInput) (Created, *
 	}, rapid, nil
 }
 
+// checkCodecs refuses an extra codec that no worker seen within WorkerFresh reports it can encode
+// (ADR 0064): an upload would otherwise be accepted and then never get the renditions. A codec the
+// tenant already has is left alone, so settings can still be changed while the workers are down; only
+// a codec being turned on needs a live worker. An invalid codec is ValidateSettings' to report.
+func (s *Service) checkCodecs(ctx context.Context, tenantID id.TenantID, in db.PlaybackSettings) ([]errs.FieldError, error) {
+	var wanted []string
+	for _, c := range in.ExtraCodecs {
+		if db.ValidExtraCodec(c) {
+			wanted = append(wanted, c)
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	cur, err := s.repos.GetPlaybackSettings(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	reported, err := s.repos.RecentWorkerCodecs(ctx, s.now().Add(-WorkerFresh).UTC())
+	if err != nil {
+		return nil, err
+	}
+	var out []errs.FieldError
+	for i, c := range in.ExtraCodecs {
+		if slices.Index(in.ExtraCodecs, c) == i && slices.Contains(wanted, c) && !slices.Contains(cur.ExtraCodecs, c) && !slices.Contains(reported, c) {
+			out = append(out, errs.FieldError{
+				Field:   "extra_codecs[" + strconv.Itoa(i) + "]",
+				Message: c + " is not available: no recently seen worker can encode it",
+			})
+		}
+	}
+	return out, nil
+}
+
 // GetSettings returns the tenant's effective settings: its stored ones, or the defaults.
 func (s *Service) GetSettings(ctx context.Context, tenantID id.TenantID) (db.PlaybackSettings, error) {
 	return s.repos.GetPlaybackSettings(ctx, tenantID)
@@ -355,11 +395,16 @@ func (s *Service) PutSettings(ctx context.Context, tenantID id.TenantID, actor a
 	if in.Delivery == db.DeliveryCDN && !s.cdn {
 		fields = append(fields, errs.FieldError{Field: "delivery", Message: "cdn is not available: this deployment has no CDN configured"})
 	}
+	codecFields, err := s.checkCodecs(ctx, tenantID, in)
+	if err != nil {
+		return db.PlaybackSettings{}, err
+	}
+	fields = append(fields, codecFields...)
 	if len(fields) > 0 {
 		return db.PlaybackSettings{}, errs.Invalid("The playback settings are invalid.", fields)
 	}
 	var out db.PlaybackSettings
-	err := db.Tx(ctx, s.pool, func(tx *db.Repos) error {
+	err = db.Tx(ctx, s.pool, func(tx *db.Repos) error {
 		var err error
 		if out, err = tx.PutPlaybackSettings(ctx, tenantID, in, s.now().UTC()); err != nil {
 			return err

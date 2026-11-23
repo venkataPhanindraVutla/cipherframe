@@ -6,7 +6,7 @@ INSERT INTO playback_settings (
     tenant_id, token_ttl_seconds, heartbeat_interval_seconds, idle_timeout_seconds,
     session_max_seconds, max_sessions_per_viewer, key_fetches_per_token, key_requests_per_minute,
     allowed_origins, token_in_url, delivery, anomaly_sessions_per_viewer_10m, anomaly_segments_without_key,
-    auto_revoke, updated_at
+    auto_revoke, extra_codecs, updated_at
 ) VALUES (
     sqlc.arg(tenant_id)::uuid, sqlc.arg(token_ttl_seconds)::integer,
     sqlc.arg(heartbeat_interval_seconds)::integer, sqlc.arg(idle_timeout_seconds)::integer,
@@ -14,7 +14,7 @@ INSERT INTO playback_settings (
     sqlc.arg(key_fetches_per_token)::integer, sqlc.arg(key_requests_per_minute)::integer,
     sqlc.arg(allowed_origins)::text[], sqlc.arg(token_in_url)::boolean, sqlc.arg(delivery)::text,
     sqlc.arg(anomaly_sessions_per_viewer_10m)::integer, sqlc.arg(anomaly_segments_without_key)::integer,
-    sqlc.arg(auto_revoke)::text[], sqlc.arg(at)::timestamptz
+    sqlc.arg(auto_revoke)::text[], sqlc.arg(extra_codecs)::text[], sqlc.arg(at)::timestamptz
 )
 ON CONFLICT (tenant_id) DO UPDATE SET
     token_ttl_seconds          = EXCLUDED.token_ttl_seconds,
@@ -30,6 +30,7 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     anomaly_sessions_per_viewer_10m = EXCLUDED.anomaly_sessions_per_viewer_10m,
     anomaly_segments_without_key    = EXCLUDED.anomaly_segments_without_key,
     auto_revoke                = EXCLUDED.auto_revoke,
+    extra_codecs               = EXCLUDED.extra_codecs,
     updated_at                 = EXCLUDED.updated_at
 RETURNING *;
 

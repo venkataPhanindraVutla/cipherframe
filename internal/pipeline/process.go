@@ -127,11 +127,18 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		return permanent(FailureTranscode, err)
 	}
 
+	// 5b. The extra codecs the tenant asked for when the asset was uploaded (ADR 0064), each in its
+	// own run. One that cannot be made is recorded and the asset still becomes ready in H.264.
+	extras, failed, err := p.extraCodecs(ctx, asset, srcPath, dir, info, logo, outs, log)
+	if err != nil {
+		return err
+	}
+
 	// 6. Encrypt, upload and write the canonical playlists, unless deletion started meanwhile.
 	if err := p.ensureLive(ctx, asset); err != nil {
 		return err
 	}
-	pub, err := p.publish(ctx, asset, keys.Original, key, outs, readThumbnails(spec, log), info, log)
+	pub, err := p.publish(ctx, asset, keys.Original, key, withExtras(outs, extras), readThumbnails(spec, log), info, log)
 	if err != nil {
 		return err
 	}
@@ -142,12 +149,12 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		return err
 	}
 	at := p.Now().UTC()
-	sealed, err := p.sealManifest(ctx, asset, sourceDigest{sha256: src.SHA256, size: src.Size}, renditions, info, pub, logo.manifestLogo(), encoder, at)
+	sealed, err := p.sealManifest(ctx, asset, sourceDigest{sha256: src.SHA256, size: src.Size}, renditions, extras, info, pub, logo.manifestLogo(), encoder, at)
 	if err != nil {
 		return err
 	}
 	_, err = p.Repo.Complete(ctx, asset.TenantID, asset.ID, pub.artifacts, db.Completion{
-		Duration: pub.duration, Renditions: summary, Manifest: sealed, At: at,
+		Duration: pub.duration, Renditions: summary, Manifest: sealed, ExtraCodecFailures: failed, At: at,
 	})
 	if errors.Is(err, db.ErrStateChanged) {
 		// The asset left processing while we worked (deleted, say): do not leave its output behind.
