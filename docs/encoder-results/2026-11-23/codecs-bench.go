@@ -8,9 +8,11 @@
 //	go run codecs-bench.go -mode ladder -ffmpeg F -ffprobe P -fixtures-ffmpeg G -vmaf-ffmpeg V -vmaf-ffprobe W \
 //	    -work DIR -out codecs.json
 //	go run codecs-bench.go -mode sweep  ... -out codecs-sweep.json
+//	go run codecs-bench.go -mode caps   ... -out codecs-caps.json
 //
 // ladder: the full ladder of every codec, the numbers of docs/codecs.md. sweep: one 720p rung, no bitrate
-// cap, over CRF values and presets, which is how the starting points of ADR 0067 were chosen.
+// cap, over CRF values and presets, which is how the starting points of ADR 0067 were chosen. caps: one 720p
+// rung at the codec's CRF over bitrate caps, which is how the caps were chosen.
 // The scoring FFmpeg (libvmaf) and its ffprobe come from the Dockerfile's `measure` target; F and P are the
 // worker image's own and G is the `fixtures` stage's (testsrc2 and mandelbrot sources). Fixtures are written
 // into -work. The runs of docs/codecs.md were made inside a linux/arm64 container limited to 4 CPUs
@@ -23,6 +25,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,7 +62,7 @@ type tool struct{ ffmpeg, ffprobe, fixtures, vmaf, vmafProbe, work string }
 
 func main() {
 	var t tool
-	mode := flag.String("mode", "ladder", "ladder or sweep")
+	mode := flag.String("mode", "ladder", "ladder, sweep or caps")
 	flag.StringVar(&t.ffmpeg, "ffmpeg", "ffmpeg", "the worker's FFmpeg")
 	flag.StringVar(&t.ffprobe, "ffprobe", "ffprobe", "the worker's FFprobe")
 	flag.StringVar(&t.fixtures, "fixtures-ffmpeg", "", "the test-only FFmpeg with lavfi")
@@ -79,9 +82,12 @@ func main() {
 		info, err := tools.Probe(ctx, fx.path)
 		fatal(err)
 		var runs []job
-		if *mode == "sweep" {
+		switch *mode {
+		case "sweep":
 			runs = sweepJobs(info)
-		} else {
+		case "caps":
+			runs = capJobs(info)
+		default:
 			for _, c := range []media.Codec{media.CodecH264, media.CodecHEVC, media.CodecAV1} {
 				runs = append(runs, job{codec: c, rends: media.LadderFor(c, info, nil)})
 			}
@@ -144,6 +150,26 @@ func sweepJobs(info media.Info) []job {
 	return jobs
 }
 
+// capJobs vary the rung's bitrate cap at the codec's own CRF on the 720p rung: H.264 at its own cap as the
+// reference, then HEVC and AV1 at the shares of it that ADR 0067 weighed.
+func capJobs(info media.Info) []job {
+	pick := func(c media.Codec, maxrate int) []media.Rendition {
+		for _, r := range media.LadderFor(c, info, []int{720}) {
+			r.MaxrateKbps, r.BufsizeKbps = maxrate, 2*maxrate
+			return []media.Rendition{r}
+		}
+		return nil
+	}
+	jobs := []job{{codec: media.CodecH264, rends: pick(media.CodecH264, 2500), variant: "cap 2500 (1.0)"}}
+	for _, k := range []int{1500, 1750, 2000, 2500} {
+		jobs = append(jobs, job{codec: media.CodecHEVC, rends: pick(media.CodecHEVC, k), variant: fmt.Sprintf("cap %d (%.2f)", k, float64(k)/2500)})
+	}
+	for _, k := range []int{1250, 1500, 1750, 2000, 2500} {
+		jobs = append(jobs, job{codec: media.CodecAV1, rends: pick(media.CodecAV1, k), variant: fmt.Sprintf("cap %d (%.2f)", k, float64(k)/2500)})
+	}
+	return jobs
+}
+
 type fixture struct{ name, path string }
 
 // makeFixtures writes two 1080p, 30 fps sources with stereo audio: testsrc2 (the project's test pattern:
@@ -169,6 +195,8 @@ type refKeyframes struct {
 	times    []float64
 	outs     []media.RenditionOutput
 	firstPTS map[string]float64
+	// start is where the H.264 ladder presents its first picture (media.FirstVideoPTS).
+	start time.Duration
 }
 
 func (t tool) run(ctx context.Context, tools media.Tools, fx fixture, info media.Info, j job, ref *refKeyframes) (result, *refKeyframes, error) {
@@ -178,6 +206,9 @@ func (t tool) run(ctx context.Context, tools media.Tools, fx fixture, info media
 		return res, nil, err
 	}
 	spec := media.TranscodeSpec{Source: fx.path, OutDir: outDir, Info: info, Renditions: j.rends, Codec: j.codec}
+	if ref != nil {
+		spec.TSOffset = ref.start // the worker starts every extra codec where H.264's first picture is (ADR 0067)
+	}
 	args, err := media.TranscodeArgs(spec)
 	if err != nil {
 		return res, nil, err
@@ -234,6 +265,11 @@ func (t tool) run(ctx context.Context, tools media.Tools, fx fixture, info media
 		res.Rungs = append(res.Rungs, rr)
 	}
 	got.outs = outs
+	if init, err := os.ReadFile(outs[0].InitPath); err == nil {
+		if seg, err := os.ReadFile(outs[0].Segments[0].Path); err == nil {
+			got.start, _ = media.FirstVideoPTS(init, seg)
+		}
+	}
 	res.Keyframes = "identical on every rendition, exactly 2 s apart"
 	if !keyOK {
 		res.Keyframes = "MISMATCH within the codec"
@@ -241,10 +277,16 @@ func (t tool) run(ctx context.Context, tools media.Tools, fx fixture, info media
 	res.Aligned = true
 	if ref != nil {
 		// Across codecs: the same segment count and durations as H.264's rungs, and the same keyframe times
-		// and first timestamp relative to the start (an encoder's own start delay is reported, not hidden).
+		// (the extra codecs are started where H.264's first picture is, as the worker does).
 		res.Aligned = media.CheckAligned(append([]media.RenditionOutput{ref.outs[0]}, outs[0]), 2*time.Millisecond) == nil
-		if !slices.Equal(got.times, ref.times) {
-			res.Keyframes += "; keyframe times differ from H.264's (see first_pts)"
+		same := len(got.times) == len(ref.times)
+		for i := range got.times {
+			same = same && i < len(ref.times) && math.Abs(got.times[i]-ref.times[i]) < 0.001
+		}
+		if !same {
+			res.Keyframes += "; keyframe times differ from H.264's"
+		} else {
+			res.Keyframes += "; the same times as H.264's"
 		}
 	}
 	return res, got, nil

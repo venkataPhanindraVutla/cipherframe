@@ -19,6 +19,26 @@ the fallback are tested with a fake FFmpeg, but nobody has run the encoder on a 
 values (`-cq 23`, `-global_quality 23`) are libx264's CRF carried over, not tuned. Run the measurement
 below on your hardware before you rely on them.
 
+## Codec matrix (M10-3)
+
+H.264 is always made. A tenant can add HEVC and AV1 renditions with the `extra_codecs` setting (ADR 0064,
+[codecs.md](codecs.md)); each uses the worker's selected encoder where that encoder has the codec, and software
+(libx265, SVT-AV1) otherwise.
+
+| Encoder | H.264 | HEVC | AV1 | Status of HEVC and AV1 |
+| --- | --- | --- | --- | --- |
+| `software` | `libx264` | `libx265` | `libsvtav1` | **measured** (codecs.md), both images |
+| `videotoolbox` | `h264_videotoolbox` | `hevc_videotoolbox` | `libsvtav1` (VideoToolbox has no AV1 encoder here) | HEVC arguments are the H.264 ones with `-tag:v hvc1`, **not measured**; AV1 is the software encoder |
+| `nvenc` | `h264_nvenc` | `hevc_nvenc` | `av1_nvenc` (RTX 40 series and later) | **not verified on hardware** |
+| `vaapi` | `h264_vaapi` | `hevc_vaapi` | `av1_vaapi` (recent Intel and AMD GPUs) | **not verified on hardware** |
+| `qsv` | `h264_qsv` | `hevc_qsv` | `av1_qsv` (Intel Arc and recent iGPUs) | **not verified on hardware** |
+
+The `worker-hw` image enables all of these encoders. A worker whose hardware lacks a codec (an older NVIDIA GPU has no
+`av1_nvenc`, say) fails that codec's transcode, and the job repeats it in software like any failed hardware encode, so the
+codec is still made. The quality values of the hardware encoders start from the codec's own CRF (26 for HEVC, 35 for
+AV1) and are untuned, like their H.264 ones. The worker reports a codec as available when the software encoder or the
+selected hardware encoder for it is in FFmpeg's encoder list.
+
 ## What every encoder gets
 
 One FFmpeg process makes the whole ladder (decode once, split, scale, encode per rung). For every encoder:

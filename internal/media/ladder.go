@@ -22,7 +22,9 @@ const (
 type rung struct {
 	height int
 	// maxrateKbps is the H.264 cap; hevcKbps and av1Kbps are the caps of the extra codecs (ADR 0064,
-	// ADR 0067): about 0.6 and 0.5 of H.264's, because those codecs reach the same quality with fewer bits.
+	// ADR 0067): 0.6 of H.264's for both, because those codecs reach about the same quality with fewer bits.
+	// The cap only bounds peaks: on the measured fixtures the codec's CRF decides the size, except that
+	// SVT-AV1's capped-CRF mode lands well under its cap on hard content, so AV1's 0.5 was raised.
 	maxrateKbps, hevcKbps, av1Kbps int
 }
 
@@ -40,11 +42,11 @@ func (r rung) maxrate(c Codec) int {
 // ladderRungs are the five rungs of ADR 0024, tallest first, with their maxrate caps. The buffer
 // size is twice the maxrate (one second of cap at two-second keyframe spacing).
 var ladderRungs = [...]rung{
-	{1080, 4500, 2700, 2250},
-	{720, 2500, 1500, 1250},
-	{480, 1200, 720, 600},
-	{360, 700, 420, 350},
-	{240, 350, 210, 175},
+	{1080, 4500, 2700, 2700},
+	{720, 2500, 1500, 1500},
+	{480, 1200, 720, 720},
+	{360, 700, 420, 420},
+	{240, 350, 210, 210},
 }
 
 // RungHeights returns the heights of the ADR 0024 rungs, tallest first.

@@ -255,6 +255,13 @@ The video encoder is chosen per worker (`CIPHERFRAME_WORKER_ENCODER`, ADR 0063):
 place that maps an encoder and a rung to FFmpeg arguments, only the encode runs on hardware, a failed startup test or a
 failed hardware transcode falls back to libx264, and the manifest records the encoder that made the output (ADR 0066).
 
+HEVC and AV1 are optional extras beside H.264 (ADR 0064, ADR 0067, [codecs.md](codecs.md)): `media.LadderFor` makes the same
+rungs for a codec with its own CRF and lower caps, named `720p_hevc` and `720p_av1` so they sit under the variant's HLS
+prefix next to H.264's `720p`; the arguments come from the same `videoArgs` mapping (libx265 and SVT-AV1 in software,
+the hardware encoders where they exist). At startup the worker reads FFmpeg's encoder list, keeps the extra codecs it can
+encode and reports them to the `worker_capabilities` table every minute; the settings endpoint refuses a codec no
+recently seen worker reports.
+
 The worker image (`build/worker.Dockerfile`) is separate from the api and edge image (ADR 0008).
 
 ### What the media toolkit does not protect against
@@ -302,6 +309,13 @@ overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder 
    thumbnail track from the plan. For the masked variant this is the asset.mask job's own transcode,
    so its images come from the masked file. Missing images do not fail the asset.
 
+   **Extra codecs (ADR 0064, ADR 0067).** An asset whose `extra_codecs` (the tenant's setting, copied onto it
+   when it was created) lists `hevc` and `av1` gets one more FFmpeg run per codec after the H.264 run, each with
+   the full ladder of that codec, from the same source and with the same logo, and writing under its own job
+   directory. A run that cannot be made, because the worker has no encoder for the codec, FFmpeg fails or times
+   out, or its output is unusable or does not cut at the same frames as H.264's, costs only that codec: its reason
+   is recorded in `assets.extra_codec_failures` (and counted) and the asset still becomes `ready` with H.264. The
+   masked variant gets the same codecs from the masked file.
    **Brand logo (ADR 0049).** Before the download, the first job of the asset (the original's or the
    masked variant's) pins the tenant's current logo on the asset (`asset_logo_pins`: version, SHA-256,
    corner, opacity, or none), under the tenant's brand lock; every retry and the other variant read the
@@ -320,8 +334,9 @@ overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder 
    playlist (`EXT-X-MAP`, then for every segment an `EXT-X-KEY:METHOD=AES-128,URI="cipherframe-key",IV=0x...`
    and `EXTINF`), and a master playlist with `BANDWIDTH` (peak segment bitrate, never below the
    average; a final segment shorter than half the target is left out of the peak), `AVERAGE-BANDWIDTH`,
-   `RESOLUTION`, `CODECS` (read from the avcC and esds boxes of each init segment) and `FRAME-RATE`,
-   lowest bandwidth first. `cipherframe-key` is a placeholder: stored playlists never contain a
+   `RESOLUTION`, `CODECS` (read from the avcC, hvcC or av1C box and the esds box of each init segment) and
+   `FRAME-RATE`, by codec family (H.264, then HEVC, then AV1) and within it lowest bandwidth first, so a
+   player that starts at the first entry always can decode it. `cipherframe-key` is a placeholder: stored playlists never contain a
    token, a session or a key URL; the edge rewrites the key URI per playback session (see
    [Playback delivery on edge](#playback-delivery-on-edge)).
 9. **Register and finish.** Every object written to the delivery bucket is recorded in
@@ -334,7 +349,8 @@ overlap (ADR 0037). `CIPHERFRAME_WORKER_LADDER_HEIGHTS` may restrict the ladder 
    [integrity.md](integrity.md#manifest-format)). A signer failure is an ordinary, retried failure.
 
 Object keys are `hls/master.m3u8` and, per rendition, `hls/<name>/playlist.m3u8`, `init.mp4` and
-`seg-<n>.m4s` (n from 0), under `t/<tenant>/a/<asset>/`. These are the `original` variant. The `masked`
+`seg-<n>.m4s` (n from 0), under `t/<tenant>/a/<asset>/`; a rendition of an extra codec is named with the codec
+after the height (`720p_hevc`, `720p_av1`). These are the `original` variant. The `masked`
 variant of an asset created with `mask_faces` (ADR 0036) uses the same names under
 `t/<tenant>/a/<asset>/masked/hls/`, so the original's keys do not move and neither prefix contains
 the other.

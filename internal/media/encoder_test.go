@@ -51,7 +51,7 @@ func rung720For(t *testing.T, c Codec) Rendition {
 
 // The extra codecs: libx265 and SVT-AV1 in software, the hardware encoders of ADR 0064 beside them. HEVC
 // is tagged hvc1; keyframes are placed exactly as for H.264. 720p at 30 fps: HEVC cap 1500 kbps and
-// CRF 26, AV1 cap 1250 kbps and CRF 35.
+// CRF 26, AV1 cap 1500 kbps and CRF 35.
 func TestVideoArgsGoldenExtraCodecs(t *testing.T) {
 	const keys = "-force_key_frames expr:gte(t,n_forced*2) -fps_mode cfr"
 	for _, tc := range []struct {
@@ -60,16 +60,16 @@ func TestVideoArgsGoldenExtraCodecs(t *testing.T) {
 		want string
 	}{
 		{EncoderSoftware, CodecHEVC, "-c:v libx265 -tag:v hvc1 -preset medium -crf 26 -maxrate 1500k -bufsize 3000k -g 60 -keyint_min 60 -x265-params scenecut=0:open-gop=0 -forced-idr 1 " + keys},
-		{EncoderSoftware, CodecAV1, "-c:v libsvtav1 -preset 8 -crf 35 -maxrate 1250k -bufsize 2500k -g 60 -svtav1-params scd=0:irefresh-type=2 -forced-idr 1 " + keys},
+		{EncoderSoftware, CodecAV1, "-c:v libsvtav1 -preset 8 -crf 35 -maxrate 1500k -bufsize 3000k -g 60 -svtav1-params scd=0:irefresh-type=2 -forced-idr 1 " + keys},
 		{EncoderNVENC, CodecHEVC, "-c:v hevc_nvenc -tag:v hvc1 -profile:v main -preset p5 -rc vbr -cq 26 -b:v 0 -maxrate 1500k -bufsize 3000k -no-scenecut 1 -forced-idr 1 -strict_gop 1 -g 60 " + keys},
-		{EncoderNVENC, CodecAV1, "-c:v av1_nvenc -preset p5 -rc vbr -cq 35 -b:v 0 -maxrate 1250k -bufsize 2500k -no-scenecut 1 -forced-idr 1 -strict_gop 1 -g 60 " + keys},
+		{EncoderNVENC, CodecAV1, "-c:v av1_nvenc -preset p5 -rc vbr -cq 35 -b:v 0 -maxrate 1500k -bufsize 3000k -no-scenecut 1 -forced-idr 1 -strict_gop 1 -g 60 " + keys},
 		{EncoderVAAPI, CodecHEVC, "-c:v hevc_vaapi -tag:v hvc1 -profile:v main -rc_mode QVBR -global_quality 26 -b:v 1500k -maxrate 1500k -bufsize 3000k -idr_interval 0 -g 60 " + keys},
-		{EncoderVAAPI, CodecAV1, "-c:v av1_vaapi -rc_mode QVBR -global_quality 35 -b:v 1250k -maxrate 1250k -bufsize 2500k -idr_interval 0 -g 60 " + keys},
+		{EncoderVAAPI, CodecAV1, "-c:v av1_vaapi -rc_mode QVBR -global_quality 35 -b:v 1500k -maxrate 1500k -bufsize 3000k -idr_interval 0 -g 60 " + keys},
 		{EncoderQSV, CodecHEVC, "-c:v hevc_qsv -tag:v hvc1 -profile:v main -preset medium -global_quality 26 -look_ahead 0 -maxrate 1500k -bufsize 3000k -adaptive_i 0 -adaptive_b 0 -idr_interval 0 -forced_idr 1 -g 60 " + keys},
-		{EncoderQSV, CodecAV1, "-c:v av1_qsv -preset medium -global_quality 35 -look_ahead 0 -maxrate 1250k -bufsize 2500k -adaptive_i 0 -adaptive_b 0 -idr_interval 0 -forced_idr 1 -g 60 " + keys},
+		{EncoderQSV, CodecAV1, "-c:v av1_qsv -preset medium -global_quality 35 -look_ahead 0 -maxrate 1500k -bufsize 3000k -adaptive_i 0 -adaptive_b 0 -idr_interval 0 -forced_idr 1 -g 60 " + keys},
 		{EncoderVideoToolbox, CodecHEVC, "-c:v hevc_videotoolbox -tag:v hvc1 -profile:v main -q:v 54 -realtime 0 -allow_sw 0 -maxrate 1500k -bufsize 3000k -g 60 " + keys},
 		// VideoToolbox has no AV1 encoder: SVT-AV1 makes it, with the software arguments.
-		{EncoderVideoToolbox, CodecAV1, "-c:v libsvtav1 -preset 8 -crf 35 -maxrate 1250k -bufsize 2500k -g 60 -svtav1-params scd=0:irefresh-type=2 -forced-idr 1 " + keys},
+		{EncoderVideoToolbox, CodecAV1, "-c:v libsvtav1 -preset 8 -crf 35 -maxrate 1500k -bufsize 3000k -g 60 -svtav1-params scd=0:irefresh-type=2 -forced-idr 1 " + keys},
 	} {
 		got, err := videoArgs(tc.enc, tc.c, rung720For(t, tc.c), X264Preset, OutputFrameRate(30))
 		if err != nil {

@@ -1,0 +1,362 @@
+[
+  {
+    "fixture": "testsrc2",
+    "codec": "h264",
+    "variant": "cap 2500 (1.0)",
+    "wall_seconds": 1.843159459,
+    "cpu_seconds": 7.174788,
+    "rungs": [
+      {
+        "name": "720p",
+        "bytes": 1651140,
+        "kbps": 1651.14,
+        "vmaf": 96.324892,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "hevc",
+    "variant": "cap 1500 (0.60)",
+    "wall_seconds": 3.68641171,
+    "cpu_seconds": 14.265216,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1406325,
+        "kbps": 1406.325,
+        "vmaf": 95.747008,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "hevc",
+    "variant": "cap 1750 (0.70)",
+    "wall_seconds": 3.680763502,
+    "cpu_seconds": 14.431311,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1406325,
+        "kbps": 1406.325,
+        "vmaf": 95.747008,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "hevc",
+    "variant": "cap 2000 (0.80)",
+    "wall_seconds": 3.369125293,
+    "cpu_seconds": 13.152682,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1406325,
+        "kbps": 1406.325,
+        "vmaf": 95.747008,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "hevc",
+    "variant": "cap 2500 (1.00)",
+    "wall_seconds": 3.478261835,
+    "cpu_seconds": 13.626463,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1406325,
+        "kbps": 1406.325,
+        "vmaf": 95.747008,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "av1",
+    "variant": "cap 1250 (0.50)",
+    "wall_seconds": 2.159918959,
+    "cpu_seconds": 7.756138,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1245663,
+        "kbps": 1245.663,
+        "vmaf": 95.474272,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "av1",
+    "variant": "cap 1500 (0.60)",
+    "wall_seconds": 2.193954042,
+    "cpu_seconds": 8.100531,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1325095,
+        "kbps": 1325.095,
+        "vmaf": 95.74514,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "av1",
+    "variant": "cap 1750 (0.70)",
+    "wall_seconds": 1.9556838760000002,
+    "cpu_seconds": 7.155091,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1346790,
+        "kbps": 1346.79,
+        "vmaf": 95.802929,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "av1",
+    "variant": "cap 2000 (0.80)",
+    "wall_seconds": 2.036358126,
+    "cpu_seconds": 7.291559,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1346790,
+        "kbps": 1346.79,
+        "vmaf": 95.802929,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "testsrc2",
+    "codec": "av1",
+    "variant": "cap 2500 (1.00)",
+    "wall_seconds": 2.193915917,
+    "cpu_seconds": 7.928389,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1346790,
+        "kbps": 1346.79,
+        "vmaf": 95.802929,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "h264",
+    "variant": "cap 2500 (1.0)",
+    "wall_seconds": 4.122046835,
+    "cpu_seconds": 16.194919,
+    "rungs": [
+      {
+        "name": "720p",
+        "bytes": 2773115,
+        "kbps": 2773.115,
+        "vmaf": 89.533615,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "hevc",
+    "variant": "cap 1500 (0.60)",
+    "wall_seconds": 5.048088503,
+    "cpu_seconds": 19.892669,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1565875,
+        "kbps": 1565.875,
+        "vmaf": 86.799388,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "hevc",
+    "variant": "cap 1750 (0.70)",
+    "wall_seconds": 4.931402418,
+    "cpu_seconds": 19.510955,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1565875,
+        "kbps": 1565.875,
+        "vmaf": 86.799388,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "hevc",
+    "variant": "cap 2000 (0.80)",
+    "wall_seconds": 5.357752586,
+    "cpu_seconds": 20.95119,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1565875,
+        "kbps": 1565.875,
+        "vmaf": 86.799388,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "hevc",
+    "variant": "cap 2500 (1.00)",
+    "wall_seconds": 4.966412711,
+    "cpu_seconds": 19.584849,
+    "rungs": [
+      {
+        "name": "720p_hevc",
+        "bytes": 1565875,
+        "kbps": 1565.875,
+        "vmaf": 86.799388,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "av1",
+    "variant": "cap 1250 (0.50)",
+    "wall_seconds": 5.066107419,
+    "cpu_seconds": 18.888872,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 923254,
+        "kbps": 923.254,
+        "vmaf": 84.127551,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "av1",
+    "variant": "cap 1500 (0.60)",
+    "wall_seconds": 4.308101085,
+    "cpu_seconds": 15.615994,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1095147,
+        "kbps": 1095.147,
+        "vmaf": 85.422499,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "av1",
+    "variant": "cap 1750 (0.70)",
+    "wall_seconds": 3.8348722520000003,
+    "cpu_seconds": 14.642271000000001,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1243587,
+        "kbps": 1243.587,
+        "vmaf": 86.473532,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "av1",
+    "variant": "cap 2000 (0.80)",
+    "wall_seconds": 3.685543335,
+    "cpu_seconds": 14.048318,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1420720,
+        "kbps": 1420.72,
+        "vmaf": 87.188956,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  },
+  {
+    "fixture": "mandelbrot",
+    "codec": "av1",
+    "variant": "cap 2500 (1.00)",
+    "wall_seconds": 3.702907918,
+    "cpu_seconds": 14.367127,
+    "rungs": [
+      {
+        "name": "720p_av1",
+        "bytes": 1783927,
+        "kbps": 1783.927,
+        "vmaf": 88.444255,
+        "first_pts": 0.066667
+      }
+    ],
+    "segments_aligned_with_h264": true,
+    "keyframes": "identical on every rendition, exactly 2 s apart; the same times as H.264's"
+  }
+]

@@ -578,6 +578,7 @@ the defaults, and `updated_at` is absent until the first `PUT`.
 | `anomaly_sessions_per_viewer_10m` | 10 | 0 to 1000 | More sessions than this created for one viewer in 10 minutes raises `rapid_session_creation`; 0 turns it off ([anomaly signals](#anomaly-signals-m4-9)). |
 | `anomaly_segments_without_key` | 30 | 0 to 100000 | More segments than this served to a session that never fetched the key raises `segments_without_key`; 0 turns it off. `proxy` delivery only. |
 | `auto_revoke` | `[]` | any of `key_replay`, `key_rate`, `rapid_session_creation`, `segments_without_key` | Kinds whose signal also revokes the session (the viewer's sessions for `rapid_session_creation`). Empty is off. |
+| `extra_codecs` | `[]` | any of `hevc`, `av1` | Video codecs made beside H.264 for assets uploaded from now on (ADR 0064, [codecs.md](codecs.md)). Each adds a full ladder. Turning one on is refused with a field error on `extra_codecs[i]` when no worker seen in the last 5 minutes can encode it. An asset reports the setting it was created with as `extra_codecs.requested`, and the codecs it did not get, with a reason, as `extra_codecs.failed`. |
 
 `allowed_origins` entries are exact origins as a browser writes them: `https://host[:port]`, or
 `http://localhost[:port]` for development. Lower case, no path, no trailing slash, no wildcard, no

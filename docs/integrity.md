@@ -38,7 +38,7 @@ is the hash of the ciphertext.
 | `asset_id`, `tenant_id` | The prefixed ids of the asset and its tenant. |
 | `created_at` | When the manifest was made. |
 | `pipeline_version` | The Cipherframe version that ran the pipeline. |
-| `encoder` | `ffmpeg` (first line of `ffmpeg -version`), `video_codec`, `preset`, `frame_rate`, `segment_seconds`, `keyframe_seconds`, `encryption` (`AES-128`), and `rungs`: per rendition `name`, `crf`, `maxrate_kbps`, `bufsize_kbps`, `audio_kbps`. With a brand logo also `logo` (ADR 0049); see "The brand logo". |
+| `encoder` | `ffmpeg` (first line of `ffmpeg -version`), `video_codec`, `preset`, `frame_rate`, `segment_seconds`, `keyframe_seconds`, `encryption` (`AES-128`), and `rungs`: per rendition `name`, `crf`, `maxrate_kbps`, `bufsize_kbps`, `audio_kbps`, and for the renditions of an extra codec also `codec` (`hevc` or `av1`), `video_codec` (the encoder, such as `libx265`) and `preset` (ADR 0064). With a brand logo also `logo` (ADR 0049); see "The brand logo". |
 | `renditions` | In ladder order: `name`, `width`, `height`, `bandwidth`, `segment_count`, `init` and `segments` (each `path`, `sha256`, `size`, segments in playlist order), and `merkle_root`. |
 | `artifacts` | The master playlist (`kind` `master`) and each media playlist (`kind` `playlist`, with its `rendition`): `kind`, `path`, `sha256`, `size`. |
 | `top_level` | `order`, the leaf labels of the top-level tree, and `root`. |
