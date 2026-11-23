@@ -16,6 +16,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/pipeline"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/quota"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // mediaCheckTimeout bounds the whole FFmpeg capability check at startup.
@@ -29,16 +30,40 @@ func mediaTools(cfg *config.Config) media.Tools {
 // checkMediaTools verifies the configured FFmpeg and FFprobe (ADR 0024). Only the worker role runs
 // them, so Run calls it for that role alone: api and edge start without FFmpeg installed. The
 // error names what is missing and the settings that choose the binaries, never a path's content.
+//
+// With a hardware encoder selected it then runs a short test encode (ADR 0063). If that fails the
+// worker does not stop: it logs one warning that names the encoder and nothing else, counts the
+// fallback, and sets cfg.Media.Encoder to software for every job.
 func checkMediaTools(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(ctx, mediaCheckTimeout)
 	defer cancel()
-	if err := mediaTools(cfg).CheckCapabilities(ctx); err != nil {
+	tools := mediaTools(cfg)
+	if err := tools.CheckCapabilities(ctx); err != nil {
 		return fmt.Errorf("worker: %w (set %s and %s, or use the cipherframe-worker image)",
 			err, config.EnvFFmpegPath, config.EnvFFprobePath)
 	}
 	log.InfoContext(ctx, "ffmpeg capabilities verified",
 		slog.String("ffmpeg", cfg.Media.FFmpegPath), slog.String("ffprobe", cfg.Media.FFprobePath))
+	selectEncoder(ctx, tools, cfg, log)
 	return nil
+}
+
+// selectEncoder runs the startup test encode of a hardware encoder (ADR 0063). The test's error is
+// dropped on purpose: FFmpeg's stderr can name the device. The warning carries the encoder's name
+// only.
+func selectEncoder(ctx context.Context, tools media.Tools, cfg *config.Config, log *slog.Logger) {
+	enc := cfg.Media.Encoder
+	if !enc.Hardware() {
+		return
+	}
+	if err := tools.ProbeEncoder(ctx, enc, cfg.Media.HWDevice); err != nil {
+		log.WarnContext(ctx, "hardware encoder is not usable; encoding with software",
+			slog.String("encoder", string(enc)), slog.String("fallback", string(media.EncoderSoftware)))
+		telemetry.EncoderFallback(string(enc), telemetry.StageStartup)
+		cfg.Media.Encoder = media.EncoderSoftware
+		return
+	}
+	log.InfoContext(ctx, "hardware encoder verified", slog.String("encoder", string(enc)))
 }
 
 // registerProcessing registers the asset.process job (M3). The worker role is the only one that
@@ -77,6 +102,8 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Q
 		},
 		LadderHeights:    cfg.Media.LadderHeights,
 		X264Preset:       cfg.Media.X264Preset,
+		Encoder:          cfg.Media.Encoder,
+		HWDevice:         cfg.Media.HWDevice,
 		WorkDir:          cfg.Media.WorkDir,
 		TranscodeTimeout: cfg.Media.TranscodeTimeout,
 		Tasks:            pipeline.DBTasks{Pool: pool, Queue: inserter},
