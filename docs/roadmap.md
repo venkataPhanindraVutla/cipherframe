@@ -3,13 +3,13 @@
 Where the build stands, what is left, and what is waiting on a decision. The last pull request of
 each milestone updates this page.
 
-Last updated: 2026-11-22.
+Last updated: 2026-11-23.
 
 ## Versions
 
 | Version | Theme | Status |
 |---|---|---|
-| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M9) |
+| v1.0.0 | The service: ingest, encrypted HLS, playback sessions, key management, integrity, deletion and retention, subtitles, thumbnails, branding, webhooks, quotas, CLI, reference player, operations | In progress (M10 next, after gates P16 to P18; M10 may slip to v1.1) |
 | v2.0.0 | npm, Go and Python SDKs and verifiers, shared conformance vectors | Not started |
 | v2.1.0 | Python ML worker: local speech-to-text, perceptual fingerprint matching, invisible per-asset or per-tenant watermark | Not started |
 
@@ -29,7 +29,7 @@ Last updated: 2026-11-22.
 | M6 Deletion and retention | Done ([ADR 0040](adr/0040-retention-and-privacy-defaults.md), [ADR 0042](adr/0042-deletion-and-retention-details.md)) |
 | M7 Subtitles, thumbnails, branding, webhooks, quotas | Done (P12 decided, [ADR 0043](adr/0043-subtitle-and-watermark-parameters.md); [ADR 0044](adr/0044-subtitle-tracks.md), [ADR 0045](adr/0045-webhooks.md), [ADR 0046](adr/0046-thumbnails.md), [ADR 0047](adr/0047-quotas-and-per-client-limits.md), [ADR 0048](adr/0048-overlay-watermark-policy.md), [ADR 0049](adr/0049-brand-logo.md)) |
 | M8 CLI (Go) and reference player (TypeScript) | Done ([ADR 0050](adr/0050-reference-player-approach.md), [ADR 0051](adr/0051-cli-conventions.md), [ADR 0052](adr/0052-reference-player-implementation.md)) |
-| M9 Operations and release | In progress (P14 decided, [ADR 0053](adr/0053-observability-stack.md); tooling, [ADR 0054](adr/0054-operations-and-release-tooling.md)) |
+| M9 Operations and release | Done (P14 decided, [ADR 0053](adr/0053-observability-stack.md); tooling, [ADR 0054](adr/0054-operations-and-release-tooling.md)) |
 | M10 v1 extras (may slip to v1.1) | Not started (gates P16 to P18) |
 
 ### M5 Integrity and anchoring
@@ -147,6 +147,12 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0038](adr/0038-encoder-preset-and-detection-stride.md) Encoder preset (`CIPHERFRAME_WORKER_X264_PRESET`) and detection stride (`CIPHERFRAME_ML_DETECT_EVERY`)
 - [ADR 0042](adr/0042-deletion-and-retention-details.md) Deletion and retention details: the `deleting` state, tombstone reads, purge order, `not_deleted`, time-to-live rules
 - [ADR 0047](adr/0047-quotas-and-per-client-limits.md) Quotas and per-client limits: unlimited by default, where each limit is enforced, the per-instance request rate limit
+- [ADR 0055](adr/0055-telemetry-implementation.md) Telemetry implementation: hand-rolled HTTP middleware, metric label sets, scrape token rules
+- [ADR 0056](adr/0056-terraform-example-choices.md) Terraform examples: trust policy as input, SSE-S3 default, looser GCS roles than AWS
+- [ADR 0058](adr/0058-observability-tooling-and-audit-export.md) Observability tooling and `GET /v1/audit-events`
+- [ADR 0059](adr/0059-helm-chart-choices.md) Helm chart: masker as a worker sidecar, flat config map, KEDA query
+- [ADR 0060](adr/0060-release-automation-choices.md) Release automation: images compile Go in the Dockerfile, no CHANGELOG.md, SPDX only
+- [ADR 0061](adr/0061-load-test-method.md) Load test method
 
 ## Follow-ups
 
@@ -172,6 +178,5 @@ Smaller items found while building, not yet scheduled:
   ([disaster-recovery.md](disaster-recovery.md#losing-the-signing-keys)).
 - Make restoring a backup safe for deletions: after a restore, replay the signed deletion records so
   assets deleted since the backup are deleted again ([disaster-recovery.md](disaster-recovery.md)).
-- Re-check the metrics and OTLP section of the threat model against the code when M9-1 lands.
 - Fuzz the tus library's `Upload-Metadata` handling at the edge request level (Cipherframe discards the
   values, but the third-party parser runs first).
