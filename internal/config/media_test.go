@@ -19,7 +19,8 @@ func TestMediaDefaults(t *testing.T) {
 	m := c.Media
 	if m.FFmpegPath != "ffmpeg" || m.FFprobePath != "ffprobe" || m.MaxSourceDuration != 4*time.Hour ||
 		m.MaxSourceWidth != 3840 || m.MaxSourceHeight != 2160 || m.TranscodeTimeout != 6*time.Hour || m.Concurrency != 1 || m.MaskTimeout != 2*time.Hour ||
-		m.MaskConcurrency != 1 || m.LadderHeights != nil || m.X264Preset != "medium" {
+		m.MaskConcurrency != 1 || m.LadderHeights != nil || m.X264Preset != "medium" ||
+		m.Encoder != media.EncoderSoftware || m.HWDevice != media.DefaultHWDevice {
 		t.Fatalf("unexpected media defaults: %+v", m)
 	}
 	if want := filepath.Join(os.TempDir(), "cipherframe"); m.WorkDir != want {
@@ -77,6 +78,12 @@ func TestMediaInvalid(t *testing.T) {
 		{EnvX264Preset, "fastest"},
 		{EnvX264Preset, "Medium"},
 		{EnvX264Preset, "placebo"},
+		{EnvEncoder, "cuda"},
+		{EnvEncoder, "NVENC"},
+		{EnvHWDevice, "renderD128"},
+		{EnvHWDevice, "/dev/dri/../sda"},
+		{EnvHWDevice, "/dev/dri/renderD128,x=y"},
+		{EnvHWDevice, "/etc/passwd"},
 		{EnvWorkDir, "relative/dir"},
 		{EnvWorkDir, " /tmp/x"},
 		{EnvWorkDir, "/tmp/x\ny"},
@@ -95,6 +102,15 @@ func TestX264PresetAcceptsEveryPreset(t *testing.T) {
 		c, err := load(base.with(EnvX264Preset, preset), nil)
 		if err != nil || c.Media.X264Preset != preset {
 			t.Errorf("%s=%q: got %q, %v", EnvX264Preset, preset, c.Media.X264Preset, err)
+		}
+	}
+}
+
+func TestEncoderAndDevice(t *testing.T) {
+	for _, e := range media.Encoders() {
+		c, err := load(base.with(EnvEncoder, string(e), EnvHWDevice, "/dev/dri/renderD129"), nil)
+		if err != nil || c.Media.Encoder != e || c.Media.HWDevice != "/dev/dri/renderD129" {
+			t.Errorf("%s=%q: got %q %q, %v", EnvEncoder, e, c.Media.Encoder, c.Media.HWDevice, err)
 		}
 	}
 }

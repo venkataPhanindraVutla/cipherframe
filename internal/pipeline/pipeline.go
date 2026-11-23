@@ -98,7 +98,11 @@ type Deps struct {
 	// X264Preset is the libx264 preset of both variants (CIPHERFRAME_WORKER_X264_PRESET); empty
 	// means media.X264Preset.
 	X264Preset string
-	Log        *slog.Logger
+	// Encoder is the video encoder (CIPHERFRAME_WORKER_ENCODER, after the startup test); empty means
+	// software. HWDevice is the render node VAAPI and QSV open.
+	Encoder  media.Encoder
+	HWDevice string
+	Log      *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// ProgressInterval is how often the progress column is written; default 3 seconds.

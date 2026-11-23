@@ -251,6 +251,10 @@ hostile file name can be neither an option nor a URL.
 `internal/media/testmedia` generates fixtures at test time with a test-only FFmpeg that has the lavfi
 sources; the production FFmpeg stays minimal. No binary fixtures are committed.
 
+The video encoder is chosen per worker (`CIPHERFRAME_WORKER_ENCODER`, ADR 0063): `internal/media/encoder.go` is the one
+place that maps an encoder and a rung to FFmpeg arguments, only the encode runs on hardware, a failed startup test or a
+failed hardware transcode falls back to libx264, and the manifest records the encoder that made the output (ADR 0066).
+
 The worker image (`build/worker.Dockerfile`) is separate from the api and edge image (ADR 0008).
 
 ### What the media toolkit does not protect against

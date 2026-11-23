@@ -185,7 +185,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 		// reads: the blur can neither cover nor distort the logo (ADR 0049).
 		Logo: logo.mediaSpec(),
 	}
-	if err := p.transcode(ctx, asset, spec, false, log); err != nil {
+	if _, err := p.transcode(ctx, asset, spec, false, log); err != nil {
 		return err
 	}
 	_ = os.Remove(maskedPath) // plaintext no longer needed on disk

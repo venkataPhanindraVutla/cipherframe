@@ -95,8 +95,15 @@ type TranscodeSpec struct {
 	// Info is the probe result of the source and Renditions the ladder chosen for it.
 	Info       Info
 	Renditions []Rendition
-	// Preset is the libx264 preset of every rendition (ADR 0038); empty means X264Preset.
+	// Preset is the libx264 preset of every rendition (ADR 0038); empty means X264Preset. Only the
+	// software encoder uses it.
 	Preset string
+	// Encoder encodes the video of every rendition; empty means EncoderSoftware (ADR 0063). Codec
+	// is the video codec; empty means CodecH264. HWDevice is the render node VAAPI and QSV open;
+	// empty means DefaultHWDevice.
+	Encoder  Encoder
+	Codec    Codec
+	HWDevice string
 	// Thumbs, when set, adds a poster and a sprite sheet to the same run (ADR 0046): two more
 	// branches of the split, so the source is still decoded once.
 	Thumbs *ThumbnailSpec
@@ -142,6 +149,14 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 		return nil, errors.New("media: nothing to transcode")
 	}
 	rate := OutputFrameRate(v.FrameRate)
+	if !spec.Encoder.Valid() && spec.Encoder != "" {
+		return nil, fmt.Errorf("media: unknown encoder %q", spec.Encoder)
+	}
+	device := cmp.Or(spec.HWDevice, DefaultHWDevice)
+	if strings.HasPrefix(device, "-") || strings.ContainsAny(device, ",:=\x00") {
+		return nil, errors.New("media: hardware device path is not usable")
+	}
+	pixFmt := spec.Encoder.pixelFormat()
 
 	var fg strings.Builder
 	branches := len(spec.Renditions)
@@ -162,11 +177,11 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 			return nil, errors.New("media: rendition size must be even")
 		}
 		if spec.Logo == nil {
-			fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p[v%d]", i, r.Width, r.Height, i)
+			fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1,%s[v%d]", i, r.Width, r.Height, pixFmt, i)
 			continue
 		}
-		fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1[b%d];%s;[o%d]format=yuv420p[v%d]",
-			i, r.Width, r.Height, i, spec.Logo.overlay(i, fmt.Sprintf("b%d", i), fmt.Sprintf("o%d", i), r.Width, r.Height), i, i)
+		fmt.Fprintf(&fg, ";[s%d]scale=%d:%d:flags=bicubic,setsar=1[b%d];%s;[o%d]%s[v%d]",
+			i, r.Width, r.Height, i, spec.Logo.overlay(i, fmt.Sprintf("b%d", i), fmt.Sprintf("o%d", i), r.Width, r.Height), i, pixFmt, i)
 	}
 
 	if spec.Thumbs != nil {
@@ -185,8 +200,9 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 		"-progress", "pipe:1",
 		"-protocol_whitelist", "file,pipe",
 		"-y",
-		"-i", src,
 	}
+	args = append(args, spec.Encoder.deviceArgs(device)...)
+	args = append(args, "-i", src)
 	if spec.Logo != nil {
 		args = append(args, spec.Logo.args()...)
 	}
@@ -198,15 +214,11 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 		if spec.Info.Audio != nil {
 			args = append(args, "-map", fmt.Sprintf("0:%d", spec.Info.Audio.Index))
 		}
-		args = append(args,
-			"-c:v", "libx264", "-profile:v", "high", "-preset", cmp.Or(spec.Preset, X264Preset),
-			"-crf", strconv.Itoa(r.CRF),
-			"-maxrate", strconv.Itoa(r.MaxrateKbps)+"k", "-bufsize", strconv.Itoa(r.BufsizeKbps)+"k",
-			"-g", strconv.Itoa(rate.GOP), "-keyint_min", strconv.Itoa(rate.GOP),
-			"-sc_threshold", "0", "-x264-params", "open-gop=0", "-forced-idr", "1",
-			"-force_key_frames", "expr:gte(t,n_forced*"+strconv.Itoa(KeyframeSeconds)+")",
-			"-fps_mode", "cfr",
-		)
+		video, err := videoArgs(spec.Encoder, spec.Codec, r, cmp.Or(spec.Preset, X264Preset), rate)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, video...)
 		if spec.Info.Audio != nil {
 			args = append(args,
 				"-c:a", "aac", "-b:a", strconv.Itoa(r.AudioKbps)+"k", "-ac", "2", "-ar", strconv.Itoa(OutputSampleRate))
@@ -269,7 +281,7 @@ func (t Tools) Transcode(ctx context.Context, spec TranscodeSpec, progress func(
 	if err != nil {
 		outcome = telemetry.OutcomeFailed
 	}
-	telemetry.ObserveTranscode(outcome, time.Since(began), spec.Info.Duration)
+	telemetry.ObserveTranscode(outcome, string(cmp.Or(spec.Encoder, EncoderSoftware)), time.Since(began), spec.Info.Duration)
 	switch {
 	case err == nil:
 		return nil

@@ -13,6 +13,7 @@
 | [usage.md](usage.md) | End-to-end usage |
 | [observability.md](observability.md) | Traces, metrics, `/metrics`, the OTLP setup and the metric list |
 | [load-tests.md](load-tests.md) | Load test method, results and caveats (M9-4), with raw CSVs in `load-results/` |
+| [hardware-encoders.md](hardware-encoders.md) | NVENC, VAAPI, QSV and VideoToolbox encoding, fallback, setup, VideoToolbox measurements (M10-2), with raw numbers in `encoder-results/` |
 | [visuals/](visuals/) | Interactive explainers: recording lifecycle, adaptive playback |
 | [roadmap.md](roadmap.md) | Milestone status, pending work, open decision gates |
 | [adr/](adr/) | Architecture decision records |

@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/venkataPhanindraVutla/cipherframe/internal/media"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/telemetry"
 )
 
 // FailureSourceMissing: the source object is gone from the source bucket.
@@ -107,7 +109,8 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		Source: srcPath, OutDir: outDir, Info: info, Renditions: renditions, Preset: p.X264Preset,
 		Thumbs: thumbnailSpec(dir, info, renditions), Logo: logo.mediaSpec(),
 	}
-	if err := p.transcode(ctx, asset, spec, true, log); err != nil {
+	encoder, err := p.transcode(ctx, asset, spec, true, log)
+	if err != nil {
 		return err
 	}
 
@@ -139,7 +142,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 		return err
 	}
 	at := p.Now().UTC()
-	sealed, err := p.sealManifest(ctx, asset, sourceDigest{sha256: src.SHA256, size: src.Size}, renditions, info, pub, logo.manifestLogo(), at)
+	sealed, err := p.sealManifest(ctx, asset, sourceDigest{sha256: src.SHA256, size: src.Size}, renditions, info, pub, logo.manifestLogo(), encoder, at)
 	if err != nil {
 		return err
 	}
@@ -157,9 +160,14 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	return err
 }
 
-// transcode runs FFmpeg under the transcode timeout. With track it reports progress on the asset;
-// the masked variant does not, since it runs while the original owns the progress column.
-func (p *Processor) transcode(ctx context.Context, asset db.Asset, spec media.TranscodeSpec, track bool, log *slog.Logger) error {
+// transcode runs FFmpeg under the transcode timeout and returns the encoder that produced the
+// output. With track it reports progress on the asset; the masked variant does not, since it runs
+// while the original owns the progress column.
+//
+// When a hardware encoder fails, the whole run is repeated once with libx264 (ADR 0066): one
+// FFmpeg process makes every rendition, so a rendition's failure cannot be told apart from the
+// others'. The fallback is counted, and logged with the encoder's name only.
+func (p *Processor) transcode(ctx context.Context, asset db.Asset, spec media.TranscodeSpec, track bool, log *slog.Logger) (media.Encoder, error) {
 	set := func(context.Context, int) error { return nil }
 	if track {
 		set = func(ctx context.Context, percent int) error {
@@ -169,12 +177,47 @@ func (p *Processor) transcode(ctx context.Context, asset db.Asset, spec media.Tr
 	rep := startReporter(ctx, p.ProgressInterval, set)
 	defer rep.stop()
 
+	spec.Encoder, spec.HWDevice = cmp.Or(p.Encoder, media.EncoderSoftware), p.HWDevice
+	err := p.runTranscode(ctx, spec, rep, log)
+	if err != nil && spec.Encoder.Hardware() && ctx.Err() == nil && !isCode(err, errs.Timeout) {
+		log.WarnContext(ctx, "hardware encode failed; retrying with software",
+			slog.String("encoder", string(spec.Encoder)), slog.String("fallback", string(media.EncoderSoftware)))
+		telemetry.EncoderFallback(string(spec.Encoder), telemetry.StageJob)
+		spec.Encoder = media.EncoderSoftware
+		if rerr := removeTranscodeOutput(spec); rerr != nil {
+			return spec.Encoder, rerr
+		}
+		err = p.runTranscode(ctx, spec, rep, log)
+	}
+	return spec.Encoder, err
+}
+
+// removeTranscodeOutput clears what a failed run left, so the retry's files are the only ones.
+func removeTranscodeOutput(spec media.TranscodeSpec) error {
+	dirs := make([]string, 0, len(spec.Renditions)+1)
+	for _, r := range spec.Renditions {
+		dirs = append(dirs, spec.RenditionDir(r))
+	}
+	if spec.Thumbs != nil {
+		dirs = append(dirs, spec.Thumbs.Dir)
+	}
+	for _, d := range dirs {
+		if err := os.RemoveAll(d); err != nil {
+			return fmt.Errorf("pipeline: clear the failed transcode output: %w", err)
+		}
+	}
+	return nil
+}
+
+// runTranscode is one FFmpeg run under the transcode timeout, with its errors classified.
+func (p *Processor) runTranscode(ctx context.Context, spec media.TranscodeSpec, rep *reporter, log *slog.Logger) error {
 	t0 := p.Now()
 	tctx, cancel := context.WithTimeout(ctx, p.TranscodeTimeout)
 	defer cancel()
 	err := p.Tools.Transcode(tctx, spec, func(done time.Duration) { rep.transcoded(done, spec.Info.Duration) })
 	if err == nil {
-		log.InfoContext(ctx, "transcoded", slog.Int("renditions", len(spec.Renditions)), slog.Duration("elapsed", p.Now().Sub(t0)))
+		log.InfoContext(ctx, "transcoded", slog.Int("renditions", len(spec.Renditions)),
+			slog.String("encoder", string(spec.Encoder)), slog.Duration("elapsed", p.Now().Sub(t0)))
 		return nil
 	}
 	switch {

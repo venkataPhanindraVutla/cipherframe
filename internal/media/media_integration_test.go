@@ -287,3 +287,123 @@ func run(t *testing.T, bin string, args ...string) {
 		t.Fatalf("%s failed: %v\n%s", filepath.Base(bin), err, out)
 	}
 }
+
+// selectedEncoder is the encoder under test: CIPHERFRAME_TEST_ENCODER, software when unset. A
+// hardware encoder the machine cannot run skips the test instead of failing it.
+func selectedEncoder(t *testing.T) media.Encoder {
+	t.Helper()
+	e := media.Encoder(os.Getenv("CIPHERFRAME_TEST_ENCODER"))
+	if e == "" {
+		return media.EncoderSoftware
+	}
+	if !e.Valid() {
+		t.Fatalf("CIPHERFRAME_TEST_ENCODER=%q is not an encoder", e)
+	}
+	if e.Hardware() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := tools(t).ProbeEncoder(ctx, e, os.Getenv("CIPHERFRAME_TEST_HW_DEVICE")); err != nil {
+			t.Skipf("encoder %s is not available here: its test encode failed", e)
+		}
+	}
+	return e
+}
+
+// keyframeTimes joins a rendition's init segment and media segments into one fragmented MP4 (the
+// shipped FFprobe has no HLS demuxer) and returns the presentation time of each video keyframe,
+// in seconds.
+func keyframeTimes(t *testing.T, dir string, o media.RenditionOutput) []float64 {
+	t.Helper()
+	paths := []string{o.InitPath}
+	for _, s := range o.Segments {
+		paths = append(paths, s.Path)
+	}
+	var joined []byte
+	for _, p := range paths {
+		b, err := os.ReadFile(p) //nolint:gosec // test reads files FFmpeg just wrote under t.TempDir
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined = append(joined, b...)
+	}
+	whole := filepath.Join(t.TempDir(), "joined.mp4")
+	if err := os.WriteFile(whole, joined, 0o600); err != nil { //nolint:gosec // path is under t.TempDir
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), tools(t).FFprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", //nolint:gosec // test: argument array
+		"-of", "csv=p=0", "file:"+whole)
+	cmd.Env = []string{"LC_ALL=C"}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("ffprobe: %v", err)
+	}
+	var times []float64
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		ts, flags, _ := strings.Cut(line, ",")
+		if !strings.HasPrefix(flags, "K") {
+			continue
+		}
+		f, err := strconv.ParseFloat(ts, 64)
+		if err != nil {
+			t.Fatalf("ffprobe printed %q", line)
+		}
+		times = append(times, f)
+	}
+	return times
+}
+
+// Every rendition of the selected encoder must have keyframes at the same, regular times: that is
+// what lets a player switch rungs at a segment boundary (pitfall 4). Run it per encoder with
+// CIPHERFRAME_TEST_ENCODER=nvenc (and so on) where the hardware exists.
+func TestKeyframesAlignedAcrossRenditions(t *testing.T) {
+	enc := selectedEncoder(t)
+	src := generate(t, testmedia.Spec{Name: "kf.mp4", Width: 854, Height: 480, Duration: 20 * time.Second, FPS: 30, Audio: true})
+	info := probe(t, src)
+	rungs := media.Ladder(info, nil)
+	if len(rungs) < 3 {
+		t.Fatalf("ladder has %d rungs", len(rungs))
+	}
+	spec := media.TranscodeSpec{
+		Source: src, OutDir: filepath.Join(t.TempDir(), "out"), Info: info, Renditions: rungs,
+		Encoder: enc, HWDevice: os.Getenv("CIPHERFRAME_TEST_HW_DEVICE"),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := tools(t).Transcode(ctx, spec, nil); err != nil {
+		t.Fatalf("%s transcode: %v", enc, err)
+	}
+	var outs []media.RenditionOutput
+	var first []float64
+	for _, r := range rungs {
+		o, err := media.ReadRenditionOutput(spec.RenditionDir(r), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outs = append(outs, o)
+		kf := keyframeTimes(t, spec.RenditionDir(r), o)
+		if len(kf) != 10 {
+			t.Fatalf("%s %s: %d keyframes for 20 s, want 10 (one per %d s): %v", enc, r.Name, len(kf), media.KeyframeSeconds, kf)
+		}
+		// The first keyframe sits at the stream start and the rest are shifted by the encoder's start
+		// delay (frame reordering), so only the gaps are known: one start delay, then exactly 2 s.
+		if g := kf[1] - kf[0]; g < media.KeyframeSeconds-0.001 || g > media.KeyframeSeconds+0.25 {
+			t.Errorf("%s %s: first keyframe gap %.3f s", enc, r.Name, g)
+		}
+		for i := 2; i < len(kf); i++ {
+			if g := kf[i] - kf[i-1]; g < media.KeyframeSeconds-0.001 || g > media.KeyframeSeconds+0.001 {
+				t.Errorf("%s %s: keyframes %d and %d are %.3f s apart, want %d s", enc, r.Name, i-1, i, g, media.KeyframeSeconds)
+			}
+		}
+		if first == nil {
+			first = kf
+		}
+		for i := range kf {
+			if d := kf[i] - first[i]; d < -0.001 || d > 0.001 {
+				t.Errorf("%s %s: keyframe %d at %.3f s but %s's is at %.3f s", enc, r.Name, i, kf[i], rungs[0].Name, first[i])
+			}
+		}
+	}
+	if err := media.CheckAligned(outs, 2*time.Millisecond); err != nil {
+		t.Errorf("%s: segments differ across renditions: %v", enc, err)
+	}
+}

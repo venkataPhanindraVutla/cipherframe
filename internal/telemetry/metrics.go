@@ -24,6 +24,10 @@ const (
 	OutcomeCancelled = "cancelled"
 	OutcomeSnoozed   = "snoozed"
 
+	// Encoder fallback stages: the startup test, or one job's encode.
+	StageStartup = "startup"
+	StageJob     = "job"
+
 	// RouteOther labels a request that matched no route.
 	RouteOther = "other"
 )
@@ -36,6 +40,7 @@ type metrics struct {
 	jobDuration       *prometheus.HistogramVec
 	transcodeDuration *prometheus.HistogramVec
 	transcodeMedia    prometheus.Counter
+	encoderFallbacks  *prometheus.CounterVec
 	keyDuration       *prometheus.HistogramVec
 	anomalies         *prometheus.CounterVec
 	refusals          *prometheus.CounterVec
@@ -60,7 +65,10 @@ func newMetrics(reg *prometheus.Registry, tenantLabel bool) *metrics {
 		transcodeDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "cipherframe_transcode_duration_seconds", Help: "Duration of one FFmpeg transcode of a whole rendition ladder.",
 			Buckets: longBuckets,
-		}, []string{"outcome"}),
+		}, []string{"outcome", "encoder"}),
+		encoderFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cipherframe_encoder_fallbacks_total", Help: "Times a hardware encoder was replaced by software, by encoder and stage.",
+		}, []string{"encoder", "stage"}),
 		transcodeMedia: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "cipherframe_transcode_seconds_of_media_total", Help: "Seconds of source media transcoded successfully.",
 		}),
@@ -75,7 +83,7 @@ func newMetrics(reg *prometheus.Registry, tenantLabel bool) *metrics {
 			Name: "cipherframe_refusals_total", Help: "Requests refused by a quota or a rate limit.",
 		}, refusalLabels),
 	}
-	reg.MustRegister(m.httpDuration, m.jobDuration, m.transcodeDuration, m.transcodeMedia, m.keyDuration, m.anomalies, m.refusals)
+	reg.MustRegister(m.httpDuration, m.jobDuration, m.transcodeDuration, m.transcodeMedia, m.encoderFallbacks, m.keyDuration, m.anomalies, m.refusals)
 	return m
 }
 
@@ -93,11 +101,19 @@ func ObserveJob(kind, outcome string, d time.Duration) {
 	}
 }
 
-// ObserveTranscode records one transcode. media is the source duration; it is counted only on
-// success.
-func ObserveTranscode(outcome string, d, media time.Duration) {
+// EncoderFallback counts one switch from a hardware encoder to software. encoder is one of the
+// fixed encoder names and stage is StageStartup or StageJob.
+func EncoderFallback(encoder, stage string) {
 	if t := cur(); t != nil {
-		t.m.transcodeDuration.WithLabelValues(outcome).Observe(d.Seconds())
+		t.m.encoderFallbacks.WithLabelValues(encoder, stage).Inc()
+	}
+}
+
+// ObserveTranscode records one transcode. encoder is one of the fixed encoder names (five values,
+// so the label stays small). media is the source duration; it is counted only on success.
+func ObserveTranscode(outcome, encoder string, d, media time.Duration) {
+	if t := cur(); t != nil {
+		t.m.transcodeDuration.WithLabelValues(outcome, encoder).Observe(d.Seconds())
 		if outcome == OutcomeSucceeded {
 			t.m.transcodeMedia.Add(media.Seconds())
 		}

@@ -53,12 +53,12 @@ func (p *Processor) ffmpegVersionString(ctx context.Context) (string, error) {
 // sealManifest builds the integrity manifest of a published asset, signs it as a DSSE envelope and
 // returns the row to store with the completion. A signer failure is returned as an ordinary error,
 // which the job retries. Neither the payload nor the signature is ever logged.
-func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, logo *manifest.Logo, at time.Time) (*db.AssetManifest, error) {
+func (p *Processor) sealManifest(ctx context.Context, asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, logo *manifest.Logo, encoder media.Encoder, at time.Time) (*db.AssetManifest, error) {
 	ffmpeg, err := p.ffmpegVersionString(ctx)
 	if err != nil {
 		return nil, err
 	}
-	in, err := manifestInput(asset, src, ladder, info, pub, ffmpeg, cmp.Or(p.X264Preset, media.X264Preset), at)
+	in, err := manifestInput(asset, src, ladder, info, pub, ffmpeg, cmp.Or(p.X264Preset, media.X264Preset), encoder, at)
 	in.Encoder.Logo = logo
 	if err != nil {
 		return nil, err
@@ -145,7 +145,7 @@ func (p *Processor) sealMasked(ctx context.Context, asset db.Asset, current db.A
 
 // manifestInput gathers what manifest.Build needs from what the pipeline already has: the
 // registry rows in publish order and the rendition summaries.
-func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, ffmpeg, preset string, at time.Time) (manifest.Input, error) {
+func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, info media.Info, pub published, ffmpeg, preset string, encoder media.Encoder, at time.Time) (manifest.Input, error) {
 	in := manifest.Input{
 		AssetID: asset.ID.String(), TenantID: asset.TenantID.String(), CreatedAt: at,
 		PipelineVersion: version.Get().Version, SourceSHA256: src.sha256, SourceSize: src.size,
@@ -159,8 +159,12 @@ func manifestInput(asset db.Asset, src sourceDigest, ladder []media.Rendition, i
 		return in, err
 	}
 
+	// The libx264 preset means nothing to a hardware encoder, so it is recorded for libx264 only.
+	if encoder.Hardware() {
+		preset = ""
+	}
 	enc := manifest.Encoder{
-		FFmpeg: ffmpeg, VideoCodec: "libx264", Preset: preset,
+		FFmpeg: ffmpeg, VideoCodec: encoder.FFmpegName(media.CodecH264), Preset: preset,
 		FrameRate: rational(media.OutputFrameRate(info.Video.FrameRate).Expr), SegmentSeconds: media.SegmentSeconds,
 		KeyframeSeconds: media.KeyframeSeconds, Encryption: "AES-128",
 	}

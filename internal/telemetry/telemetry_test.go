@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
@@ -182,4 +183,22 @@ func countSeries(t *testing.T, tel *telemetry.Telemetry, name string) int {
 		}
 	}
 	return 0
+}
+
+func TestEncoderMetrics(t *testing.T) {
+	tel, _ := setup(t, telemetry.Options{MetricsToken: testToken})
+	telemetry.EncoderFallback("nvenc", telemetry.StageStartup)
+	telemetry.EncoderFallback("nvenc", telemetry.StageJob)
+	telemetry.EncoderFallback("nvenc", telemetry.StageJob)
+	telemetry.ObserveTranscode(telemetry.OutcomeSucceeded, "nvenc", time.Second, time.Minute)
+	out := scrapeText(t, tel)
+	for _, want := range []string{
+		`cipherframe_encoder_fallbacks_total{encoder="nvenc",stage="startup"} 1`,
+		`cipherframe_encoder_fallbacks_total{encoder="nvenc",stage="job"} 2`,
+		`cipherframe_transcode_duration_seconds_count{encoder="nvenc",outcome="succeeded"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("exposition lacks %s", want)
+		}
+	}
 }
