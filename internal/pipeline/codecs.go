@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/db"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/integrity/manifest"
@@ -72,7 +73,10 @@ func (p *Processor) extraCodec(ctx context.Context, asset db.Asset, c media.Code
 	if err := os.Mkdir(outDir, 0o700); err != nil {
 		return extraRun{}, "", fmt.Errorf("pipeline: create the output directory: %w", err)
 	}
-	spec := media.TranscodeSpec{Source: src, OutDir: outDir, Info: info, Renditions: rends, Codec: c, Logo: logo.mediaSpec()}
+	spec := media.TranscodeSpec{
+		Source: src, OutDir: outDir, Info: info, Renditions: rends, Codec: c, Logo: logo.mediaSpec(),
+		TSOffset: h264Start(ctx, base[0], log),
+	}
 	encoder, err := p.transcode(ctx, asset, spec, false, log)
 	if err != nil {
 		var perm *permanentError
@@ -112,6 +116,27 @@ func (p *Processor) extraCodec(ctx context.Context, asset db.Asset, c media.Code
 		return extraRun{}, db.CodecOutputInvalid, nil
 	}
 	return extraRun{codec: c, encoder: encoder, rends: rends, outs: outs}, "", nil
+}
+
+// h264Start is where the H.264 ladder presents its first picture: its encoder holds frames back for
+// reordering, which puts the first picture at two frames in, and every codec is given the same start so
+// all the renditions present at the same times (ADR 0067). It is zero, which changes nothing, when the
+// segment cannot be read: the renditions then differ in start by the encoders' delay, a frame or two.
+func h264Start(ctx context.Context, o media.RenditionOutput, log *slog.Logger) time.Duration {
+	init, err := os.ReadFile(o.InitPath) //nolint:gosec // a file FFmpeg wrote in the job's private directory
+	var seg []byte
+	if err == nil {
+		seg, err = os.ReadFile(o.Segments[0].Path) //nolint:gosec // as above
+	}
+	var start time.Duration
+	if err == nil {
+		start, err = media.FirstVideoPTS(init, seg)
+	}
+	if err != nil {
+		log.WarnContext(ctx, "could not read where the H.264 rendition starts; the extra codec keeps its own start", slog.String("error", err.Error()))
+		return 0
+	}
+	return start
 }
 
 // withExtras returns the outputs of the H.264 run followed by those of every extra codec, which is the

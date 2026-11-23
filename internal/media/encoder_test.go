@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // rung720 is the ladder's 720p rung: 2500 kbps cap, CRF 23, 30 fps so a 60-frame GOP.
@@ -241,6 +242,16 @@ func TestTranscodeArgsExtraCodec(t *testing.T) {
 	spec.Codec = "vp9"
 	if _, err = TranscodeArgs(spec); err == nil {
 		t.Error("an unknown codec was accepted")
+	}
+	// TSOffset gives every rendition's output the same shift and nothing else carries it.
+	spec = testSpec()
+	if args, _ = TranscodeArgs(spec); slices.Contains(args, "-output_ts_offset") {
+		t.Error("an offset without TSOffset")
+	}
+	spec.TSOffset = 66667 * time.Microsecond
+	args, err = TranscodeArgs(spec)
+	if err != nil || len(argValues(args, "-output_ts_offset")) != len(spec.Renditions) || argValues(args, "-output_ts_offset")[0] != "0.066667" {
+		t.Errorf("offsets %v, %v", argValues(args, "-output_ts_offset"), err)
 	}
 }
 

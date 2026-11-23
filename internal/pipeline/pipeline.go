@@ -105,7 +105,7 @@ type Deps struct {
 	// Codecs are the extra codecs this worker's FFmpeg can encode (ADR 0064), found at startup. An asset
 	// that asked for another gets that codec recorded as failed with encoder_unavailable.
 	Codecs []media.Codec
-	Log      *slog.Logger
+	Log    *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// ProgressInterval is how often the progress column is written; default 3 seconds.

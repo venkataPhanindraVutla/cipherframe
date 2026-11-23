@@ -105,6 +105,10 @@ type TranscodeSpec struct {
 	Encoder  Encoder
 	Codec    Codec
 	HWDevice string
+	// TSOffset, when positive, shifts every output timestamp later (-output_ts_offset). An extra codec
+	// is given the H.264 ladder's start (FirstVideoPTS of its first segment) so that its renditions
+	// present at the same times as H.264's whatever their encoders' reordering delay (ADR 0067).
+	TSOffset time.Duration
 	// Thumbs, when set, adds a poster and a sprite sheet to the same run (ADR 0046): two more
 	// branches of the split, so the source is still decoded once.
 	Thumbs *ThumbnailSpec
@@ -233,6 +237,9 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 			if v.Duration > 0 {
 				args = append(args, "-t", strconv.FormatFloat(v.Duration.Seconds(), 'f', 6, 64))
 			}
+		}
+		if spec.TSOffset > 0 {
+			args = append(args, "-output_ts_offset", strconv.FormatFloat(spec.TSOffset.Seconds(), 'f', 6, 64))
 		}
 		args = append(args,
 			"-f", "hls",

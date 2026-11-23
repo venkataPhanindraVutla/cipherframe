@@ -203,11 +203,11 @@ func TestExtraCodecFailuresDoNotFailTheAsset(t *testing.T) {
 			return &codecTools{fakeTools: f, fail: media.CodecAV1, after: func(spec media.TranscodeSpec) {
 				// The first segment is a second shorter than the H.264 ladder's.
 				pl := filepath.Join(spec.RenditionDir(spec.Renditions[0]), media.PlaylistFile)
-				b, err := os.ReadFile(pl)
+				b, err := os.ReadFile(pl) //nolint:gosec // a file the fake wrote under t.TempDir
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(pl, bytes.Replace(b, []byte("#EXTINF:6.000000"), []byte("#EXTINF:5.000000"), 1), 0o600); err != nil {
+				if err := os.WriteFile(pl, bytes.Replace(b, []byte("#EXTINF:6.000000"), []byte("#EXTINF:5.000000"), 1), 0o600); err != nil { //nolint:gosec // as above
 					t.Fatal(err)
 				}
 			}}
