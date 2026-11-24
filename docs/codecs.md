@@ -252,7 +252,32 @@ Setup and limits, stated plainly:
 - **AV1.** SVT-AV1 is BSD-3-Clause-Clear with the Alliance for Open Media patent licence (`svtav1-PATENTS.md` in
   `/usr/share/licenses/ffmpeg/`), a royalty-free grant for implementations of the AV1 specification.
 - **The image.** Still no `--enable-nonfree`, still GPL, still separate processes started by the Cipherframe server
-  (invariant I1). `/usr/share/licenses/ffmpeg/SOURCE.md` lists the x265 and SVT-AV1 sources and their SHA-256 pins.
+  (invariant I1). `/usr/share/licenses/ffmpeg/SOURCE.md` lists the x265, SVT-AV1 and zimg sources and their SHA-256 pins. zimg is WTFPL.
+
+## HDR sources
+
+Phones record HDR: PQ (`smpte2084`) or HLG (`arib-std-b67`) with BT.2020 primaries, often as 10-bit HEVC. Every
+rendition is 8-bit BT.709 SDR, so the worker converts such a source instead of scaling its code values as if they
+were SDR, which comes out washed out.
+
+- **Detection.** The probe reads `color_transfer`, `color_primaries`, `color_space` and `pix_fmt`. A source is HDR
+  when the transfer is `smpte2084` or `arib-std-b67`. An SDR source with BT.2020 primaries is wide-gamut SDR and has
+  its primaries converted without tone mapping. Everything else is untouched, and its FFmpeg arguments are the same
+  as before.
+- **Conversion.** In the single FFmpeg process, in front of the split into renditions (so the ladder, the poster and
+  the sprite sheet all get it, and it runs once): `zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,
+  tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p`. The output is 8-bit BT.709 and is
+  tagged as such. A hardware encoder gets the same software conversion before `hwupload`. An HDR file that lacks
+  its primaries or matrix tag is taken to be BT.2020.
+- **Face-masked variant.** The masker decodes with OpenCV, which knows nothing of transfer curves. It runs the same
+  conversion first (one extra encode, only for HDR and wide-gamut sources) and masks the SDR copy; the masked file is
+  then plain SDR, so `asset.mask` transcodes it without converting again. The masker image therefore carries `ffprobe`
+  (`CIPHERFRAME_FFPROBE_PATH`).
+- **Not done.** Dolby Vision profiles other than the HDR10-compatible ones, HDR10+ dynamic metadata (the static
+  Hable curve is used) and keeping HDR output are out of scope. The conversion costs CPU: expect a 10-bit 4K HDR
+  transcode to take noticeably longer than an SDR one.
+- **Build.** zimg 3.0.5 (WTFPL) is built static in both worker images from a pinned tarball and enabled with
+  `--enable-libzimg`; `zscale` and `tonemap` are in the filter list. Your own FFmpeg needs the same two filters.
 
 ## What this does not do
 
