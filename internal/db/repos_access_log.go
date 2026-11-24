@@ -362,7 +362,7 @@ func firstOfDay(t time.Time) time.Time {
 }
 
 // PrivacySettings are a tenant's privacy choices (ADR 0040). A tenant without a stored row uses
-// DefaultPrivacySettings: everything off and no default time-to-live. UpdatedAt is the zero time
+// DefaultPrivacySettings: everything off, no default time-to-live and the original kept (DropSource false). UpdatedAt is the zero time
 // for the defaults.
 type PrivacySettings struct {
 	// StoreIP keeps the viewer's IP address (the connecting peer address) in the access trail.
@@ -372,10 +372,15 @@ type PrivacySettings struct {
 	// AssetTTLSeconds is the tenant's default time-to-live for assets created from now on
 	// (M6-4); nil means assets are kept until deleted.
 	AssetTTLSeconds *int
-	UpdatedAt       time.Time
+	// DropSource deletes the uploaded original once the asset is ready (H-3; the setting keep_source
+	// is its inverse, so the zero value keeps the original). It is fixed on an asset when the asset
+	// is created.
+	DropSource bool
+	UpdatedAt  time.Time
 }
 
-// DefaultPrivacySettings returns the most private choices.
+// DefaultPrivacySettings returns the most private choices. The original is still kept, so existing
+// tenants see no change.
 func DefaultPrivacySettings() PrivacySettings { return PrivacySettings{} }
 
 // GetPrivacySettings returns the tenant's privacy settings, or the defaults when none are stored.
@@ -395,7 +400,7 @@ func (r *Repos) GetPrivacySettings(ctx context.Context, tenantID id.TenantID) (P
 }
 
 func privacyFromRow(row dbgen.PrivacySetting) PrivacySettings {
-	out := PrivacySettings{StoreIP: row.StoreIp, StoreUserAgent: row.StoreUserAgent, UpdatedAt: row.UpdatedAt.UTC()}
+	out := PrivacySettings{StoreIP: row.StoreIp, StoreUserAgent: row.StoreUserAgent, DropSource: !row.KeepSource, UpdatedAt: row.UpdatedAt.UTC()}
 	if row.AssetTtlSeconds != nil {
 		n := int(*row.AssetTtlSeconds)
 		out.AssetTTLSeconds = &n
@@ -418,7 +423,7 @@ func (r *Repos) PutPrivacySettings(ctx context.Context, tenantID id.TenantID, s 
 		ttl = &n
 	}
 	row, err := r.q.UpsertPrivacySettings(ctx, dbgen.UpsertPrivacySettingsParams{
-		TenantID: tid, StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent, AssetTtlSeconds: ttl, At: at,
+		TenantID: tid, StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent, AssetTtlSeconds: ttl, KeepSource: !s.DropSource, At: at,
 	})
 	if err != nil {
 		return PrivacySettings{}, mapError(err)

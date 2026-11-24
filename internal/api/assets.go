@@ -38,6 +38,7 @@ func assetOut(a db.Asset) gen.Asset {
 		FailedAt:            a.FailedAt,
 		MaskFaces:           a.MaskFaces,
 		ExpiresAt:           a.ExpiresAt,
+		SourceDeletedAt:     a.SourceDeletedAt,
 	}
 	if a.MaskFaces {
 		m := gen.Masking{State: gen.MaskingStatePending, FacesDetected: a.FacesDetected}

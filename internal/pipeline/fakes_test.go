@@ -602,3 +602,13 @@ func failedTask(taskID uuid.UUID, code string, retryable bool, attempts int) job
 	})
 	return jobs.Task{State: jobs.StateFailed, Result: res, Attempts: attempts}
 }
+
+func (r *fakeRepo) RecordSourceDeleted(_ context.Context, _ id.TenantID, _ id.AssetID, at time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.asset.State != db.AssetReady || r.asset.KeepSource || r.asset.SourceDeletedAt != nil {
+		return false, nil
+	}
+	r.asset.SourceDeletedAt = &at
+	return true, nil
+}

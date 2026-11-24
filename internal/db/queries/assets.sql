@@ -14,12 +14,12 @@ WHERE tenant_id = $1 AND id = $2;
 -- The client must belong to the tenant; otherwise no row is inserted.
 INSERT INTO assets (
     id, tenant_id, created_by_client_id, state, size_bytes, content_type, upload_method,
-    source_key, s3_upload_id, upload_expires_at, mask_faces, expires_at, extra_codecs
+    source_key, s3_upload_id, upload_expires_at, mask_faces, expires_at, extra_codecs, keep_source
 )
 SELECT sqlc.arg(id)::uuid, c.tenant_id, c.id, 'created', sqlc.arg(size_bytes)::bigint,
        sqlc.narg(content_type)::text, sqlc.arg(upload_method)::text, sqlc.arg(source_key)::text,
        sqlc.narg(s3_upload_id)::text, sqlc.arg(upload_expires_at)::timestamptz,
-       sqlc.arg(mask_faces)::boolean, sqlc.narg(expires_at)::timestamptz, sqlc.arg(extra_codecs)::text[]
+       sqlc.arg(mask_faces)::boolean, sqlc.narg(expires_at)::timestamptz, sqlc.arg(extra_codecs)::text[], sqlc.arg(keep_source)::boolean
 FROM clients c
 WHERE c.id = sqlc.arg(client_id)::uuid AND c.tenant_id = sqlc.arg(tenant_id)::uuid
 RETURNING *;
@@ -146,6 +146,20 @@ UPDATE assets SET
 WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND id = sqlc.arg(id)::uuid
   AND mask_faces
+RETURNING *;
+
+-- name: MarkAssetSourceDeleted :one
+-- Records that asset.drop_source removed the original. Only a ready asset that was created with
+-- keep_source off, once: no row means there is nothing to record (already recorded, or the asset
+-- is failed, deleting or deleted).
+UPDATE assets SET
+    source_deleted_at = sqlc.arg(at)::timestamptz,
+    updated_at        = sqlc.arg(at)::timestamptz
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state = 'ready'
+  AND NOT keep_source
+  AND source_deleted_at IS NULL
 RETURNING *;
 
 -- name: RequestAssetDeletion :one

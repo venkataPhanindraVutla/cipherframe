@@ -19,6 +19,9 @@
 // The job is idempotent: a retry starts by removing the previous attempt's delivery objects and
 // artifact rows, reuses the content key, and runs every step again.
 //
+// An asset created with keep_source off gets a further job, asset.drop_source (dropsource.go), queued
+// in the transaction in which it is ready and, for mask_faces, masking is no longer pending.
+//
 // An asset created with mask_faces gets a second job, asset.mask (mask.go, ADR 0036), enqueued in the
 // same transaction that commits the upload (ADR 0037) and run on its own queue, in parallel with
 // asset.process. It hands the source to the masker through the job's private directory, runs the
@@ -225,6 +228,9 @@ func Register(reg *jobs.Registry, d Deps) error {
 	// has room for all of them.
 	transcodes := time.Duration(1 + len(media.ExtraCodecs()))
 	if err := jobs.Register(reg, p.Handle, jobs.KindConfig{Timeout: transcodes*d.TranscodeTimeout + jobOverhead, Queue: jobs.QueueMedia}); err != nil {
+		return err
+	}
+	if err := jobs.Register(reg, p.HandleDropSource, jobs.KindConfig{Timeout: 10 * time.Minute}); err != nil {
 		return err
 	}
 	if d.Tasks == nil {

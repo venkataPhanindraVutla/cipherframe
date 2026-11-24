@@ -451,7 +451,15 @@ enforced by package `quota`, called from the code that already owns each decisio
 - The content key is in worker memory while a job runs (as on every key read) and is cleared after
   use on a best-effort basis; a memory dump of the worker can expose it.
 - The init segment is stored unencrypted (see [encryption.md](encryption.md)).
-- The source file in the source bucket is not encrypted by this pipeline; it stays until deletion.
+- The source file in the source bucket is not encrypted by this pipeline. It stays until the asset is
+  deleted, unless the tenant turned `keep_source` off when the asset was created (H-3): then the
+  `asset.drop_source` job deletes it (with tus's `.info` object and any multipart leftovers) as soon as
+  the asset is `ready` and, for `mask_faces`, the masked variant is no longer pending. The job is queued
+  in the transaction that makes both true, never runs for a `failed`, `deleting` or `deleted` asset,
+  records `source_deleted_at` and the audit event `asset.source_deleted`, and the dropped bytes stop
+  counting toward the storage quota. Nothing reads the original after that: the signed manifest keeps
+  only its hash, and re-key, verify, thumbnails and subtitles work from the delivery bucket and the
+  database. A purge lists storage, so it still succeeds when the original is gone.
 - Segment hashes in `asset_artifacts` prove what was stored at upload time; the signed manifest in
   `asset_manifests` is what lets a third party check them.
 - A source file is hostile input to a C media decoder. See the media toolkit section above.

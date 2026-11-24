@@ -143,6 +143,21 @@ func TestAccessLogAndPrivacyOperationsMatchSpec(t *testing.T) {
 		t.Fatalf("a replacement without asset_ttl_seconds kept it: %v", got)
 	}
 	bad("PUT", "/v1/privacy-settings", map[string]any{"store_ip": true})
+	// keep_source (H-3) defaults to true, also in a replacement that leaves it out (an older client),
+	// and is a full-replacement field like the rest.
+	if defaults["keep_source"] != true || put["keep_source"] != true || withTTL["keep_source"] != true {
+		t.Fatalf("keep_source is not true by default: %v %v %v", defaults, put, withTTL)
+	}
+	if got := call(admin, "PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": false, "keep_source": false}, 200); got["keep_source"] != false {
+		t.Fatalf("PUT keep_source=false = %v", got)
+	}
+	if got := call(admin, "GET", "/v1/privacy-settings", nil, 200); got["keep_source"] != false {
+		t.Fatalf("GET after keep_source=false = %v", got)
+	}
+	if got := call(admin, "PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": false}, 200); got["keep_source"] != true {
+		t.Fatalf("a replacement without keep_source switched it off: %v", got)
+	}
+	bad("PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": false, "keep_source": "no"})
 	call(reader, "GET", "/v1/privacy-settings", nil, 403)
 	call(reader, "PUT", "/v1/privacy-settings", map[string]any{"store_ip": true, "store_user_agent": true}, 403)
 	call(nil, "GET", "/v1/privacy-settings", nil, 401)

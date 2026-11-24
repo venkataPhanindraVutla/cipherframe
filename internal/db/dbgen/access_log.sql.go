@@ -72,7 +72,7 @@ func (q *Queries) EnsureAccessLogPartition(ctx context.Context, month pgtype.Dat
 }
 
 const getPrivacySettings = `-- name: GetPrivacySettings :one
-SELECT tenant_id, store_ip, store_user_agent, updated_at, asset_ttl_seconds FROM privacy_settings WHERE tenant_id = $1
+SELECT tenant_id, store_ip, store_user_agent, updated_at, asset_ttl_seconds, keep_source FROM privacy_settings WHERE tenant_id = $1
 `
 
 func (q *Queries) GetPrivacySettings(ctx context.Context, tenantID pgtype.UUID) (PrivacySetting, error) {
@@ -84,6 +84,7 @@ func (q *Queries) GetPrivacySettings(ctx context.Context, tenantID pgtype.UUID) 
 		&i.StoreUserAgent,
 		&i.UpdatedAt,
 		&i.AssetTtlSeconds,
+		&i.KeepSource,
 	)
 	return i, err
 }
@@ -289,13 +290,13 @@ func (q *Queries) SessionViewers(ctx context.Context, hashes [][]byte) ([]Sessio
 }
 
 const upsertPrivacySettings = `-- name: UpsertPrivacySettings :one
-INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, asset_ttl_seconds, updated_at)
+INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, asset_ttl_seconds, keep_source, updated_at)
 VALUES ($1::uuid, $2::boolean, $3::boolean,
-        $4::integer, $5::timestamptz)
+        $4::integer, $5::boolean, $6::timestamptz)
 ON CONFLICT (tenant_id) DO UPDATE SET
     store_ip = EXCLUDED.store_ip, store_user_agent = EXCLUDED.store_user_agent,
-    asset_ttl_seconds = EXCLUDED.asset_ttl_seconds, updated_at = EXCLUDED.updated_at
-RETURNING tenant_id, store_ip, store_user_agent, updated_at, asset_ttl_seconds
+    asset_ttl_seconds = EXCLUDED.asset_ttl_seconds, keep_source = EXCLUDED.keep_source, updated_at = EXCLUDED.updated_at
+RETURNING tenant_id, store_ip, store_user_agent, updated_at, asset_ttl_seconds, keep_source
 `
 
 type UpsertPrivacySettingsParams struct {
@@ -303,6 +304,7 @@ type UpsertPrivacySettingsParams struct {
 	StoreIp         bool
 	StoreUserAgent  bool
 	AssetTtlSeconds *int32
+	KeepSource      bool
 	At              time.Time
 }
 
@@ -312,6 +314,7 @@ func (q *Queries) UpsertPrivacySettings(ctx context.Context, arg UpsertPrivacySe
 		arg.StoreIp,
 		arg.StoreUserAgent,
 		arg.AssetTtlSeconds,
+		arg.KeepSource,
 		arg.At,
 	)
 	var i PrivacySetting
@@ -321,6 +324,7 @@ func (q *Queries) UpsertPrivacySettings(ctx context.Context, arg UpsertPrivacySe
 		&i.StoreUserAgent,
 		&i.UpdatedAt,
 		&i.AssetTtlSeconds,
+		&i.KeepSource,
 	)
 	return i, err
 }

@@ -1100,6 +1100,10 @@ type Asset struct {
 	ReadyAt             *time.Time `json:"ready_at,omitempty"`
 	SizeBytes           int64      `json:"size_bytes"`
 
+	// SourceDeletedAt When the uploaded original was deleted because the tenant's `keep_source` setting was
+	// `false` when the asset was created. Absent while the original is kept.
+	SourceDeletedAt *time.Time `json:"source_deleted_at,omitempty"`
+
 	// State The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`,
 	// then `deleting` while the purge runs and `deleted` for the tombstone that stays afterwards.
 	// Lists leave deleted assets out.
@@ -1957,6 +1961,13 @@ type PrivacySettings struct {
 	// the expiry they were created with.
 	AssetTtlSeconds *int `json:"asset_ttl_seconds,omitempty"`
 
+	// KeepSource Keep the uploaded original in the source bucket after the asset is `ready` (and, with
+	// `mask_faces`, after the masked variant is no longer pending). Default `true`. With `false`
+	// the original, its tus bookkeeping object and any multipart leftovers are deleted then, the
+	// asset gets `source_deleted_at`. The value is fixed on an asset when it is created: a later
+	// change does not reach assets that already exist.
+	KeepSource bool `json:"keep_source"`
+
 	// StoreIp Keep the connecting peer's IP address in the access trail. Default `false`.
 	StoreIp bool `json:"store_ip"`
 
@@ -1971,9 +1982,12 @@ type PrivacySettings struct {
 // can be told apart from `false`: it is `invalid_request` with an `errors` entry naming it.
 type PrivacySettingsInput struct {
 	// AssetTtlSeconds The default time-to-live for new assets; leave it out for none. A replacement like the rest.
-	AssetTtlSeconds *int  `json:"asset_ttl_seconds,omitempty"`
-	StoreIp         *bool `json:"store_ip,omitempty"`
-	StoreUserAgent  *bool `json:"store_user_agent,omitempty"`
+	AssetTtlSeconds *int `json:"asset_ttl_seconds,omitempty"`
+
+	// KeepSource Leave it out for the default, `true`, like every optional field of this replacement.
+	KeepSource     *bool `json:"keep_source,omitempty"`
+	StoreIp        *bool `json:"store_ip,omitempty"`
+	StoreUserAgent *bool `json:"store_user_agent,omitempty"`
 }
 
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
@@ -3971,7 +3985,9 @@ type ClientInterface interface {
 	// UpdatePrivacySettingsWithBody Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -3984,7 +4000,9 @@ type ClientInterface interface {
 	// UpdatePrivacySettings Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -5836,7 +5854,9 @@ func (c *HTTPClient) GetPrivacySettings(ctx context.Context, reqEditors ...Reque
 // UpdatePrivacySettingsWithBody Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.
@@ -5859,7 +5879,9 @@ func (c *HTTPClient) UpdatePrivacySettingsWithBody(ctx context.Context, contentT
 // UpdatePrivacySettings Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.
@@ -10356,7 +10378,9 @@ type ClientWithResponsesInterface interface {
 	// UpdatePrivacySettingsWithBodyWithResponse Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -10369,7 +10393,9 @@ type ClientWithResponsesInterface interface {
 	// UpdatePrivacySettingsWithResponse Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -19955,7 +19981,9 @@ func (c *ClientWithResponses) GetPrivacySettingsWithResponse(ctx context.Context
 // UpdatePrivacySettingsWithBodyWithResponse Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.
@@ -19974,7 +20002,9 @@ func (c *ClientWithResponses) UpdatePrivacySettingsWithBodyWithResponse(ctx cont
 // UpdatePrivacySettingsWithResponse Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.

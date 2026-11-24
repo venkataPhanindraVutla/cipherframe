@@ -126,7 +126,8 @@ func (q *Queries) LockQuota(ctx context.Context, lockKey string) error {
 
 const storageUsage = `-- name: StorageUsage :one
 WITH counted AS (
-    SELECT a.id, a.size_bytes FROM assets a
+    -- An original that asset.drop_source removed no longer occupies the source bucket.
+    SELECT a.id, CASE WHEN a.source_deleted_at IS NULL THEN a.size_bytes ELSE 0 END AS size_bytes FROM assets a
     WHERE a.tenant_id = $1::uuid
       AND a.state <> 'deleted'
       AND NOT (a.state = 'failed' AND a.failure_code = 'upload_aborted')
@@ -152,7 +153,8 @@ type StorageUsageRow struct {
 
 // Source plus delivery bytes of the tenant's assets from the registries: the declared (and, after
 // commit, verified) source size in assets.size_bytes and every delivery object in asset_artifacts.
-// A deleted asset (its purge finished) and an aborted upload (its source was removed) do not count.
+// A deleted asset (its purge finished), an aborted upload and a dropped original (its source was
+// removed) do not count.
 // client_id narrows to the assets one client created; exclude_asset leaves one asset out (the commit
 // check adds its actual size back).
 func (q *Queries) StorageUsage(ctx context.Context, arg StorageUsageParams) (StorageUsageRow, error) {
