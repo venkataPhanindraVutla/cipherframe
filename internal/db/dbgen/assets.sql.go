@@ -836,6 +836,74 @@ func (q *Queries) RequestAssetDeletion(ctx context.Context, arg RequestAssetDele
 	return i, err
 }
 
+const requeueFailedAsset = `-- name: RequeueFailedAsset :one
+UPDATE assets SET
+    state                = 'committed',
+    updated_at           = $1::timestamptz,
+    failed_at            = NULL,
+    failure_code         = NULL,
+    progress             = 0,
+    extra_codec_failures = '[]'::jsonb,
+    masking_state        = NULL,
+    faces_detected       = NULL
+WHERE tenant_id = $2::uuid
+  AND id = $3::uuid
+  AND state = 'failed'
+RETURNING id, tenant_id, created_by_client_id, state, created_at, updated_at, size_bytes, content_type, upload_method, source_key, s3_upload_id, upload_expires_at, committed_at, processing_started_at, ready_at, failed_at, failure_code, source_sha256, source_size_bytes, duration_ms, renditions, progress, mask_faces, masking_state, faces_detected, deletion_requested_at, deletion_reason, deleted_at, expires_at, key_generation, extra_codecs, extra_codec_failures, keep_source, source_deleted_at
+`
+
+type RequeueFailedAssetParams struct {
+	At       time.Time
+	TenantID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+// failed -> committed for a reprocess (H-4), as a compare-and-set: it changes a row only while it is
+// failed, so two concurrent requests cannot both win. It clears everything the failed run left on the
+// row: the failure, the progress, the extra codec failures and a masked variant's state (the new
+// asset.mask run starts it again as pending). committed_at stays: it says when the upload committed.
+func (q *Queries) RequeueFailedAsset(ctx context.Context, arg RequeueFailedAssetParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, requeueFailedAsset, arg.At, arg.TenantID, arg.ID)
+	var i Asset
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.CreatedByClientID,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.UploadMethod,
+		&i.SourceKey,
+		&i.S3UploadID,
+		&i.UploadExpiresAt,
+		&i.CommittedAt,
+		&i.ProcessingStartedAt,
+		&i.ReadyAt,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.SourceSha256,
+		&i.SourceSizeBytes,
+		&i.DurationMs,
+		&i.Renditions,
+		&i.Progress,
+		&i.MaskFaces,
+		&i.MaskingState,
+		&i.FacesDetected,
+		&i.DeletionRequestedAt,
+		&i.DeletionReason,
+		&i.DeletedAt,
+		&i.ExpiresAt,
+		&i.KeyGeneration,
+		&i.ExtraCodecs,
+		&i.ExtraCodecFailures,
+		&i.KeepSource,
+		&i.SourceDeletedAt,
+	)
+	return i, err
+}
+
 const resetAssetProgress = `-- name: ResetAssetProgress :exec
 UPDATE assets SET progress = 0
 WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'processing'

@@ -8,8 +8,9 @@ package db
 //	   |           |            |            |
 //	   +-----------+------------+------------+-> failed
 //	every state except deleting and deleted -> deleting -> deleted     (M6: verified deletion)
+//	failed -> committed                                                (H-4: reprocess, Repos.RequeueFailedAsset)
 //
-// "processing -> committed" and every other backward edge are not allowed: a retried job
+// "processing -> committed" and every other backward edge except failed -> committed are not allowed: a retried job
 // re-enters processing from processing, which is not a state change.
 var assetEdges = map[AssetState][]AssetState{
 	AssetCreated:    {AssetUploading, AssetFailed, AssetDeleting},
@@ -17,7 +18,7 @@ var assetEdges = map[AssetState][]AssetState{
 	AssetCommitted:  {AssetProcessing, AssetFailed, AssetDeleting},
 	AssetProcessing: {AssetReady, AssetFailed, AssetDeleting},
 	AssetReady:      {AssetDeleting},
-	AssetFailed:     {AssetDeleting},
+	AssetFailed:     {AssetCommitted, AssetDeleting},
 	AssetDeleting:   {AssetDeleted},
 	AssetDeleted:    nil,
 }

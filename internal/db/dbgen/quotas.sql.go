@@ -42,6 +42,22 @@ func (q *Queries) CountTenantActiveSessions(ctx context.Context, arg CountTenant
 	return count, err
 }
 
+const deleteTranscodeCharge = `-- name: DeleteTranscodeCharge :exec
+DELETE FROM transcode_charges WHERE asset_id = $1::uuid AND tenant_id = $2::uuid
+`
+
+type DeleteTranscodeChargeParams struct {
+	AssetID  pgtype.UUID
+	TenantID pgtype.UUID
+}
+
+// A reprocess (H-4) takes back the failed run's charge so the new run charges the asset again, in the
+// month it runs in, and is refused if the limit is used up by then.
+func (q *Queries) DeleteTranscodeCharge(ctx context.Context, arg DeleteTranscodeChargeParams) error {
+	_, err := q.db.Exec(ctx, deleteTranscodeCharge, arg.AssetID, arg.TenantID)
+	return err
+}
+
 const getClientQuotas = `-- name: GetClientQuotas :one
 SELECT client_id, tenant_id, storage_bytes, transcode_minutes_per_month, concurrent_sessions, requests_per_minute, updated_at FROM client_quotas WHERE tenant_id = $1 AND client_id = $2
 `

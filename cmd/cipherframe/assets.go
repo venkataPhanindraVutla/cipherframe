@@ -199,6 +199,33 @@ var assetCommands = []command{
 		},
 	},
 	{
+		name: "reprocess", synopsis: "reprocess ASSET_ID [--wait] [flags]",
+		help: "Run the processing of a failed asset again from its stored original, for a failure that was\n" +
+			"not the file's fault (a storage or key-service outage). The asset goes back to committed and the\n" +
+			"normal asset.ready or asset.failed webhook follows. The run counts against the transcode\n" +
+			"minutes again. An asset that is not failed is a conflict (asset_not_failed), and so is one whose\n" +
+			"original is no longer stored (source_unavailable): upload it again. With\n" +
+			"--wait, poll until the asset is ready.",
+		setup: func(fs *flag.FlagSet) func(*cli, []string) error {
+			w := addWaitFlags(fs)
+			return func(c *cli, pos []string) error {
+				id, err := onePositional(pos, "asset ID")
+				if err != nil {
+					return err
+				}
+				ctx, cancel := c.ctx(context.Background(), 1)
+				resp, err := c.api.ReprocessAsset(ctx, id) //nolint:bodyclose // finish closes it
+				var a apiclient.Asset
+				raw, err := c.finish(resp, err, &a)
+				cancel()
+				if err != nil {
+					return err
+				}
+				return c.finishAsset(a, raw, w)
+			}
+		},
+	},
+	{
 		name: "deletion-record", synopsis: "deletion-record ASSET_ID [flags]",
 		help: "Print the signed deletion record of a deleted asset (a DSSE envelope, JSON). Save it and check\n" +
 			"it with cipherframe verify --deletion-record. An asset that is not deleted yet is not_found.",

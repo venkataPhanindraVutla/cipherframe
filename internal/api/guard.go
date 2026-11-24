@@ -31,14 +31,15 @@ var operationScopes = map[string][]db.Scope{
 	"RotateKey":    {},
 	"RevokeKey":    {db.ScopeAdmin},
 
-	"CreateAsset": {db.ScopeAssetsWrite},
-	"ListAssets":  {db.ScopeAssetsRead},
-	"GetAsset":    {db.ScopeAssetsRead},
-	"CommitAsset": {db.ScopeAssetsWrite},
-	"AbortAsset":  {db.ScopeAssetsWrite},
-	"DeleteAsset": {db.ScopeAssetsWrite},
-	"RekeyAsset":  {db.ScopeAssetsWrite},
-	"UpdateAsset": {db.ScopeAssetsWrite},
+	"CreateAsset":    {db.ScopeAssetsWrite},
+	"ListAssets":     {db.ScopeAssetsRead},
+	"GetAsset":       {db.ScopeAssetsRead},
+	"CommitAsset":    {db.ScopeAssetsWrite},
+	"AbortAsset":     {db.ScopeAssetsWrite},
+	"DeleteAsset":    {db.ScopeAssetsWrite},
+	"RekeyAsset":     {db.ScopeAssetsWrite},
+	"ReprocessAsset": {db.ScopeAssetsWrite},
+	"UpdateAsset":    {db.ScopeAssetsWrite},
 
 	"CreateAssetSubtitle":   {db.ScopeAssetsWrite},
 	"ImportAssetTranscript": {db.ScopeAssetsWrite},
@@ -294,6 +295,10 @@ func (g guarded) DeleteAsset(w http.ResponseWriter, r *http.Request, assetID gen
 
 func (g guarded) RekeyAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
 	g.a.run("RekeyAsset", w, r, func(r *http.Request) { g.ServerInterface.RekeyAsset(w, r, assetID) })
+}
+
+func (g guarded) ReprocessAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {
+	g.a.run("ReprocessAsset", w, r, func(r *http.Request) { g.ServerInterface.ReprocessAsset(w, r, assetID) })
 }
 
 func (g guarded) AbortAsset(w http.ResponseWriter, r *http.Request, assetID gen.AssetId) {

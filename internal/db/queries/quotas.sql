@@ -57,6 +57,11 @@ SELECT
     COALESCE((SELECT SUM(ar.size_bytes) FROM asset_artifacts ar JOIN counted c ON c.id = ar.asset_id
               WHERE ar.bucket = 'delivery'), 0)::bigint AS delivery_bytes;
 
+-- name: DeleteTranscodeCharge :exec
+-- A reprocess (H-4) takes back the failed run's charge so the new run charges the asset again, in the
+-- month it runs in, and is refused if the limit is used up by then.
+DELETE FROM transcode_charges WHERE asset_id = sqlc.arg(asset_id)::uuid AND tenant_id = sqlc.arg(tenant_id)::uuid;
+
 -- name: TranscodeUsage :one
 -- Milliseconds of source charged in [from, until).
 SELECT COALESCE(SUM(duration_ms), 0)::bigint AS duration_ms FROM transcode_charges

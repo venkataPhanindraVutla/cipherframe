@@ -164,6 +164,23 @@ failed for good (the audit log shows `asset.rekey_failed`) can be requested agai
   versions and backups taken before the re-key still hold the old ciphertext and (in the database
   backup) the old wrapped key. See [the threat model](threat-model.md#content-key-re-key-m10-4-adr-0068).
 
+## Processing a failed asset again
+
+An asset fails for good when the file is not usable, but also when something around it broke for longer
+than the retries last: the object store, the key service, a worker that ran out of memory. Those
+assets can run again from the original you uploaded, without uploading it again (H-4).
+
+```sh
+cipherframe reprocess "$id" --wait         # asset_id  ready (or exit 8 when it fails again)
+cipherframe audit export | grep asset.reprocess_requested
+```
+
+The API is `POST /v1/assets/{asset_id}/reprocess` (scope `assets:write`, no body) and answers `202` with
+the asset, now `committed`. Only a `failed` asset is accepted (`409 asset_not_failed` otherwise), and
+only while its original is still stored (`409 source_unavailable` otherwise: upload the video again).
+The new run starts clean, uses the same content key, sends the normal `asset.ready` or `asset.failed`
+webhook and counts against the transcode minutes again. See [api.md](api.md#assets-and-uploads-adr-0025-0026).
+
 ## Running the server
 
 `cipherframe-server` is one binary with three roles (ADR 0008). Choose the roles with `--role`, a
