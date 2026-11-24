@@ -278,6 +278,16 @@ deleting asset takes no new expiry (`409`), a deleted one and another tenant's a
 sweep can be a few minutes late and an expired asset is deleted by the same purge as a requested one,
 so it stays playable until the purge starts. Use `DELETE` to delete now.
 
+**Keeping the original (H-3).** By default the uploaded original stays in the source bucket until the
+asset is deleted. A tenant that keeps its own copy can set `keep_source` to `false` in the privacy
+settings: an asset created from then on has its original deleted once it is `ready` (and, with
+`mask_faces`, once its `masking.state` is `ready` or `failed`, since the masker reads the original).
+The tus `.info` object and any multipart leftovers go with it. The value is fixed on the asset when it
+is created, so changing the setting does not reach assets that already exist. The asset then shows
+`source_deleted_at`, the audit log gets `asset.source_deleted`, and the original's bytes no longer
+count toward the storage quota. Playback is not affected. A `failed` asset keeps its original, and
+deleting an asset whose original is already gone works as usual.
+
 **Delete (M6, ADR 0040, ADR 0042).** `DELETE /v1/assets/{asset_id}` (`assets:write`) starts the
 verified deletion and answers `202` with the asset in state `deleting`. From that moment playback
 (new sessions and key requests), uploads and processing refuse the asset and its active playback
@@ -950,10 +960,14 @@ no trusted-proxy setting and **never reads `X-Forwarded-For`**, which a client c
 reverse proxy or load balancer `ip` is the proxy's address, and the proxy's own logs are where the
 client address lives.
 
-- `GET /v1/privacy-settings` returns `{store_ip, store_user_agent, asset_ttl_seconds, updated_at}`: the
-  stored settings, or the defaults (both flags `false`, `asset_ttl_seconds` and `updated_at` absent).
+- `GET /v1/privacy-settings` returns `{store_ip, store_user_agent, keep_source, asset_ttl_seconds,
+  updated_at}`: the stored settings, or the defaults (both flags `false`, `keep_source` `true`,
+  `asset_ttl_seconds` and `updated_at` absent).
   `PUT /v1/privacy-settings` replaces them (send both flags: a missing one is `400` with an `errors`
-  entry; `asset_ttl_seconds` is optional and leaving it out clears it). `asset_ttl_seconds` (60 to
+  entry; `asset_ttl_seconds` and `keep_source` are optional and leaving one out sets it to its default,
+  so a client written before `keep_source` existed cannot switch it off by accident). `keep_source`
+  (default `true`) is whether the uploaded original stays in storage after processing (see "Keeping
+  the original" above). `asset_ttl_seconds` (60 to
   315360000) is the tenant's default asset time-to-live (see "Retention" above). Both calls need the
   `admin` scope, and a change is written to the audit log (`privacy_settings.update`). The flags apply
   to rows written afterwards (each process caches the settings for up to 30 seconds, and a row is

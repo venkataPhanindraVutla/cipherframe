@@ -777,7 +777,7 @@ func TestRegisterAddsTheKind(t *testing.T) {
 	if err := Register(reg, h.proc.Deps); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Kinds(); !slices.Equal(got, []string{"asset.process"}) {
+	if got := reg.Kinds(); !slices.Equal(got, []string{"asset.drop_source", "asset.process"}) {
 		t.Fatalf("kinds = %v", got)
 	}
 	if err := Register(reg, h.proc.Deps); err == nil {

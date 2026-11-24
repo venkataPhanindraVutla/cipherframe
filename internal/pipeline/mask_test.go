@@ -467,7 +467,7 @@ func TestRegisterAddsAssetMaskOnlyWithTasks(t *testing.T) {
 	if err := Register(reg, d); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Kinds(); !slices.Equal(got, []string{"asset.process"}) {
+	if got := reg.Kinds(); !slices.Equal(got, []string{"asset.drop_source", "asset.process"}) {
 		t.Fatalf("kinds without tasks = %v", got)
 	}
 	d.Tasks, d.MaskTimeout = &fakeTasks{}, time.Hour
@@ -475,7 +475,7 @@ func TestRegisterAddsAssetMaskOnlyWithTasks(t *testing.T) {
 	if err := Register(reg, d); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Kinds(); !slices.Equal(got, []string{"asset.mask", "asset.process"}) {
+	if got := reg.Kinds(); !slices.Equal(got, []string{"asset.drop_source", "asset.mask", "asset.process"}) {
 		t.Fatalf("kinds with tasks = %v", got)
 	}
 	d.MaskTimeout = 0
