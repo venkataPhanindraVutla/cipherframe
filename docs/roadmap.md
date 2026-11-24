@@ -31,7 +31,7 @@ Last updated: 2026-11-24.
 | M8 CLI (Go) and reference player (TypeScript) | Done ([ADR 0050](adr/0050-reference-player-approach.md), [ADR 0051](adr/0051-cli-conventions.md), [ADR 0052](adr/0052-reference-player-implementation.md)) |
 | M9 Operations and release | Done (P14 decided, [ADR 0053](adr/0053-observability-stack.md); tooling, [ADR 0054](adr/0054-operations-and-release-tooling.md)) |
 | M10 v1 extras | Done (P16 to P18 decided: [ADR 0062](adr/0062-cdn-signed-urls.md), [ADR 0063](adr/0063-hardware-encoders.md), [ADR 0064](adr/0064-hevc-and-av1-renditions.md); all four extras stay in v1.0.0) |
-| H v1 hardening | In progress ([ADR 0069](adr/0069-v1-hardening-decisions.md)) |
+| H v1 hardening | Done ([ADR 0069](adr/0069-v1-hardening-decisions.md)); BG-1 in progress ([ADR 0070](adr/0070-background-replacement.md)) |
 
 ### M5 Integrity and anchoring
 
@@ -124,10 +124,11 @@ and no original file name is ever stored ([privacy.md](privacy.md)). Details in
 Found in a review before v1.0.0; decisions in [ADR 0069](adr/0069-v1-hardening-decisions.md).
 
 - [x] H-0 README and usage status brought up to date
-- [ ] H-1 Operator quality setting: CRF environment variables per codec
-- [ ] H-2 HDR sources tone-mapped to SDR
-- [ ] H-3 Per-tenant `keep_source`: delete the original after processing
-- [ ] H-4 Re-run a failed asset: `POST /v1/assets/{asset_id}/reprocess`, `cipherframe reprocess`
+- [x] H-1 Operator quality setting: CRF environment variables per codec
+- [x] H-2 HDR sources tone-mapped to SDR
+- [x] H-3 Per-tenant `keep_source`: delete the original after processing
+- [x] H-4 Re-run a failed asset: `POST /v1/assets/{asset_id}/reprocess`, `cipherframe reprocess`
+- [ ] BG-1 Background replacement: none, blur or an organisation image behind the person ([ADR 0070](adr/0070-background-replacement.md))
 
 ## Open decision gates
 
@@ -164,6 +165,7 @@ These were accepted to keep the build moving and should be confirmed before the 
 - [ADR 0066](adr/0066-hardware-encoder-implementation.md) Hardware encoders: a separate `worker-hw` image (Debian, amd64), whole-transcode software retry
 - [ADR 0067](adr/0067-hevc-av1-implementation.md) HEVC and AV1: `extra_codecs` required in the settings PUT, snapshot at upload, CRF and cap choices
 - [ADR 0068](adr/0068-content-key-rekey.md) Content-key re-key: sessions bound to a key generation must restart, old objects deleted at once
+- [ADR 0069](adr/0069-v1-hardening-decisions.md) v1 hardening implementation: `keep_source` optional in the PUT, reprocess reuses the content key and charges again, HDR assumed BT.2020 when untagged
 - [ADR 0065](adr/0065-cdn-implementation.md) CDN implementation: signing key read by edge only, purge job on the worker, Cloud CDN purge over REST, Terraform CDN
 
 ## Follow-ups
