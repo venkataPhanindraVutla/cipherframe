@@ -116,6 +116,7 @@ func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Q
 		},
 		LadderHeights:    cfg.Media.LadderHeights,
 		X264Preset:       cfg.Media.X264Preset,
+		CRF:              &cfg.Media.CRF,
 		Encoder:          cfg.Media.Encoder,
 		HWDevice:         cfg.Media.HWDevice,
 		Codecs:           cfg.Media.Codecs,

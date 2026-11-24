@@ -26,6 +26,9 @@ const (
 	EnvMaskConcurrency   = "CIPHERFRAME_WORKER_MASK_CONCURRENCY"
 	EnvLadderHeights     = "CIPHERFRAME_WORKER_LADDER_HEIGHTS"
 	EnvX264Preset        = "CIPHERFRAME_WORKER_X264_PRESET"
+	EnvCRF               = "CIPHERFRAME_WORKER_CRF"
+	EnvCRFHEVC           = "CIPHERFRAME_WORKER_CRF_HEVC"
+	EnvCRFAV1            = "CIPHERFRAME_WORKER_CRF_AV1"
 	EnvEncoder           = "CIPHERFRAME_WORKER_ENCODER"
 	EnvHWDevice          = "CIPHERFRAME_WORKER_HW_DEVICE"
 )
@@ -81,6 +84,9 @@ type Media struct {
 	LadderHeights []int
 	// X264Preset is the libx264 preset of both variants (ADR 0038); "medium" by default.
 	X264Preset string
+	// CRF is the constant quality of each codec (CIPHERFRAME_WORKER_CRF, _CRF_HEVC, _CRF_AV1); a
+	// hardware encoder translates it with its own scale.
+	CRF media.CRFs
 	// Encoder is what encodes the video (ADR 0063): software (libx264) unless the operator picks a
 	// hardware encoder. A hardware encoder that fails its startup test falls back to software.
 	Encoder media.Encoder
@@ -106,8 +112,13 @@ func (l *loader) media() Media {
 		MaskConcurrency:   l.concurrency(EnvMaskConcurrency, defaultMaskConcurrency),
 		LadderHeights:     l.ladderHeights(),
 		X264Preset:        l.x264Preset(),
-		Encoder:           l.encoder(),
-		HWDevice:          l.hwDevice(),
+		CRF: media.CRFs{
+			H264: l.crf(EnvCRF, media.CRF, 51),
+			HEVC: l.crf(EnvCRFHEVC, media.CRFHEVC, 51),
+			AV1:  l.crf(EnvCRFAV1, media.CRFAV1, 63),
+		},
+		Encoder:  l.encoder(),
+		HWDevice: l.hwDevice(),
 	}
 }
 
@@ -207,6 +218,20 @@ func (l *loader) x264Preset() string {
 		return media.X264Preset
 	}
 	return v
+}
+
+// crf reads a constant-quality variable: a whole number from 0 to max, def if unset.
+func (l *loader) crf(name string, def, max int) int {
+	v := l.plain(name, "")
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 || n > max {
+		l.errf("%s must be a whole number from 0 to %d", name, max)
+		return def
+	}
+	return n
 }
 
 // encoder reads CIPHERFRAME_WORKER_ENCODER: software unless one of the hardware encoders is named.

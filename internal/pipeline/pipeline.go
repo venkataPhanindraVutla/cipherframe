@@ -98,6 +98,9 @@ type Deps struct {
 	// X264Preset is the libx264 preset of both variants (CIPHERFRAME_WORKER_X264_PRESET); empty
 	// means media.X264Preset.
 	X264Preset string
+	// CRF is the constant quality of each codec (CIPHERFRAME_WORKER_CRF, _CRF_HEVC, _CRF_AV1); nil
+	// means media.DefaultCRFs (a pointer because 0 is a valid CRF).
+	CRF *media.CRFs
 	// Encoder is the video encoder (CIPHERFRAME_WORKER_ENCODER, after the startup test); empty means
 	// software. HWDevice is the render node VAAPI and QSV open.
 	Encoder  media.Encoder

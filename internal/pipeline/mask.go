@@ -157,7 +157,7 @@ func (p *Processor) mask(ctx context.Context, asset db.Asset, log *slog.Logger) 
 	if err != nil {
 		return classifyMedia(err)
 	}
-	renditions := media.Ladder(info, p.LadderHeights)
+	renditions := p.crf().Apply(media.Ladder(info, p.LadderHeights))
 	if len(renditions) == 0 {
 		return permanent(FailureInvalidMedia, errors.New("no renditions can be made from the masked file"))
 	}

@@ -58,6 +58,28 @@ func RungHeights() []int {
 	return out
 }
 
+// CRFs are the constant-quality values of the three codecs: the operator's setting
+// (CIPHERFRAME_WORKER_CRF, _CRF_HEVC and _CRF_AV1). The ladder starts from the constants above.
+type CRFs struct{ H264, HEVC, AV1 int }
+
+// DefaultCRFs are CRF, CRFHEVC and CRFAV1.
+func DefaultCRFs() CRFs { return CRFs{H264: CRF, HEVC: CRFHEVC, AV1: CRFAV1} }
+
+// Apply sets the CRF of every rendition to its codec's value and returns rs.
+func (q CRFs) Apply(rs []Rendition) []Rendition {
+	for i := range rs {
+		switch rs[i].Codec {
+		case CodecHEVC:
+			rs[i].CRF = q.HEVC
+		case CodecAV1:
+			rs[i].CRF = q.AV1
+		default:
+			rs[i].CRF = q.H264
+		}
+	}
+	return rs
+}
+
 // Rendition is one output of the ladder: a size and its rate-control settings. The transcoder
 // scales the source to Width x Height after applying the display rotation.
 type Rendition struct {

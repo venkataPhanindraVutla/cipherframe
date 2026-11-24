@@ -80,7 +80,7 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 	if err := media.Validate(info, p.Limits); err != nil {
 		return classifyMedia(err)
 	}
-	renditions := media.Ladder(info, p.LadderHeights)
+	renditions := p.crf().Apply(media.Ladder(info, p.LadderHeights))
 	if len(renditions) == 0 {
 		return permanent(FailureInvalidMedia, errors.New("no renditions can be made from the file"))
 	}
@@ -174,6 +174,14 @@ func (p *Processor) process(ctx context.Context, asset db.Asset, log *slog.Logge
 // When a hardware encoder fails, the whole run is repeated once with libx264 (ADR 0066): one
 // FFmpeg process makes every rendition, so a rendition's failure cannot be told apart from the
 // others'. The fallback is counted, and logged with the encoder's name only.
+// crf is the operator's constant quality, media.DefaultCRFs when unset.
+func (p *Processor) crf() media.CRFs {
+	if p.CRF == nil {
+		return media.DefaultCRFs()
+	}
+	return *p.CRF
+}
+
 func (p *Processor) transcode(ctx context.Context, asset db.Asset, spec media.TranscodeSpec, track bool, log *slog.Logger) (media.Encoder, error) {
 	set := func(context.Context, int) error { return nil }
 	if track {

@@ -65,7 +65,7 @@ func (p *Processor) extraCodec(ctx context.Context, asset db.Asset, c media.Code
 		log.WarnContext(ctx, "extra codec skipped: this worker's FFmpeg has no encoder for it")
 		return extraRun{}, db.CodecEncoderUnavailable, nil
 	}
-	rends := media.LadderFor(c, info, p.LadderHeights)
+	rends := p.crf().Apply(media.LadderFor(c, info, p.LadderHeights))
 	if len(rends) == 0 {
 		return extraRun{}, db.CodecTranscodeFailed, nil
 	}
