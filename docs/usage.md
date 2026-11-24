@@ -544,7 +544,7 @@ and only what ADR 0024 lists: `file` and `pipe` protocols; MP4/MOV and Matroska/
 HEVC, VP8, VP9, AV1 (through dav1d, because FFmpeg's own AV1 decoder needs a hardware accelerator),
 AAC, Opus and MP3 decoding; libx264, libx265 (HEVC), SVT-AV1 (AV1) and AAC encoding; MP4 and HLS (fMP4) output; and the
 `scale`, `format`, `aresample`, `null`, `anull`, `setsar`, `fps`, `split`, `transpose`, `hflip`,
-`vflip`, `trim`, `setpts`, `tile`, `overlay` and `colorchannelmixer` filters (`split` fans the decoded frames out to one scaled branch per rendition; `transpose`, `hflip` and `vflip` apply a rotated phone video's display matrix; `trim`, `setpts` and `tile` make the thumbnails; `overlay` and `colorchannelmixer` draw the brand logo, which arrives as raw pixels through the `rawvideo` demuxer). Everything is pinned by
+`vflip`, `trim`, `setpts`, `tile`, `overlay`, `colorchannelmixer`, `zscale` and `tonemap` filters (`zscale` and `tonemap` come from zimg, WTFPL, and convert HDR and wide-gamut sources to BT.709 SDR, see [codecs.md](codecs.md#hdr-sources); `split` fans the decoded frames out to one scaled branch per rendition; `transpose`, `hflip` and `vflip` apply a rotated phone video's display matrix; `trim`, `setpts` and `tile` make the thumbnails; `overlay` and `colorchannelmixer` draw the brand logo, which arrives as raw pixels through the `rawvideo` demuxer). Everything is pinned by
 SHA-256 or digest. `/usr/share/licenses/ffmpeg/` holds the licence texts and `SOURCE.md`, the
 written source offer with the exact sources and configure line. The image's `ENV` points
 `CIPHERFRAME_FFMPEG_PATH` and `CIPHERFRAME_FFPROBE_PATH` at `/usr/local/bin`.
@@ -579,7 +579,7 @@ example `missing encoder(s): libx264; missing muxer(s): hls`.
 needs libx264 and the native AAC encoder (and, only if you want HEVC or AV1 renditions, `libx265` or `libsvtav1`: the startup
 check does not require them, the worker reports whether it has them); the `mp4` and `hls` muxers; the `mov` and `matroska`
 demuxers; the H.264, HEVC, VP8, VP9, AAC, Opus and MP3 decoders and an AV1 decoder (`libdav1d` or
-`libaom-av1`); the `file` and `pipe` protocols; and the filters above (including `split`). A distribution FFmpeg usually
+`libaom-av1`); the `file` and `pipe` protocols; and the filters above (including `split`; HDR uploads also need `zscale`, built with `--enable-libzimg`, and `tonemap`). A distribution FFmpeg usually
 has all of them. If something is missing the worker says so at startup. A full-featured FFmpeg is
 a larger attack surface than the worker image's (see below), and H.264 patent licensing is your
 concern, not Cipherframe's.

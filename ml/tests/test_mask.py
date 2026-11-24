@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from cipherframe_ml.boxes import pad_box
-from cipherframe_ml.mask import MaskError, YuNetDetector, mask_frame, mask_video
+from cipherframe_ml.mask import MaskError, YuNetDetector, mask_frame, mask_video, sdr_filter
 from cipherframe_ml.model import DEFAULT_MODEL_PATH, verify_model
 
 W, H, FPS = 320, 240, 10
@@ -153,3 +153,16 @@ def test_stop_flag_aborts(ffmpeg, tmp_path):
 def test_real_model_loads_and_finds_no_face_in_noise():
     detect = YuNetDetector(verify_model(DEFAULT_MODEL_PATH))
     assert detect(np.zeros((480, 1280, 3), np.uint8)) == []
+
+
+def test_sdr_filter_picks_the_conversion_from_the_colour_tags():
+    assert sdr_filter("bt709", "bt709", "bt709") is None
+    assert sdr_filter("", "", "") is None
+    assert sdr_filter("bt709", "bt2020", "bt2020nc") == (
+        "zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p"
+    )
+    for transfer in ("smpte2084", "arib-std-b67"):
+        vf = sdr_filter(transfer, "bt2020", "bt2020nc")
+        assert vf.startswith("zscale=t=linear:npl=100,format=gbrpf32le,") and "tonemap=" in vf
+        assert "pin=" not in vf and "min=" not in vf
+    assert ":pin=bt2020:min=bt2020nc," in sdr_filter("smpte2084", "unknown", "")

@@ -98,7 +98,7 @@ docker run --rm --entrypoint /usr/local/bin/ffmpeg cipherframe-worker-hw -hide_b
 ```
 
 It carries a dynamically linked FFmpeg 9.0.2 with `h264_nvenc` (through `nv-codec-headers`, MIT, pinned by
-checksum), `h264_vaapi` (libva, MIT) and `h264_qsv` (libvpl, MIT) and the `hwupload` filter, on Debian trixie
+checksum), `h264_vaapi` (libva, MIT) and `h264_qsv` (libvpl, MIT) and the `hwupload` filter (plus `zscale` and `tonemap` from zimg, WTFPL, which tone-map HDR sources in software before `hwupload`), on Debian trixie
 with the runtime libraries and the Intel and Mesa VAAPI drivers. It adds no `--enable-nonfree`, so it stays
 GPL, like the default image; `/usr/share/licenses/ffmpeg/SOURCE.md` lists the sources. The build fails if the
 binary needs a shared library beyond glibc, libva, libvpl and the C++ runtime libvpl brings. NVENC is loaded at run time: nothing from NVIDIA

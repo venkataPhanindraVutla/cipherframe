@@ -45,6 +45,12 @@ type Spec struct {
 	// Rotation is the clockwise rotation, 0, 90, 180 or 270, written to the display matrix of an
 	// MP4 so that players (and ffprobe) show the picture turned. The stored frames do not change.
 	Rotation int
+	// Transfer, when set to "smpte2084" (PQ) or "arib-std-b67" (HLG), makes the video 10-bit BT.2020 with
+	// that transfer curve, like a phone's HDR recording. It is the SDR picture an unset Transfer gives,
+	// encoded into the HDR signal (PQ with SDR white at 203 nits, as in BT.2408; HLG as a 1000-nit display
+	// would show it), so a correct conversion back to SDR must land near that SDR picture. Needs a
+	// generator FFmpeg with zscale and a 10-bit x264 (the Dockerfile's `fixtures` stage).
+	Transfer string
 }
 
 // Generate writes the fixture into dir and returns its absolute path.
@@ -57,6 +63,9 @@ func (g Generator) Generate(ctx context.Context, dir string, s Spec) (string, er
 	}
 	if s.Width < 16 || s.Height < 16 || s.Width%2 != 0 || s.Height%2 != 0 {
 		return "", errors.New("testmedia: Width and Height must be even and at least 16")
+	}
+	if s.Transfer != "" && s.Transfer != "smpte2084" && s.Transfer != "arib-std-b67" {
+		return "", errors.New("testmedia: Transfer must be smpte2084 or arib-std-b67")
 	}
 	if s.Rotation%90 != 0 || s.Rotation < 0 || s.Rotation > 270 {
 		return "", errors.New("testmedia: Rotation must be 0, 90, 180 or 270")
@@ -87,7 +96,19 @@ func (g Generator) Generate(ctx context.Context, dir string, s Spec) (string, er
 	if s.Audio {
 		args = append(args, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration="+audioSecs)
 	}
-	args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", fps)
+	pixFmt := "yuv420p"
+	if s.Transfer != "" {
+		pixFmt = "yuv420p10le"
+		npl := map[string]string{"smpte2084": "203", "arib-std-b67": "1000"}[s.Transfer]
+		args = append(args, "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"+
+			"zscale=tin=bt709:pin=bt709:min=bt709:rin=limited:t="+s.Transfer+":p=bt2020:m=bt2020nc:r=limited:npl="+npl+",format=yuv420p10le")
+	}
+	args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", pixFmt, "-g", fps)
+	if s.Transfer != "" {
+		// x264 writes the tags into the stream's VUI itself. FFmpeg's own -color_trc and -color_primaries
+		// are overridden by the untagged frames of the lavfi source.
+		args = append(args, "-x264-params", "colorprim=bt2020:transfer="+s.Transfer+":colormatrix=bt2020nc:range=tv")
+	}
 	if s.Audio {
 		args = append(args, "-c:a", "aac", "-b:a", "64k", "-ac", "2")
 	}

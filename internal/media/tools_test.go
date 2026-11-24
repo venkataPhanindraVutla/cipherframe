@@ -72,6 +72,8 @@ Output:
  ... tile              V->V       Tile several successive frames together.
  T.. overlay           VV->V      Overlay a video source on top of the input.
  ... colorchannelmixer V->V       Adjust colors by mixing color channels.
+ ... zscale            V->V       Apply resizing, colorspace and bit depth conversion.
+ ... tonemap           V->V       Conversion to/from different dynamic ranges.
 `
 )
 

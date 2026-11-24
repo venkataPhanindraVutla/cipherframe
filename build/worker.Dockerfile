@@ -15,6 +15,9 @@
 # - x265 (HEVC) and SVT-AV1 (AV1) are the software encoders of the optional extra codecs (ADR 0064,
 #   ADR 0067). They are compiled in always, but the worker only uses them for tenants that turned a
 #   codec on. x265 is built 8-bit only (every rendition is 8-bit 4:2:0).
+# - zimg (WTFPL) gives FFmpeg its zscale filter, which converts the colour of HDR and wide-gamut sources
+#   to BT.709 SDR (docs/codecs.md, HDR sources). It is a static C++ library; the hardware image builds
+#   it again with PIC, like x265 and SVT-AV1.
 # - dav1d is here because FFmpeg's native "av1" decoder is hardware-accelerator-only: without
 #   libdav1d (or libaom) AV1 uploads could be probed but never decoded.
 # - Targets: the default (last) target is the worker image. `fixtures` is a test-only stage that
@@ -141,6 +144,60 @@ RUN cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${PREFIX
     && ninja && ninja install
 
 # ---------------------------------------------------------------------------------------------
+# The toolchain plus autotools, for zimg only. The base image carries a newer perl-base than the main
+# snapshot has, so autoconf's perl dependency needs the security archive of the same date.
+FROM toolchain AS toolchain-autotools
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
+RUN echo "deb http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/ bookworm-security main" >> /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends autoconf automake libtool \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------------------------
+# zimg (WTFPL): the colour-space and tone-curve library behind FFmpeg's zscale filter. The GitHub tag
+# tarball has no generated configure script, so autotools run first. Its pkg-config file lists libstdc++
+# but not libm, which the static library needs and FFmpeg's link test does not add for a C++ library.
+FROM toolchain-autotools AS zimg
+ARG ZIMG_VERSION=3.0.5
+ARG ZIMG_SHA256=a9a0226bf85e0d83c41a8ebe4e3e690e1348682f6a2a7838f1b8cbff1b799bcf
+RUN fetch https://github.com/sekrit-twc/zimg/archive/refs/tags/release-${ZIMG_VERSION}.tar.gz \
+        ${ZIMG_SHA256} /src/zimg.tar.gz
+RUN mkdir /src/zimg && tar -xzf /src/zimg.tar.gz -C /src/zimg --strip-components=1
+WORKDIR /src/zimg
+RUN ./autogen.sh \
+    && ./configure --prefix=${PREFIX} --enable-static --disable-shared --without-pic \
+    && make -j"$(nproc)" && make install \
+    && sed -i '/^Libs:/s/$/ -lm/' ${PREFIX}/lib/pkgconfig/zimg.pc
+
+# The same for the hardware image, whose FFmpeg is a position-independent executable.
+FROM toolchain-autotools AS zimg-hw
+ARG ZIMG_VERSION=3.0.5
+ARG ZIMG_SHA256=a9a0226bf85e0d83c41a8ebe4e3e690e1348682f6a2a7838f1b8cbff1b799bcf
+RUN fetch https://github.com/sekrit-twc/zimg/archive/refs/tags/release-${ZIMG_VERSION}.tar.gz \
+        ${ZIMG_SHA256} /src/zimg.tar.gz
+RUN mkdir /src/zimg && tar -xzf /src/zimg.tar.gz -C /src/zimg --strip-components=1
+WORKDIR /src/zimg
+RUN ./autogen.sh \
+    && ./configure --prefix=${PREFIX} --enable-static --disable-shared --with-pic \
+    && make -j"$(nproc)" && make install \
+    && sed -i '/^Libs:/s/$/ -lm/' ${PREFIX}/lib/pkgconfig/zimg.pc
+
+# ---------------------------------------------------------------------------------------------
+# x264 for the fixtures FFmpeg only: every bit depth, so the HDR test sources can be 10-bit. The
+# shipped FFmpeg's x264 stays 8-bit.
+FROM toolchain AS x264-fixtures
+ARG X264_COMMIT=b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+ARG X264_SHA256=6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224
+RUN fetch https://code.videolan.org/videolan/x264/-/archive/${X264_COMMIT}/x264-${X264_COMMIT}.tar.bz2 \
+        ${X264_SHA256} /src/x264.tar.bz2
+RUN mkdir /src/x264 && tar -xjf /src/x264.tar.bz2 -C /src/x264 --strip-components=1
+WORKDIR /src/x264
+RUN ./configure --prefix=${PREFIX} --enable-static --enable-pic --bit-depth=all \
+        --disable-cli --disable-opencl --disable-avs --disable-swscale --disable-lavf \
+        --disable-ffms --disable-gpac --disable-lsmash \
+    && make -j"$(nproc)" && make install
+
+# ---------------------------------------------------------------------------------------------
 # FFmpeg source, verified once and shared by the two builds below.
 FROM toolchain AS ffmpeg-src
 ARG FFMPEG_VERSION=9.0.2
@@ -157,7 +214,7 @@ RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-comp
 #   decode  h264 hevc vp8 vp9 libdav1d(av1) aac opus mp3 (+ parsers)
 #   encode  libx264, libx265 (HEVC), libsvtav1 (AV1), aac; mjpeg (poster and sprite JPEGs, ADR 0046)
 #   output  muxers mp4 and hls (fMP4 segments); null (decode checks and tests); image2 (JPEG files)
-#   filters scale format aresample null anull setsar fps split trim setpts tile overlay colorchannelmixer (the brand logo,
+#   filters zscale tonemap (zimg: HDR to SDR, docs/codecs.md); scale format aresample null anull setsar fps split trim setpts tile overlay colorchannelmixer (the brand logo,
 #           ADR 0049: it arrives as raw RGBA pixels through the rawvideo demuxer, so no PNG decoder and no zlib are
 #           built); transpose hflip vflip apply the display
 #           matrix rotation (FFmpeg's autorotate inserts them); ffmpeg adds aformat/trim/etc itself.
@@ -171,6 +228,7 @@ COPY --from=x264 /opt/deps /opt/deps
 COPY --from=dav1d /opt/deps /opt/deps
 COPY --from=x265 /opt/deps /opt/deps
 COPY --from=svtav1 /opt/deps /opt/deps
+COPY --from=zimg /opt/deps /opt/deps
 ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
 WORKDIR /src/ffmpeg
 RUN ./configure \
@@ -180,19 +238,21 @@ RUN ./configure \
         --extra-ldflags="-L/opt/deps/lib -static" \
         --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug --disable-pic \
         --disable-ffplay --disable-avdevice \
-        --enable-gpl --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libdav1d \
+        --enable-gpl --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libdav1d --enable-libzimg \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov,matroska,rawvideo \
         --enable-decoder=h264,hevc,vp8,vp9,libdav1d,aac,opus,mp3,mp3float,rawvideo \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
         --enable-encoder=libx264,libx265,libsvtav1,aac,mjpeg \
         --enable-muxer=mp4,hls,null,image2 \
-        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer \
+        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer,zscale,tonemap \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe \
     && (ldd /opt/ffmpeg/bin/ffmpeg 2>&1 | grep -q 'not a dynamic executable') \
     && (ldd /opt/ffmpeg/bin/ffprobe 2>&1 | grep -q 'not a dynamic executable') \
+    && /opt/ffmpeg/bin/ffmpeg -hide_banner -filters > /tmp/filters \
+    && for f in zscale tonemap; do grep -qw "$f" /tmp/filters || { echo "missing filter $f" >&2; exit 1; }; done \
     && /opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf > /opt/ffmpeg/buildconf.txt
 
 # ---------------------------------------------------------------------------------------------
@@ -233,6 +293,7 @@ COPY --from=x264 /opt/deps /opt/deps
 COPY --from=dav1d /opt/deps /opt/deps
 COPY --from=x265-hw /opt/deps /opt/deps
 COPY --from=svtav1-hw /opt/deps /opt/deps
+COPY --from=zimg-hw /opt/deps /opt/deps
 COPY --from=nvcodec /opt/deps /opt/deps
 ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
 WORKDIR /src/ffmpeg
@@ -245,7 +306,7 @@ RUN ./configure \
         --extra-ldflags="-L/opt/deps/lib" \
         --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug \
         --disable-ffplay --disable-avdevice \
-        --enable-gpl --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libdav1d \
+        --enable-gpl --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libdav1d --enable-libzimg \
         --enable-ffnvcodec --enable-nvenc --enable-vaapi --enable-libvpl \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov,matroska,rawvideo \
@@ -253,7 +314,7 @@ RUN ./configure \
         --enable-parser=h264,hevc,vp8,vp9,av1,aac,opus,mpegaudio \
         --enable-encoder=libx264,libx265,libsvtav1,aac,mjpeg,h264_nvenc,h264_vaapi,h264_qsv,hevc_nvenc,hevc_vaapi,hevc_qsv,av1_nvenc,av1_vaapi,av1_qsv \
         --enable-muxer=mp4,hls,null,image2 \
-        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer,hwupload \
+        --enable-filter=scale,format,aresample,null,anull,setsar,fps,split,transpose,hflip,vflip,trim,setpts,tile,overlay,colorchannelmixer,hwupload,zscale,tonemap \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg-hw/bin/ffmpeg /opt/ffmpeg-hw/bin/ffprobe \
@@ -266,16 +327,19 @@ RUN readelf -d /opt/ffmpeg-hw/bin/ffmpeg | sed -n 's/.*Shared library: \[\(.*\)\
     && ! grep -vE '^(ld-linux|libc\.so|libm\.so|libmvec\.so|libdl\.so|libpthread\.so|librt\.so|libva\.so|libva-drm\.so|libvpl\.so|libstdc\+\+\.so|libgcc_s\.so)' /tmp/needed \
     && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -encoders > /tmp/encoders \
     && for e in h264_nvenc h264_vaapi h264_qsv hevc_nvenc hevc_vaapi hevc_qsv av1_nvenc av1_vaapi av1_qsv libx264 libx265 libsvtav1 aac mjpeg; do grep -qw "$e" /tmp/encoders || { echo "missing encoder $e" >&2; exit 1; }; done \
-    && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -filters | grep -qw hwupload
+    && /opt/ffmpeg-hw/bin/ffmpeg -hide_banner -filters > /tmp/filters \
+    && for f in hwupload zscale tonemap; do grep -qw "$f" /tmp/filters || { echo "missing filter $f" >&2; exit 1; }; done
 
 # ---------------------------------------------------------------------------------------------
 # Test-only FFmpeg: lavfi test sources to generate fixtures at test time (internal/media/testmedia),
-# plus the h264/aac decoders and the ssim and psnr filters the pipeline test uses to measure quality.
+# plus the h264/aac decoders and the ssim and psnr filters the pipeline test uses to measure quality, and
+# zscale (zimg) with a 10-bit x264, which make the HDR test sources: an SDR picture encoded as PQ or HLG.
 # Those measuring filters live here and NEVER in the shipped build above.
 # It lacks hls, libdav1d and most decoders on purpose, so it also serves as the "limited build"
 # that CheckCapabilities must reject. It is never copied into the worker image.
 FROM ffmpeg-src AS fixtures
-COPY --from=x264 /opt/deps /opt/deps
+COPY --from=x264-fixtures /opt/deps /opt/deps
+COPY --from=zimg /opt/deps /opt/deps
 ENV PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig
 WORKDIR /src/ffmpeg
 RUN ./configure \
@@ -285,7 +349,7 @@ RUN ./configure \
         --extra-ldflags="-L/opt/deps/lib -static" \
         --disable-everything --disable-network --disable-autodetect --disable-doc --disable-debug \
         --disable-ffplay --disable-ffprobe \
-        --enable-gpl --enable-libx264 --enable-avdevice \
+        --enable-gpl --enable-libx264 --enable-libzimg --enable-avdevice \
         --enable-indev=lavfi \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov \
@@ -293,7 +357,7 @@ RUN ./configure \
         --enable-parser=h264,aac \
         --enable-encoder=libx264,aac,wrapped_avframe \
         --enable-muxer=mp4,matroska,null \
-        --enable-filter=testsrc2,mandelbrot,sine,anullsrc,scale,format,aresample,null,anull,setsar,fps,ssim,psnr \
+        --enable-filter=testsrc2,mandelbrot,sine,anullsrc,scale,format,aresample,null,anull,setsar,fps,ssim,psnr,zscale \
     && make -j"$(nproc)" \
     && make install \
     && strip /opt/ffmpeg-fixtures/bin/ffmpeg \
@@ -358,7 +422,10 @@ ARG X265_VERSION=4.1
 ARG X265_SHA256=a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29
 ARG SVTAV1_VERSION=3.1.2
 ARG SVTAV1_SHA256=d0d73bfea42fdcc1222272bf2b0e2319e9df5574721298090c3d28315586ecb1
+ARG ZIMG_VERSION=3.0.5
+ARG ZIMG_SHA256=a9a0226bf85e0d83c41a8ebe4e3e690e1348682f6a2a7838f1b8cbff1b799bcf
 ARG DEBIAN_SNAPSHOT=20261101T000000Z
+COPY --from=zimg /src/zimg/COPYING /out/zimg-COPYING
 COPY --from=x264 /src/x264/COPYING /out/x264-COPYING
 COPY --from=dav1d /src/dav1d/COPYING /out/dav1d-COPYING
 COPY --from=x265 /src/x265/COPYING /out/x265-COPYING
@@ -372,6 +439,7 @@ RUN mkdir -p /out/licenses \
     && cp /out/x265-COPYING /out/licenses/x265-COPYING.GPLv2 \
     && cp /out/LICENSE.md /out/licenses/svtav1-LICENSE.md \
     && cp /out/PATENTS.md /out/licenses/svtav1-PATENTS.md \
+    && cp /out/zimg-COPYING /out/licenses/zimg-COPYING.WTFPL \
     && cp /usr/share/doc/libc6/copyright /out/licenses/glibc-copyright \
     && cp /usr/share/common-licenses/LGPL-2.1 /out/licenses/glibc-LGPL-2.1 \
     && LIBC_VERSION="$(dpkg-query -W -f='${Version}' libc6)" \
@@ -380,6 +448,7 @@ RUN mkdir -p /out/licenses \
            -e "s|@DAV1D_VERSION@|${DAV1D_VERSION}|g" -e "s|@DAV1D_SHA256@|${DAV1D_SHA256}|g" \
            -e "s|@X265_VERSION@|${X265_VERSION}|g" -e "s|@X265_SHA256@|${X265_SHA256}|g" \
            -e "s|@SVTAV1_VERSION@|${SVTAV1_VERSION}|g" -e "s|@SVTAV1_SHA256@|${SVTAV1_SHA256}|g" \
+           -e "s|@ZIMG_VERSION@|${ZIMG_VERSION}|g" -e "s|@ZIMG_SHA256@|${ZIMG_SHA256}|g" \
            -e "s|@DEBIAN_SNAPSHOT@|${DEBIAN_SNAPSHOT}|g" -e "s|@LIBC_VERSION@|${LIBC_VERSION}|g" \
            -e '/@BUILDCONF@/{r /opt/ffmpeg/buildconf.txt' -e 'd}' \
            /tmp/SOURCE.md.in > /out/licenses/SOURCE.md
@@ -399,7 +468,10 @@ ARG X265_VERSION=4.1
 ARG X265_SHA256=a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29
 ARG SVTAV1_VERSION=3.1.2
 ARG SVTAV1_SHA256=d0d73bfea42fdcc1222272bf2b0e2319e9df5574721298090c3d28315586ecb1
+ARG ZIMG_VERSION=3.0.5
+ARG ZIMG_SHA256=a9a0226bf85e0d83c41a8ebe4e3e690e1348682f6a2a7838f1b8cbff1b799bcf
 ARG DEBIAN_SNAPSHOT=20261101T000000Z
+COPY --from=zimg /src/zimg/COPYING /out/zimg-COPYING
 COPY --from=x264 /src/x264/COPYING /out/x264-COPYING
 COPY --from=dav1d /src/dav1d/COPYING /out/dav1d-COPYING
 COPY --from=x265 /src/x265/COPYING /out/x265-COPYING
@@ -414,6 +486,7 @@ RUN mkdir -p /out/licenses \
     && cp /out/x265-COPYING /out/licenses/x265-COPYING.GPLv2 \
     && cp /out/LICENSE.md /out/licenses/svtav1-LICENSE.md \
     && cp /out/PATENTS.md /out/licenses/svtav1-PATENTS.md \
+    && cp /out/zimg-COPYING /out/licenses/zimg-COPYING.WTFPL \
     && cp /usr/share/doc/libva-dev/copyright /out/licenses/libva-copyright \
     && cp /usr/share/doc/libvpl-dev/copyright /out/licenses/libvpl-copyright \
     && LIBVA_VERSION="$(dpkg-query -W -f='${Version}' libva-dev)" \
@@ -423,6 +496,7 @@ RUN mkdir -p /out/licenses \
            -e "s|@DAV1D_VERSION@|${DAV1D_VERSION}|g" -e "s|@DAV1D_SHA256@|${DAV1D_SHA256}|g" \
            -e "s|@X265_VERSION@|${X265_VERSION}|g" -e "s|@X265_SHA256@|${X265_SHA256}|g" \
            -e "s|@SVTAV1_VERSION@|${SVTAV1_VERSION}|g" -e "s|@SVTAV1_SHA256@|${SVTAV1_SHA256}|g" \
+           -e "s|@ZIMG_VERSION@|${ZIMG_VERSION}|g" -e "s|@ZIMG_SHA256@|${ZIMG_SHA256}|g" \
            -e "s|@NVCODEC_VERSION@|${NVCODEC_VERSION}|g" -e "s|@NVCODEC_SHA256@|${NVCODEC_SHA256}|g" \
            -e "s|@LIBVA_VERSION@|${LIBVA_VERSION}|g" -e "s|@LIBVPL_VERSION@|${LIBVPL_VERSION}|g" \
            -e "s|@DEBIAN_SNAPSHOT@|${DEBIAN_SNAPSHOT}|g" \
