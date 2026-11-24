@@ -1,9 +1,9 @@
 # Usage
 
-> Status: skeleton (M1-6). `cipherframe-server` starts and serves health and readiness; the rest of
-> the flow below is planned.
+> Status: pre-release (`v0.1.0-rc.2`). Every step below works against the local Compose stack; see the
+> [roadmap](roadmap.md) for what is not yet verified on real infrastructure.
 
-## Planned flow
+## The flow
 
 1. Start the stack locally with Docker Compose and SeaweedFS (M1-8, ADR 0014). No cloud account is needed.
 2. Create an API key for your application.
