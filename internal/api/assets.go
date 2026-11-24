@@ -275,6 +275,27 @@ func (s *server) RekeyAsset(ctx context.Context, req gen.RekeyAssetRequestObject
 	}, nil
 }
 
+// ReprocessAsset runs the processing of a failed asset again (H-4).
+func (s *server) ReprocessAsset(ctx context.Context, req gen.ReprocessAssetRequestObject) (gen.ReprocessAssetResponseObject, error) {
+	p, actor, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	svc, err := s.service()
+	if err != nil {
+		return nil, err
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	a, err := svc.Reprocess(ctx, p.TenantID, actor, aid)
+	if err != nil {
+		return nil, err
+	}
+	return gen.ReprocessAsset202JSONResponse{Body: assetOut(a), Headers: gen.ReprocessAsset202ResponseHeaders{XRequestId: requestID(ctx)}}, nil
+}
+
 // UpdateAsset sets or clears the asset's time-to-live. The body is read raw so that an explicit
 // null (clear the expiry) is told apart from a member that is absent.
 func (s *server) UpdateAsset(ctx context.Context, req gen.UpdateAssetRequestObject) (gen.UpdateAssetResponseObject, error) {

@@ -327,3 +327,28 @@ func (r *Repos) MarkSourceDeleted(ctx context.Context, tenantID id.TenantID, ass
 	}
 	return err == nil, mapError(err)
 }
+
+// RequeueFailedAsset moves a failed asset back to committed for a reprocess (H-4), clears what the
+// failed run left on the row and takes back the transcode charge, so the new run charges again.
+// Losing the compare-and-set (the asset is not failed) is a conflict whose cause is ErrStateChanged.
+// Call it in a transaction, under LockAsset, with the job inserts.
+func (r *Repos) RequeueFailedAsset(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, at time.Time) (Asset, error) {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return Asset{}, err
+	}
+	if !AssetFailed.CanTransitionTo(AssetCommitted) {
+		return Asset{}, errs.New(errs.InternalError, "An internal error occurred.")
+	}
+	row, err := r.q.RequeueFailedAsset(ctx, dbgen.RequeueFailedAssetParams{At: at, TenantID: tid, ID: aid})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Asset{}, stateConflict()
+	}
+	if err != nil {
+		return Asset{}, mapError(err)
+	}
+	if err := r.q.DeleteTranscodeCharge(ctx, dbgen.DeleteTranscodeChargeParams{AssetID: aid, TenantID: tid}); err != nil {
+		return Asset{}, mapError(err)
+	}
+	return assetFromRow(row), nil
+}

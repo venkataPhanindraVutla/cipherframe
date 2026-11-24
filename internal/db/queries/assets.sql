@@ -162,6 +162,25 @@ WHERE tenant_id = sqlc.arg(tenant_id)::uuid
   AND source_deleted_at IS NULL
 RETURNING *;
 
+-- name: RequeueFailedAsset :one
+-- failed -> committed for a reprocess (H-4), as a compare-and-set: it changes a row only while it is
+-- failed, so two concurrent requests cannot both win. It clears everything the failed run left on the
+-- row: the failure, the progress, the extra codec failures and a masked variant's state (the new
+-- asset.mask run starts it again as pending). committed_at stays: it says when the upload committed.
+UPDATE assets SET
+    state                = 'committed',
+    updated_at           = sqlc.arg(at)::timestamptz,
+    failed_at            = NULL,
+    failure_code         = NULL,
+    progress             = 0,
+    extra_codec_failures = '[]'::jsonb,
+    masking_state        = NULL,
+    faces_detected       = NULL
+WHERE tenant_id = sqlc.arg(tenant_id)::uuid
+  AND id = sqlc.arg(id)::uuid
+  AND state = 'failed'
+RETURNING *;
+
 -- name: RequestAssetDeletion :one
 -- Compare-and-set: any state except deleting and deleted moves to deleting, once. Everything that
 -- serves or changes the asset refuses it from then on.
