@@ -52,4 +52,32 @@ A review before v1.0.0 found four gaps that cost money or correctness for an ado
 
 ## Implementation
 
-(Added when H-1 to H-4 merge.)
+Accepted (flagged for owner review): the choices below were made while building and were not asked.
+
+**H-1 (CRF variables).** The values are applied to every rung through `media.CRFs`; hardware encoders
+map them as before. With the defaults the FFmpeg arguments are byte-identical to the earlier build. The
+signed manifest already records each rung's CRF, so its format is unchanged.
+
+**H-2 (HDR).** A source is HDR when its transfer is `smpte2084` (PQ) or `arib-std-b67` (HLG); BT.2020
+primaries with an SDR transfer get a primaries-only conversion. The conversion runs once, after `fps`
+and before the split, so every rendition, the poster and the sprite share it; an HDR file without
+primaries or matrix tags is assumed BT.2020. The worker's capability check requires `zscale` and
+`tonemap`, so an operator's own FFmpeg without them fails at startup instead of on the first HDR
+upload. The masker makes an SDR copy first for HDR and wide-gamut sources (it now needs ffprobe), so
+the `media.mask_faces` contract is unchanged. zimg 3.0.5 is pinned by SHA-256; the fixtures FFmpeg
+gets a 10-bit x264 to make HDR test files, while the shipped x264 stays 8-bit.
+
+**H-3 (`keep_source`).** In `PUT /v1/privacy-settings` the field is optional and a missing value means
+`true`, so an older client cannot switch it off by accident. The snapshot is taken at asset create. The
+`asset.drop_source` job is queued in the transaction that makes the asset ready (or settles its
+masking), deletes the whole source prefix (original, tus metadata and parts), then records
+`source_deleted_at` and the `asset.source_deleted` audit event. A dropped source stops counting
+toward the storage quota.
+
+**H-4 (reprocess).** The content key is reused: only a purge destroys keys, and retries already reuse
+it. The new run removes the failed run's partial output itself, as every run does. There is no quota
+check at request time (the duration is unknown until the probe); the failed run's transcode charge is
+removed, so the new run charges again and can fail with `quota_transcode_minutes`. A request while a
+job of the earlier run is still active is `conflict`; an aborted upload is `source_unavailable`. The
+state is checked before the source, so a ready asset whose source was dropped answers
+`asset_not_failed`.
