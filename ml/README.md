@@ -44,6 +44,7 @@ uv run cipherframe-ml mask-worker
 | `CIPHERFRAME_ML_DATABASE_URL` / `_FILE` | required (use the limited `cipherframe_worker` role from `spec/jobs/README.md`) |
 | `CIPHERFRAME_WORK_DIR` | `<tmp>/cipherframe` |
 | `CIPHERFRAME_FFMPEG_PATH` | `ffmpeg` |
+| `CIPHERFRAME_FFPROBE_PATH` | `ffprobe`: finds HDR and wide-gamut sources, which are converted to BT.709 SDR before masking (docs/codecs.md, HDR sources). |
 | `CIPHERFRAME_ML_MODEL_PATH` | `models/face_detection_yunet_2026may.onnx` |
 | `CIPHERFRAME_ML_DETECT_EVERY` | `1`: run the detector on every N-th frame, a whole number of at least 1 (ADR 0038). Higher is faster; with 2 a fast-moving face can be one frame behind its box, covered by the padding and hold. Invalid values stop the worker at startup. |
 

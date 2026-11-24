@@ -24,11 +24,12 @@ RUN uv sync --frozen --no-dev
 COPY scripts ./scripts
 # Bake in the model; the fetch verifies its SHA-256, and the worker verifies it again at start.
 RUN /opt/venv/bin/python scripts/fetch_model.py /opt/models
-COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/share/licenses/ffmpeg/ /usr/share/licenses/ffmpeg/
 RUN useradd --system --uid 65532 --no-create-home nonroot
 ENV PATH=/opt/venv/bin:$PATH \
     CIPHERFRAME_FFMPEG_PATH=/usr/local/bin/ffmpeg \
+    CIPHERFRAME_FFPROBE_PATH=/usr/local/bin/ffprobe \
     CIPHERFRAME_ML_MODEL_PATH=/opt/models/face_detection_yunet_2026may.onnx
 USER nonroot
 ENTRYPOINT ["cipherframe-ml"]

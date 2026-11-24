@@ -37,6 +37,7 @@ class Config:
     lease_seconds: float = 60.0
     poll_seconds: float = 2.0
     detect_every: int = 1
+    ffprobe_path: str = "ffprobe"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Config":
@@ -50,6 +51,7 @@ class Config:
             database_url=read_secret(env, "CIPHERFRAME_ML_DATABASE_URL"),
             work_dir=Path(work),
             ffmpeg_path=env.get("CIPHERFRAME_FFMPEG_PATH") or "ffmpeg",
+            ffprobe_path=env.get("CIPHERFRAME_FFPROBE_PATH") or "ffprobe",
             model_path=Path(env.get("CIPHERFRAME_ML_MODEL_PATH") or DEFAULT_MODEL_PATH),
             detect_every=int(raw),
         )
