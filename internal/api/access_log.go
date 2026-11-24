@@ -146,7 +146,7 @@ func (s *server) GetPlaybackSessionAccessLog(ctx context.Context, req gen.GetPla
 }
 
 func privacyOut(s db.PrivacySettings) gen.PrivacySettings {
-	out := gen.PrivacySettings{StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent, AssetTtlSeconds: s.AssetTTLSeconds}
+	out := gen.PrivacySettings{StoreIp: s.StoreIP, StoreUserAgent: s.StoreUserAgent, KeepSource: !s.DropSource, AssetTtlSeconds: s.AssetTTLSeconds}
 	if !s.UpdatedAt.IsZero() {
 		t := s.UpdatedAt
 		out.UpdatedAt = &t
@@ -199,8 +199,10 @@ func (s *server) UpdatePrivacySettings(ctx context.Context, req gen.UpdatePrivac
 			{Field: "asset_ttl_seconds", Message: fmt.Sprintf("must be a whole number of seconds from %d to %d, or left out", db.MinAssetTTLSeconds, db.MaxAssetTTLSeconds)},
 		})
 	}
+	// A missing keep_source is the default, so a client that predates it cannot switch it off.
+	drop := req.Body.KeepSource != nil && !*req.Body.KeepSource
 	set, err := svc.PutPrivacy(ctx, p.TenantID, actor, db.PrivacySettings{
-		StoreIP: *req.Body.StoreIp, StoreUserAgent: *req.Body.StoreUserAgent, AssetTTLSeconds: req.Body.AssetTtlSeconds,
+		StoreIP: *req.Body.StoreIp, StoreUserAgent: *req.Body.StoreUserAgent, AssetTTLSeconds: req.Body.AssetTtlSeconds, DropSource: drop,
 	})
 	if err != nil {
 		return nil, err

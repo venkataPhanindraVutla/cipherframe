@@ -88,6 +88,8 @@ func (r *restFake) route2(w http.ResponseWriter, req *http.Request, body []byte)
 	switch {
 	case m == "POST" && p == "/v1/assets/"+testAsset+"/rekey":
 		r.reply(w, 202, map[string]any{"asset_id": testAsset, "job_id": 42}, false)
+	case m == "POST" && p == "/v1/assets/"+testAsset+"/reprocess":
+		r.reply(w, 202, r.asset("committed"), false)
 	case m == "POST" && p == "/v1/playback-sessions":
 		if r.body["asset_id"] == "ast_00000000000000000000000001" {
 			r.problem(w, req, 409, "asset_not_ready", "the asset is processing")
@@ -573,4 +575,27 @@ func TestAssetRekey(t *testing.T) {
 	r.problemOnly(409, "asset_not_ready", "only a ready asset can be re-keyed")
 	code, _, errb = runCLI(t, r.fakeServer, "rekey", testAsset)
 	exit(t, "not ready", code, 6, errb)
+}
+
+func TestAssetReprocess(t *testing.T) {
+	r := newRest(t)
+	code, out, errb := runCLI(t, r.fakeServer, "reprocess", testAsset)
+	exit(t, "reprocess", code, 0, errb)
+	if strings.TrimSpace(out) != testAsset+"  committed" {
+		t.Fatalf("stdout: %q", out)
+	}
+	code, out, errb = runCLI(t, r.fakeServer, "reprocess", testAsset, "--json")
+	exit(t, "reprocess json", code, 0, errb)
+	if !strings.Contains(out, `"state":"committed"`) {
+		t.Fatalf("json: %s", out)
+	}
+	usageCases(t, r.fakeServer, map[string][]string{"no asset": {"reprocess"}, "two assets": {"reprocess", testAsset, testAsset}})
+	for _, c := range []string{"asset_not_failed", "source_unavailable"} {
+		r.problemOnly(409, c, "refused")
+		code, _, errb = runCLI(t, r.fakeServer, "reprocess", testAsset)
+		exit(t, c, code, 6, errb)
+		if !strings.Contains(errb, c) {
+			t.Fatalf("%s: stderr %s", c, errb)
+		}
+	}
 }

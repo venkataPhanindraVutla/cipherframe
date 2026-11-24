@@ -26,6 +26,7 @@ func TestAssetStateMachineIsExhaustive(t *testing.T) {
 		{AssetProcessing, AssetFailed}:    true,
 		{AssetProcessing, AssetDeleting}:  true,
 		{AssetReady, AssetDeleting}:       true,
+		{AssetFailed, AssetCommitted}:     true,
 		{AssetFailed, AssetDeleting}:      true,
 		{AssetDeleting, AssetDeleted}:     true,
 	}

@@ -99,10 +99,17 @@ the video ([api.md](api.md#overlay-watermark-adr-0043-0048)). It is off by defau
 | Setting | Default | Where |
 |---|---|---|
 | Asset time-to-live | none: assets are kept until deleted | per asset (`expires_at` or `ttl_seconds` on create and `PATCH /v1/assets/{asset_id}`), or the tenant default `asset_ttl_seconds` in `PUT /v1/privacy-settings` |
+| Keep the uploaded original (`keep_source`) | on: the original stays until the asset is deleted | per tenant: `PUT /v1/privacy-settings`; fixed on each asset when it is created |
 | Store viewer IP address (`store_ip`) | off | per tenant: `PUT /v1/privacy-settings` |
 | Store viewer user agent (`store_user_agent`) | off | per tenant |
 | Original file name | never stored, and there is no setting to store it | none |
 | Access-trail and anomaly-event retention | 90 days | the deployment: `CIPHERFRAME_ACCESS_LOG_RETENTION_DAYS`, 1 to 3650 |
+
+**The original upload** is kept by default, so you pay to store it beside the delivery copies. If you
+already keep your own copy, set `keep_source` to `false`: assets created afterwards have the original,
+tus's bookkeeping object and any multipart leftovers deleted once the asset is ready (and, for
+`mask_faces`, once the masked variant is no longer pending). The asset shows `source_deleted_at` and the
+audit log `asset.source_deleted`. Existing assets are not touched, and a failed asset keeps its original.
 
 **IP address and user agent** stay off unless a tenant turns them on. Turning one on affects the rows
 written afterwards, turning it off does not erase rows already written, and the retention window bounds

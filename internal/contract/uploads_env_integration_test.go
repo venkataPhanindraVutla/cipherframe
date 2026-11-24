@@ -467,6 +467,9 @@ func (e *upEnv) assertEveryUploadOperationExercised() {
 			if strings.HasSuffix(path, "/rekey") {
 				continue // exercised by TestIntegrityOperationsMatchSpec
 			}
+			if strings.HasSuffix(path, "/reprocess") {
+				continue // exercised by TestReprocessQueuesOneCleanRun
+			}
 			if strings.HasSuffix(path, "/access-log") {
 				continue // exercised by TestAccessLogAndPrivacyOperationsMatchSpec
 			}

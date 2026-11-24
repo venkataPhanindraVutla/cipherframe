@@ -48,6 +48,9 @@ type Repo interface {
 	PinLogo(ctx context.Context, tenant id.TenantID, asset id.AssetID) (db.LogoPin, error)
 	// SetMasking records the masking state (and the face count, when known) of a masking asset.
 	SetMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, state string, faces *int, at time.Time) error
+	// RecordSourceDeleted stamps source_deleted_at and writes the audit event in one transaction; false
+	// means there was nothing to record (H-3).
+	RecordSourceDeleted(ctx context.Context, tenant id.TenantID, asset id.AssetID, at time.Time) (bool, error)
 }
 
 // DBRepo is the Postgres implementation of Repo.
@@ -57,11 +60,19 @@ type DBRepo struct {
 	// anchor, when set, receives a manifest.anchor job in the transaction that stores a manifest
 	// (ADR 0041).
 	anchor anchor.Enqueuer
+	// queue receives asset.drop_source in the transaction that makes an asset due (H-3).
+	queue anchor.Enqueuer
 }
 
 // WithAnchor makes the repository enqueue a manifest.anchor job with every manifest it stores.
 func (r *DBRepo) WithAnchor(q anchor.Enqueuer) *DBRepo {
 	r.anchor = q
+	return r
+}
+
+// WithQueue makes the repository enqueue asset.drop_source for assets created with keep_source off.
+func (r *DBRepo) WithQueue(q anchor.Enqueuer) *DBRepo {
+	r.queue = q
 	return r
 }
 
@@ -92,10 +103,16 @@ func (r *DBRepo) Complete(ctx context.Context, tenant id.TenantID, asset id.Asse
 		}
 		var err error
 		out, err = repos.CompleteProcessing(ctx, tenant, asset, c)
-		if err != nil || c.Manifest == nil {
+		if err != nil {
 			return err
 		}
-		return r.enqueueAnchor(ctx, tx, tenant, asset, c.Manifest.PayloadSHA256)
+		if c.Manifest != nil {
+			if err := r.enqueueAnchor(ctx, tx, tenant, asset, c.Manifest.PayloadSHA256); err != nil {
+				return err
+			}
+		}
+		// Ready now; for a masking asset whose masker already failed this is also when masking settled.
+		return r.enqueueDropSource(ctx, tx, out)
 	})
 	return out, err
 }
@@ -138,8 +155,11 @@ func (r *DBRepo) CompleteMasking(ctx context.Context, tenant id.TenantID, asset 
 		if err := r.enqueueAnchor(ctx, rawTx, tenant, asset, m.PayloadSHA256); err != nil {
 			return err
 		}
-		_, err = tx.SetAssetMasking(ctx, tenant, asset, db.MaskingReady, &faces, at)
-		return err
+		done, err := tx.SetAssetMasking(ctx, tenant, asset, db.MaskingReady, &faces, at)
+		if err != nil {
+			return err
+		}
+		return r.enqueueDropSource(ctx, rawTx, done)
 	})
 }
 
@@ -152,8 +172,14 @@ func (r *DBRepo) enqueueAnchor(ctx context.Context, tx pgx.Tx, tenant id.TenantI
 
 // SetMasking implements Repo.
 func (r *DBRepo) SetMasking(ctx context.Context, tenant id.TenantID, asset id.AssetID, state string, faces *int, at time.Time) error {
-	_, err := r.SetAssetMasking(ctx, tenant, asset, state, faces, at)
-	return err
+	return inTx(ctx, r.pool, func(tx pgx.Tx, repos *db.Repos) error {
+		a, err := repos.SetAssetMasking(ctx, tenant, asset, state, faces, at)
+		if err != nil {
+			return err
+		}
+		// A failed masker settles masking: the asset may already be ready and waiting for it.
+		return r.enqueueDropSource(ctx, tx, a)
+	})
 }
 
 // Tasks is the hand-off table access asset.mask needs (ADR 0010).

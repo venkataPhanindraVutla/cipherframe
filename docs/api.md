@@ -67,7 +67,7 @@ Each surface is its own listener (`CIPHERFRAME_API_LISTEN`, default `:8080`, and
 | `POST /v1/keys/{key_id}/revoke` | yes | no | `admin` |
 | `POST /v1/assets` | yes | no | `assets:write` |
 | `GET /v1/assets`, `GET /v1/assets/{asset_id}`, `GET /v1/assets/{asset_id}/deletion-record` | yes | no | `assets:read` |
-| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `POST /v1/assets/{asset_id}/rekey`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
+| `POST /v1/assets/{asset_id}/commit`, `POST /v1/assets/{asset_id}/abort`, `POST /v1/assets/{asset_id}/rekey`, `POST /v1/assets/{asset_id}/reprocess`, `PATCH /v1/assets/{asset_id}`, `DELETE /v1/assets/{asset_id}` | yes | no | `assets:write` |
 | `GET /v1/assets/{asset_id}/subtitles`, `GET /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:read` |
 | `POST /v1/assets/{asset_id}/subtitles`, `POST /v1/assets/{asset_id}/transcripts`, `DELETE /v1/assets/{asset_id}/subtitles/{subtitle_id}` | yes | no | `assets:write` |
 | `GET /v1/brand/logo`, `PUT /v1/brand/logo`, `PATCH /v1/brand/logo`, `DELETE /v1/brand/logo` | yes | no | `admin` |
@@ -278,6 +278,16 @@ deleting asset takes no new expiry (`409`), a deleted one and another tenant's a
 sweep can be a few minutes late and an expired asset is deleted by the same purge as a requested one,
 so it stays playable until the purge starts. Use `DELETE` to delete now.
 
+**Keeping the original (H-3).** By default the uploaded original stays in the source bucket until the
+asset is deleted. A tenant that keeps its own copy can set `keep_source` to `false` in the privacy
+settings: an asset created from then on has its original deleted once it is `ready` (and, with
+`mask_faces`, once its `masking.state` is `ready` or `failed`, since the masker reads the original).
+The tus `.info` object and any multipart leftovers go with it. The value is fixed on the asset when it
+is created, so changing the setting does not reach assets that already exist. The asset then shows
+`source_deleted_at`, the audit log gets `asset.source_deleted`, and the original's bytes no longer
+count toward the storage quota. Playback is not affected. A `failed` asset keeps its original, and
+deleting an asset whose original is already gone works as usual.
+
 **Delete (M6, ADR 0040, ADR 0042).** `DELETE /v1/assets/{asset_id}` (`assets:write`) starts the
 verified deletion and answers `202` with the asset in state `deleting`. From that moment playback
 (new sessions and key requests), uploads and processing refuse the asset and its active playback
@@ -295,6 +305,28 @@ Verify it with `cipherframe verify --deletion-record` ([integrity.md](integrity.
 call returns `202` again, and queues a new purge only if the earlier job is no longer in the queue
 (this is how a deletion that ran out of retries is restarted). An in-flight processing or masking job
 stops at its next check and removes its own output; it cannot bring the asset back.
+
+**Reprocess (H-4).** `POST /v1/assets/{asset_id}/reprocess` (`assets:write`, no body) runs the processing
+of a `failed` asset again from its stored original, for a failure that was not the file's fault (a
+storage or key-service outage, a worker that ran out of memory). It answers `202` with the asset, now
+`committed`; it then goes through `processing` to `ready` or `failed` as after an upload, and the normal
+`asset.ready` or `asset.failed` webhook is sent when the run ends. The failure code, the progress, the
+`extra_codecs.failed` list and a pending or failed masked variant are cleared, the new run deletes what
+the failed one left in the delivery bucket, and it uses the asset's existing content key (a failure never
+destroys it). The run counts against the transcode minutes again: the failed run's charge is taken back
+and the new run charges the asset in the month it runs in. There is no quota check when you ask; a
+month that is used up makes the new run fail again with `failure_code` `quota_transcode_minutes`. The
+audit log gets `asset.reprocess_requested` with the caller. Two calls at the same time start one run:
+the second is `409 asset_not_failed`.
+
+| Status | Code | When |
+|---|---|---|
+| `409` | `asset_not_failed` | The asset is not `failed` (including one an earlier call already restarted). |
+| `409` | `source_unavailable` | The original is no longer stored: missing from the source bucket, deleted (`source_deleted_at`), or the upload was aborted. Upload the video again. |
+| `409` | `conflict` | The asset is being deleted, or a job of the failed run is still working (try again shortly). |
+| `404` | `not_found` | No such asset, a deleted one, or another tenant's. |
+
+A `failed` asset keeps its original: the `keep_source` setting only deletes it once the asset is `ready`.
 
 **Re-key (M10-4, ADR 0068).** `POST /v1/assets/{asset_id}/rekey` (`assets:write`) queues an audited
 re-encryption of a `ready` asset's segments under a new content key and answers `202` with the job
@@ -950,10 +982,14 @@ no trusted-proxy setting and **never reads `X-Forwarded-For`**, which a client c
 reverse proxy or load balancer `ip` is the proxy's address, and the proxy's own logs are where the
 client address lives.
 
-- `GET /v1/privacy-settings` returns `{store_ip, store_user_agent, asset_ttl_seconds, updated_at}`: the
-  stored settings, or the defaults (both flags `false`, `asset_ttl_seconds` and `updated_at` absent).
+- `GET /v1/privacy-settings` returns `{store_ip, store_user_agent, keep_source, asset_ttl_seconds,
+  updated_at}`: the stored settings, or the defaults (both flags `false`, `keep_source` `true`,
+  `asset_ttl_seconds` and `updated_at` absent).
   `PUT /v1/privacy-settings` replaces them (send both flags: a missing one is `400` with an `errors`
-  entry; `asset_ttl_seconds` is optional and leaving it out clears it). `asset_ttl_seconds` (60 to
+  entry; `asset_ttl_seconds` and `keep_source` are optional and leaving one out sets it to its default,
+  so a client written before `keep_source` existed cannot switch it off by accident). `keep_source`
+  (default `true`) is whether the uploaded original stays in storage after processing (see "Keeping
+  the original" above). `asset_ttl_seconds` (60 to
   315360000) is the tenant's default asset time-to-live (see "Retention" above). Both calls need the
   `admin` scope, and a change is written to the audit log (`privacy_settings.update`). The flags apply
   to rows written afterwards (each process caches the settings for up to 30 seconds, and a row is
@@ -1661,6 +1697,8 @@ server-side only.
 | `conflict` | 409 | no | The request conflicts with the current state of the object. |
 | `payload_too_large` | 413 | no | The request body exceeds the allowed size. |
 | `asset_not_ready` | 409 | no | The operation needs a `ready` asset and this one is not (yet). |
+| `asset_not_failed` | 409 | no | A reprocess was requested for an asset that is not `failed`. |
+| `source_unavailable` | 409 | no | A reprocess was requested but the original upload is no longer stored. |
 | `session_limit` | 409 | no | The viewer already has the tenant's maximum number of active playback sessions. |
 | `quota_exceeded` | 409 | no | The request would pass a tenant or client quota; the `limit` member names it (see [Quotas and usage](#quotas-and-usage-adr-0047)). |
 | `variant_unavailable` | 409 | no | A session or proof asked for the masked variant of an asset created without `mask_faces`. |

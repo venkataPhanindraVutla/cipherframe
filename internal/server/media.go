@@ -84,7 +84,7 @@ func selectEncoder(ctx context.Context, tools media.Tools, cfg *config.Config, l
 // calls it, so api and edge never need FFmpeg or a work directory.
 func registerProcessing(reg *jobs.Registry, pool *pgxpool.Pool, inserter *jobs.Queue, contentKeys *contentkey.Manager, proc *processing, log *slog.Logger) error {
 	cfg := proc.Config
-	repo := pipeline.NewDBRepo(pool)
+	repo := pipeline.NewDBRepo(pool).WithQueue(inserter)
 	if tsa := cfg.TSA; tsa.Enabled() {
 		// Optional RFC 3161 anchoring (ADR 0041): the repository enqueues the job with each manifest.
 		repo.WithAnchor(inserter)

@@ -36,6 +36,11 @@ const (
 	// VariantNotReady is a 409 for a session that asks for the masked variant before it is ready
 	// (pending or failed). It never falls back to the original (ADR 0036).
 	VariantNotReady Code = "variant_not_ready"
+	// AssetNotFailed is a 409 for a reprocess request on an asset that is not failed (H-4).
+	AssetNotFailed Code = "asset_not_failed"
+	// SourceUnavailable is a 409 for a reprocess request whose original upload is gone: deleted by the
+	// keep_source setting, or missing from storage (H-4).
+	SourceUnavailable Code = "source_unavailable"
 	// ArtifactNotFound is a 404 for a proof request whose path is not an artifact of the asset's
 	// signed manifest (ADR 0039).
 	ArtifactNotFound Code = "artifact_not_found"
@@ -70,6 +75,8 @@ var registry = map[Code]Info{
 	QuotaExceeded:         {Status: 409, Title: "Quota exceeded"},
 	VariantUnavailable:    {Status: 409, Title: "Variant unavailable"},
 	VariantNotReady:       {Status: 409, Title: "Variant not ready"},
+	AssetNotFailed:        {Status: 409, Title: "Asset not failed"},
+	SourceUnavailable:     {Status: 409, Title: "Source unavailable"},
 	ArtifactNotFound:      {Status: 404, Title: "Artifact not found"},
 	NotAnchored:           {Status: 404, Title: "Not anchored"},
 	NotDeleted:            {Status: 404, Title: "Asset not deleted"},

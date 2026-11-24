@@ -38,6 +38,7 @@ func assetOut(a db.Asset) gen.Asset {
 		FailedAt:            a.FailedAt,
 		MaskFaces:           a.MaskFaces,
 		ExpiresAt:           a.ExpiresAt,
+		SourceDeletedAt:     a.SourceDeletedAt,
 	}
 	if a.MaskFaces {
 		m := gen.Masking{State: gen.MaskingStatePending, FacesDetected: a.FacesDetected}
@@ -272,6 +273,27 @@ func (s *server) RekeyAsset(ctx context.Context, req gen.RekeyAssetRequestObject
 		Body:    gen.AssetRekey{AssetId: aid.String(), JobId: jobID},
 		Headers: gen.RekeyAsset202ResponseHeaders{XRequestId: requestID(ctx)},
 	}, nil
+}
+
+// ReprocessAsset runs the processing of a failed asset again (H-4).
+func (s *server) ReprocessAsset(ctx context.Context, req gen.ReprocessAssetRequestObject) (gen.ReprocessAssetResponseObject, error) {
+	p, actor, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	svc, err := s.service()
+	if err != nil {
+		return nil, err
+	}
+	aid, err := parseAssetID(req.AssetId)
+	if err != nil {
+		return nil, err
+	}
+	a, err := svc.Reprocess(ctx, p.TenantID, actor, aid)
+	if err != nil {
+		return nil, err
+	}
+	return gen.ReprocessAsset202JSONResponse{Body: assetOut(a), Headers: gen.ReprocessAsset202ResponseHeaders{XRequestId: requestID(ctx)}}, nil
 }
 
 // UpdateAsset sets or clears the asset's time-to-live. The body is read raw so that an explicit

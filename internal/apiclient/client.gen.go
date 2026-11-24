@@ -524,6 +524,7 @@ func (e PlaybackSettingsInputDelivery) Valid() bool {
 // Defines values for ProblemCode.
 const (
 	ProblemCodeArtifactNotFound      ProblemCode = "artifact_not_found"
+	ProblemCodeAssetNotFailed        ProblemCode = "asset_not_failed"
 	ProblemCodeAssetNotReady         ProblemCode = "asset_not_ready"
 	ProblemCodeConflict              ProblemCode = "conflict"
 	ProblemCodeDependencyUnavailable ProblemCode = "dependency_unavailable"
@@ -538,6 +539,7 @@ const (
 	ProblemCodeQuotaExceeded         ProblemCode = "quota_exceeded"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
 	ProblemCodeSessionLimit          ProblemCode = "session_limit"
+	ProblemCodeSourceUnavailable     ProblemCode = "source_unavailable"
 	ProblemCodeTimeout               ProblemCode = "timeout"
 	ProblemCodeUnauthenticated       ProblemCode = "unauthenticated"
 	ProblemCodeVariantNotReady       ProblemCode = "variant_not_ready"
@@ -548,6 +550,8 @@ const (
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case ProblemCodeArtifactNotFound:
+		return true
+	case ProblemCodeAssetNotFailed:
 		return true
 	case ProblemCodeAssetNotReady:
 		return true
@@ -576,6 +580,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeRateLimited:
 		return true
 	case ProblemCodeSessionLimit:
+		return true
+	case ProblemCodeSourceUnavailable:
 		return true
 	case ProblemCodeTimeout:
 		return true
@@ -1099,6 +1105,10 @@ type Asset struct {
 	ProcessingStartedAt *time.Time `json:"processing_started_at,omitempty"`
 	ReadyAt             *time.Time `json:"ready_at,omitempty"`
 	SizeBytes           int64      `json:"size_bytes"`
+
+	// SourceDeletedAt When the uploaded original was deleted because the tenant's `keep_source` setting was
+	// `false` when the asset was created. Absent while the original is kept.
+	SourceDeletedAt *time.Time `json:"source_deleted_at,omitempty"`
 
 	// State The asset lifecycle: `created`, `uploading`, `committed`, `processing`, `ready` or `failed`,
 	// then `deleting` while the purge runs and `deleted` for the tombstone that stays afterwards.
@@ -1957,6 +1967,13 @@ type PrivacySettings struct {
 	// the expiry they were created with.
 	AssetTtlSeconds *int `json:"asset_ttl_seconds,omitempty"`
 
+	// KeepSource Keep the uploaded original in the source bucket after the asset is `ready` (and, with
+	// `mask_faces`, after the masked variant is no longer pending). Default `true`. With `false`
+	// the original, its tus bookkeeping object and any multipart leftovers are deleted then, the
+	// asset gets `source_deleted_at`. The value is fixed on an asset when it is created: a later
+	// change does not reach assets that already exist.
+	KeepSource bool `json:"keep_source"`
+
 	// StoreIp Keep the connecting peer's IP address in the access trail. Default `false`.
 	StoreIp bool `json:"store_ip"`
 
@@ -1971,9 +1988,12 @@ type PrivacySettings struct {
 // can be told apart from `false`: it is `invalid_request` with an `errors` entry naming it.
 type PrivacySettingsInput struct {
 	// AssetTtlSeconds The default time-to-live for new assets; leave it out for none. A replacement like the rest.
-	AssetTtlSeconds *int  `json:"asset_ttl_seconds,omitempty"`
-	StoreIp         *bool `json:"store_ip,omitempty"`
-	StoreUserAgent  *bool `json:"store_user_agent,omitempty"`
+	AssetTtlSeconds *int `json:"asset_ttl_seconds,omitempty"`
+
+	// KeepSource Leave it out for the default, `true`, like every optional field of this replacement.
+	KeepSource     *bool `json:"keep_source,omitempty"`
+	StoreIp        *bool `json:"store_ip,omitempty"`
+	StoreUserAgent *bool `json:"store_user_agent,omitempty"`
 }
 
 // Problem RFC 9457 problem details with Cipherframe extensions (ADR 0012).
@@ -3303,6 +3323,31 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/assets/{asset_id}/rekey (the `RekeyAsset` operationId).
 	RekeyAsset(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReprocessAsset Process a failed asset again
+	//
+	// Runs the processing of a `failed` asset again from its stored original (H-4), for a failure
+	// that was not the file's fault: a storage or key-service outage, a worker that ran out of
+	// memory. The asset goes back to `committed` and then through `processing` to `ready` or
+	// `failed` as after an upload; what the failed run left (partial output, the failure code,
+	// `extra_codecs.failed`, a pending or failed masked variant) is cleared, the same content key is
+	// used again, and the normal `asset.ready` or `asset.failed` webhook is sent when the run ends.
+	// The run counts against the tenant's and the client's monthly transcode minutes again (the
+	// failed run's charge is taken back); there is no check when you ask, so a month that is used up
+	// makes the new run fail again with `failure_code` `quota_transcode_minutes`. The audit log gets
+	// `asset.reprocess_requested`.
+	//
+	// The response is `202` with the asset in state `committed`. An asset that is not `failed` is
+	// `409 asset_not_failed` (also while an earlier call already started the run: of two concurrent
+	// calls exactly one starts it). An asset whose original is no longer stored, because it is
+	// missing from the source bucket, was deleted (`source_deleted_at`) or the upload was aborted,
+	// is `409 source_unavailable`; upload it again. (A failed asset normally still has its
+	// original: the `keep_source` setting deletes it only once the asset is `ready`.) `409 conflict` while the asset is
+	// being deleted or a job of the failed run is still running. A deleted asset, and another
+	// tenant's, are `404 not_found`. Requires the `assets:write` scope.
+	//
+	// Corresponds with POST /v1/assets/{asset_id}/reprocess (the `ReprocessAsset` operationId).
+	ReprocessAsset(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListAssetSubtitles List an asset's subtitle tracks
 	//
 	// Returns every track of the asset, oldest first (at most 20, so there is no paging). An
@@ -3971,7 +4016,9 @@ type ClientInterface interface {
 	// UpdatePrivacySettingsWithBody Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -3984,7 +4031,9 @@ type ClientInterface interface {
 	// UpdatePrivacySettings Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -4678,6 +4727,41 @@ func (c *HTTPClient) GetAssetProof(ctx context.Context, assetId AssetId, params 
 // Corresponds with POST /v1/assets/{asset_id}/rekey (the `RekeyAsset` operationId).
 func (c *HTTPClient) RekeyAsset(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRekeyAssetRequest(c.Server, assetId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReprocessAsset Process a failed asset again
+//
+// Runs the processing of a `failed` asset again from its stored original (H-4), for a failure
+// that was not the file's fault: a storage or key-service outage, a worker that ran out of
+// memory. The asset goes back to `committed` and then through `processing` to `ready` or
+// `failed` as after an upload; what the failed run left (partial output, the failure code,
+// `extra_codecs.failed`, a pending or failed masked variant) is cleared, the same content key is
+// used again, and the normal `asset.ready` or `asset.failed` webhook is sent when the run ends.
+// The run counts against the tenant's and the client's monthly transcode minutes again (the
+// failed run's charge is taken back); there is no check when you ask, so a month that is used up
+// makes the new run fail again with `failure_code` `quota_transcode_minutes`. The audit log gets
+// `asset.reprocess_requested`.
+//
+// The response is `202` with the asset in state `committed`. An asset that is not `failed` is
+// `409 asset_not_failed` (also while an earlier call already started the run: of two concurrent
+// calls exactly one starts it). An asset whose original is no longer stored, because it is
+// missing from the source bucket, was deleted (`source_deleted_at`) or the upload was aborted,
+// is `409 source_unavailable`; upload it again. (A failed asset normally still has its
+// original: the `keep_source` setting deletes it only once the asset is `ready`.) `409 conflict` while the asset is
+// being deleted or a job of the failed run is still running. A deleted asset, and another
+// tenant's, are `404 not_found`. Requires the `assets:write` scope.
+//
+// Corresponds with POST /v1/assets/{asset_id}/reprocess (the `ReprocessAsset` operationId).
+func (c *HTTPClient) ReprocessAsset(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReprocessAssetRequest(c.Server, assetId)
 	if err != nil {
 		return nil, err
 	}
@@ -5836,7 +5920,9 @@ func (c *HTTPClient) GetPrivacySettings(ctx context.Context, reqEditors ...Reque
 // UpdatePrivacySettingsWithBody Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.
@@ -5859,7 +5945,9 @@ func (c *HTTPClient) UpdatePrivacySettingsWithBody(ctx context.Context, contentT
 // UpdatePrivacySettings Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.
@@ -7034,6 +7122,40 @@ func NewRekeyAssetRequest(server string, assetId AssetId) (*http.Request, error)
 	}
 
 	operationPath := fmt.Sprintf("/v1/assets/%s/rekey", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReprocessAssetRequest constructs an http.Request for the ReprocessAsset method
+func NewReprocessAssetRequest(server string, assetId AssetId) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "asset_id", assetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/assets/%s/reprocess", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9648,6 +9770,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/assets/{asset_id}/rekey (the `RekeyAsset` operationId).
 	RekeyAssetWithResponse(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*RekeyAssetResponse, error)
 
+	// ReprocessAssetWithResponse Process a failed asset again
+	//
+	// Runs the processing of a `failed` asset again from its stored original (H-4), for a failure
+	// that was not the file's fault: a storage or key-service outage, a worker that ran out of
+	// memory. The asset goes back to `committed` and then through `processing` to `ready` or
+	// `failed` as after an upload; what the failed run left (partial output, the failure code,
+	// `extra_codecs.failed`, a pending or failed masked variant) is cleared, the same content key is
+	// used again, and the normal `asset.ready` or `asset.failed` webhook is sent when the run ends.
+	// The run counts against the tenant's and the client's monthly transcode minutes again (the
+	// failed run's charge is taken back); there is no check when you ask, so a month that is used up
+	// makes the new run fail again with `failure_code` `quota_transcode_minutes`. The audit log gets
+	// `asset.reprocess_requested`.
+	//
+	// The response is `202` with the asset in state `committed`. An asset that is not `failed` is
+	// `409 asset_not_failed` (also while an earlier call already started the run: of two concurrent
+	// calls exactly one starts it). An asset whose original is no longer stored, because it is
+	// missing from the source bucket, was deleted (`source_deleted_at`) or the upload was aborted,
+	// is `409 source_unavailable`; upload it again. (A failed asset normally still has its
+	// original: the `keep_source` setting deletes it only once the asset is `ready`.) `409 conflict` while the asset is
+	// being deleted or a job of the failed run is still running. A deleted asset, and another
+	// tenant's, are `404 not_found`. Requires the `assets:write` scope.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/assets/{asset_id}/reprocess (the `ReprocessAsset` operationId).
+	ReprocessAssetWithResponse(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*ReprocessAssetResponse, error)
+
 	// ListAssetSubtitlesWithResponse List an asset's subtitle tracks
 	//
 	// Returns every track of the asset, oldest first (at most 20, so there is no paging). An
@@ -10356,7 +10505,9 @@ type ClientWithResponsesInterface interface {
 	// UpdatePrivacySettingsWithBodyWithResponse Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -10369,7 +10520,9 @@ type ClientWithResponsesInterface interface {
 	// UpdatePrivacySettingsWithResponse Replace the privacy settings
 	//
 	// Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-	// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+	// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+	// `keep_source` are optional and a missing one goes back to its default, so a client written
+	// before `keep_source` existed cannot switch it off by accident). The change is recorded
 	// in the audit log and applies to access-trail rows written afterwards (each edge replica
 	// caches the settings for up to 30 seconds). Rows already written are not rewritten.
 	// Requires the `admin` scope.
@@ -12431,6 +12584,139 @@ func (r RekeyAssetResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RekeyAssetResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReprocessAssetResponse202Headers the declared response headers of an HTTP 202 response for ReprocessAsset
+type ReprocessAssetResponse202Headers struct {
+	XRequestId string
+}
+
+// ReprocessAssetResponse401Headers the declared response headers of an HTTP 401 response for ReprocessAsset
+type ReprocessAssetResponse401Headers struct {
+	WWWAuthenticate string
+	XRequestId      string
+}
+
+// ReprocessAssetResponse403Headers the declared response headers of an HTTP 403 response for ReprocessAsset
+type ReprocessAssetResponse403Headers struct {
+	XRequestId string
+}
+
+// ReprocessAssetResponse404Headers the declared response headers of an HTTP 404 response for ReprocessAsset
+type ReprocessAssetResponse404Headers struct {
+	XRequestId string
+}
+
+// ReprocessAssetResponse409Headers the declared response headers of an HTTP 409 response for ReprocessAsset
+type ReprocessAssetResponse409Headers struct {
+	XRequestId string
+}
+
+// ReprocessAssetResponse503Headers the declared response headers of an HTTP 503 response for ReprocessAsset
+type ReprocessAssetResponse503Headers struct {
+	XRequestId string
+}
+
+// ReprocessAssetResponseDefaultHeaders the declared response headers of an HTTP default response for ReprocessAsset
+type ReprocessAssetResponseDefaultHeaders struct {
+	XRequestId string
+}
+
+type ReprocessAssetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *Asset
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthenticated
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *ReprocessAssetResponse202Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ReprocessAssetResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ReprocessAssetResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ReprocessAssetResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ReprocessAssetResponse409Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ReprocessAssetResponse503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ReprocessAssetResponseDefaultHeaders
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ReprocessAssetResponse) GetJSON202() *Asset {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReprocessAssetResponse) GetApplicationproblemJSON401() *Unauthenticated {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ReprocessAssetResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReprocessAssetResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ReprocessAssetResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ReprocessAssetResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReprocessAssetResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReprocessAssetResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReprocessAssetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReprocessAssetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReprocessAssetResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -18959,6 +19245,39 @@ func (c *ClientWithResponses) RekeyAssetWithResponse(ctx context.Context, assetI
 	return ParseRekeyAssetResponse(rsp)
 }
 
+// ReprocessAssetWithResponse Process a failed asset again
+//
+// Runs the processing of a `failed` asset again from its stored original (H-4), for a failure
+// that was not the file's fault: a storage or key-service outage, a worker that ran out of
+// memory. The asset goes back to `committed` and then through `processing` to `ready` or
+// `failed` as after an upload; what the failed run left (partial output, the failure code,
+// `extra_codecs.failed`, a pending or failed masked variant) is cleared, the same content key is
+// used again, and the normal `asset.ready` or `asset.failed` webhook is sent when the run ends.
+// The run counts against the tenant's and the client's monthly transcode minutes again (the
+// failed run's charge is taken back); there is no check when you ask, so a month that is used up
+// makes the new run fail again with `failure_code` `quota_transcode_minutes`. The audit log gets
+// `asset.reprocess_requested`.
+//
+// The response is `202` with the asset in state `committed`. An asset that is not `failed` is
+// `409 asset_not_failed` (also while an earlier call already started the run: of two concurrent
+// calls exactly one starts it). An asset whose original is no longer stored, because it is
+// missing from the source bucket, was deleted (`source_deleted_at`) or the upload was aborted,
+// is `409 source_unavailable`; upload it again. (A failed asset normally still has its
+// original: the `keep_source` setting deletes it only once the asset is `ready`.) `409 conflict` while the asset is
+// being deleted or a job of the failed run is still running. A deleted asset, and another
+// tenant's, are `404 not_found`. Requires the `assets:write` scope.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/assets/{asset_id}/reprocess (the `ReprocessAsset` operationId).
+func (c *ClientWithResponses) ReprocessAssetWithResponse(ctx context.Context, assetId AssetId, reqEditors ...RequestEditorFn) (*ReprocessAssetResponse, error) {
+	rsp, err := c.ReprocessAsset(ctx, assetId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReprocessAssetResponse(rsp)
+}
+
 // ListAssetSubtitlesWithResponse List an asset's subtitle tracks
 //
 // Returns every track of the asset, oldest first (at most 20, so there is no paging). An
@@ -19955,7 +20274,9 @@ func (c *ClientWithResponses) GetPrivacySettingsWithResponse(ctx context.Context
 // UpdatePrivacySettingsWithBodyWithResponse Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.
@@ -19974,7 +20295,9 @@ func (c *ClientWithResponses) UpdatePrivacySettingsWithBodyWithResponse(ctx cont
 // UpdatePrivacySettingsWithResponse Replace the privacy settings
 //
 // Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-// missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+// missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+// `keep_source` are optional and a missing one goes back to its default, so a client written
+// before `keep_source` existed cannot switch it off by accident). The change is recorded
 // in the audit log and applies to access-trail rows written afterwards (each edge replica
 // caches the settings for up to 30 seconds). Rows already written are not rewritten.
 // Requires the `admin` scope.
@@ -22334,6 +22657,154 @@ func ParseRekeyAssetResponse(rsp *http.Response) (*RekeyAssetResponse, error) {
 		response.Headers503 = &headers
 	case true:
 		var headers RekeyAssetResponseDefaultHeaders
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReprocessAssetResponse parses an HTTP response from a ReprocessAssetWithResponse call
+func ParseReprocessAssetResponse(rsp *http.Response) (*ReprocessAssetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReprocessAssetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Asset
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers ReprocessAssetResponse202Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 401:
+		var headers ReprocessAssetResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = value
+		}
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ReprocessAssetResponse403Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ReprocessAssetResponse404Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers ReprocessAssetResponse409Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 503:
+		var headers ReprocessAssetResponse503Headers
+		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XRequestId = value
+		}
+		response.Headers503 = &headers
+	case true:
+		var headers ReprocessAssetResponseDefaultHeaders
 		if values := rsp.Header.Values("X-Request-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

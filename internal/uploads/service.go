@@ -162,12 +162,16 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 	if err := CheckContentType(in.ContentType); err != nil {
 		return Created{}, err
 	}
-	expiry, err := s.expiryFor(ctx, in)
+	privacy, err := s.repos.GetPrivacySettings(ctx, in.TenantID)
 	if err != nil {
 		return Created{}, err
 	}
-	// The tenant's extra_codecs setting is fixed on the asset now (ADR 0064): a later change of the
-	// setting does not reach an asset that is already uploaded.
+	expiry, err := s.expiryFor(in, privacy)
+	if err != nil {
+		return Created{}, err
+	}
+	// The tenant's extra_codecs and keep_source settings are fixed on the asset now (ADR 0064, H-3): a
+	// later change of a setting does not reach an asset that is already uploaded.
 	playback, err := s.repos.GetPlaybackSettings(ctx, in.TenantID)
 	if err != nil {
 		return Created{}, err
@@ -199,6 +203,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 			ID: assetID, TenantID: in.TenantID, ClientID: in.Actor.ClientID, SizeBytes: in.SizeBytes,
 			ContentType: in.ContentType, Method: in.Method, SourceKey: key, S3UploadID: uploadID, ExpiresAt: expires,
 			MaskFaces: in.MaskFaces, AssetExpiresAt: expiry, ExtraCodecs: playback.ExtraCodecs,
+			DropSource: privacy.DropSource,
 		})
 		if err != nil {
 			return err
@@ -219,15 +224,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 
 // expiryFor works out when the new asset expires: the request's expires_at or ttl_seconds, else
 // the tenant's default time-to-live, else never.
-func (s *Service) expiryFor(ctx context.Context, in CreateInput) (*time.Time, error) {
+func (s *Service) expiryFor(in CreateInput, set db.PrivacySettings) (*time.Time, error) {
 	now := s.now().UTC()
 	exp, err := retention.ResolveExpiry(now, in.ExpiresAt, in.TTLSeconds)
 	if err != nil || exp != nil {
 		return exp, err
 	}
-	set, err := s.repos.GetPrivacySettings(ctx, in.TenantID)
-	if err != nil || set.AssetTTLSeconds == nil {
-		return nil, err
+	if set.AssetTTLSeconds == nil {
+		return nil, nil
 	}
 	t := now.Add(time.Duration(*set.AssetTTLSeconds) * time.Second).Truncate(time.Microsecond)
 	return &t, nil

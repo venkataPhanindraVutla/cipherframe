@@ -22,6 +22,7 @@ Usage:
   cipherframe status ASSET_ID | inspect ASSET_ID | list [--limit N] [--cursor C]
   cipherframe process ASSET_ID [--wait]
   cipherframe delete ASSET_ID [--wait] | deletion-record ASSET_ID | rekey ASSET_ID
+  cipherframe reprocess ASSET_ID [--wait]
   cipherframe session create ASSET [--viewer ID] [--variant V] [--show-token] | show ID | revoke ID|--viewer V|--asset A
   cipherframe verify-file ASSET FILE [--path P] [--variant V] | proof ASSET PATH [--variant V]
   cipherframe subtitles import ASSET FILE --language L [--label T] [--default] | list ASSET | delete ASSET ID

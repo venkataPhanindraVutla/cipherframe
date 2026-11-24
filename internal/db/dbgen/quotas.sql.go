@@ -42,6 +42,22 @@ func (q *Queries) CountTenantActiveSessions(ctx context.Context, arg CountTenant
 	return count, err
 }
 
+const deleteTranscodeCharge = `-- name: DeleteTranscodeCharge :exec
+DELETE FROM transcode_charges WHERE asset_id = $1::uuid AND tenant_id = $2::uuid
+`
+
+type DeleteTranscodeChargeParams struct {
+	AssetID  pgtype.UUID
+	TenantID pgtype.UUID
+}
+
+// A reprocess (H-4) takes back the failed run's charge so the new run charges the asset again, in the
+// month it runs in, and is refused if the limit is used up by then.
+func (q *Queries) DeleteTranscodeCharge(ctx context.Context, arg DeleteTranscodeChargeParams) error {
+	_, err := q.db.Exec(ctx, deleteTranscodeCharge, arg.AssetID, arg.TenantID)
+	return err
+}
+
 const getClientQuotas = `-- name: GetClientQuotas :one
 SELECT client_id, tenant_id, storage_bytes, transcode_minutes_per_month, concurrent_sessions, requests_per_minute, updated_at FROM client_quotas WHERE tenant_id = $1 AND client_id = $2
 `
@@ -126,7 +142,8 @@ func (q *Queries) LockQuota(ctx context.Context, lockKey string) error {
 
 const storageUsage = `-- name: StorageUsage :one
 WITH counted AS (
-    SELECT a.id, a.size_bytes FROM assets a
+    -- An original that asset.drop_source removed no longer occupies the source bucket.
+    SELECT a.id, CASE WHEN a.source_deleted_at IS NULL THEN a.size_bytes ELSE 0 END AS size_bytes FROM assets a
     WHERE a.tenant_id = $1::uuid
       AND a.state <> 'deleted'
       AND NOT (a.state = 'failed' AND a.failure_code = 'upload_aborted')
@@ -152,7 +169,8 @@ type StorageUsageRow struct {
 
 // Source plus delivery bytes of the tenant's assets from the registries: the declared (and, after
 // commit, verified) source size in assets.size_bytes and every delivery object in asset_artifacts.
-// A deleted asset (its purge finished) and an aborted upload (its source was removed) do not count.
+// A deleted asset (its purge finished), an aborted upload and a dropped original (its source was
+// removed) do not count.
 // client_id narrows to the assets one client created; exclude_asset leaves one asset out (the commit
 // check adds its actual size back).
 func (q *Queries) StorageUsage(ctx context.Context, arg StorageUsageParams) (StorageUsageRow, error) {
