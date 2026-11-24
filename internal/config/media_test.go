@@ -19,7 +19,7 @@ func TestMediaDefaults(t *testing.T) {
 	m := c.Media
 	if m.FFmpegPath != "ffmpeg" || m.FFprobePath != "ffprobe" || m.MaxSourceDuration != 4*time.Hour ||
 		m.MaxSourceWidth != 3840 || m.MaxSourceHeight != 2160 || m.TranscodeTimeout != 6*time.Hour || m.Concurrency != 1 || m.MaskTimeout != 2*time.Hour ||
-		m.MaskConcurrency != 1 || m.LadderHeights != nil || m.X264Preset != "medium" ||
+		m.MaskConcurrency != 1 || m.LadderHeights != nil || m.X264Preset != "medium" || m.CRF != media.DefaultCRFs() ||
 		m.Encoder != media.EncoderSoftware || m.HWDevice != media.DefaultHWDevice {
 		t.Fatalf("unexpected media defaults: %+v", m)
 	}
@@ -34,6 +34,7 @@ func TestMediaOverrides(t *testing.T) {
 		EnvMaxSourceDuration, "90m", EnvMaxSourceWidth, "1920", EnvMaxSourceHeight, "1080",
 		EnvTranscodeTimeout, "2h30m", EnvWorkDir, "/var/lib/cipherframe/work/",
 		EnvMediaConcurrency, "4", EnvMaskTimeout, "45m", EnvMaskConcurrency, "3", EnvLadderHeights, "360, 720", EnvX264Preset, "veryfast",
+		EnvCRF, "0", EnvCRFHEVC, "51", EnvCRFAV1, "63",
 	), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +43,8 @@ func TestMediaOverrides(t *testing.T) {
 	if m.FFmpegPath != "/opt/ff/ffmpeg" || m.FFprobePath != "/opt/ff/ffprobe" || m.MaxSourceDuration != 90*time.Minute ||
 		m.MaxSourceWidth != 1920 || m.MaxSourceHeight != 1080 || m.TranscodeTimeout != 150*time.Minute ||
 		m.WorkDir != "/var/lib/cipherframe/work" || m.Concurrency != 4 || m.MaskTimeout != 45*time.Minute ||
-		m.MaskConcurrency != 3 || !slices.Equal(m.LadderHeights, []int{720, 360}) || m.X264Preset != "veryfast" {
+		m.MaskConcurrency != 3 || !slices.Equal(m.LadderHeights, []int{720, 360}) || m.X264Preset != "veryfast" ||
+		m.CRF != (media.CRFs{H264: 0, HEVC: 51, AV1: 63}) {
 		t.Fatalf("unexpected media config: %+v", m)
 	}
 }
@@ -78,6 +80,13 @@ func TestMediaInvalid(t *testing.T) {
 		{EnvX264Preset, "fastest"},
 		{EnvX264Preset, "Medium"},
 		{EnvX264Preset, "placebo"},
+		{EnvCRF, "52"},
+		{EnvCRF, "-1"},
+		{EnvCRF, "high"},
+		{EnvCRF, "23.5"},
+		{EnvCRFHEVC, "52"},
+		{EnvCRFAV1, "64"},
+		{EnvCRFAV1, "x"},
 		{EnvEncoder, "cuda"},
 		{EnvEncoder, "NVENC"},
 		{EnvHWDevice, "renderD128"},

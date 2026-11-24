@@ -118,8 +118,8 @@ What it comes to:
   source below 720p, for 15 to 60 per cent fewer bits. The tall rungs are the weak spot: 1080p loses 2.6 to 4.2
   points on the easy source and about 5 on the hard one, because the cap (2700 kbps against H.264's 4500)
   binds, and the 720p rung of the hard source loses 2.9 (HEVC) and 5.0 (AV1; SVT-AV1's capped-CRF mode lands
-  well under its cap). If you need parity on very detailed footage, lower the CRF constants in
-  `internal/media/ladder.go` (and raise the caps) and measure again.
+  well under its cap). If you need parity on very detailed footage, lower `CIPHERFRAME_WORKER_CRF_HEVC` or
+  `CIPHERFRAME_WORKER_CRF_AV1` (and raise the caps in `internal/media/ladder.go`) and measure again.
 
 ### How the settings were chosen
 
