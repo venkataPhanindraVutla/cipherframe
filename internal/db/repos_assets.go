@@ -36,6 +36,9 @@ type NewUploadAsset struct {
 	MaskFaces   bool // ADR 0036
 	// ExtraCodecs is the tenant's extra_codecs setting at creation (ADR 0064); nil or empty means H.264 only.
 	ExtraCodecs []string
+	// DropSource is true when the tenant's keep_source setting was off at creation (H-3): the original
+	// is deleted once the asset is ready. The zero value keeps it.
+	DropSource bool
 	// AssetExpiresAt is when the retention job deletes the asset (M6-4); nil means never.
 	AssetExpiresAt *time.Time
 }
@@ -54,6 +57,7 @@ func (r *Repos) CreateUploadAsset(ctx context.Context, in NewUploadAsset) (Asset
 		ID: aid, SizeBytes: in.SizeBytes, ContentType: strPtr(in.ContentType), UploadMethod: string(in.Method),
 		SourceKey: in.SourceKey, S3UploadID: strPtr(in.S3UploadID), UploadExpiresAt: in.ExpiresAt, MaskFaces: in.MaskFaces,
 		ExpiresAt: utcPtr(in.AssetExpiresAt), ClientID: cid, TenantID: tid, ExtraCodecs: append([]string{}, in.ExtraCodecs...),
+		KeepSource: !in.DropSource,
 	})
 	if err != nil {
 		return Asset{}, mapError(err)
@@ -307,4 +311,19 @@ func (r *Repos) ListExpiredAssets(ctx context.Context, now time.Time, limit int)
 		out[i] = assetFromRow(row)
 	}
 	return out, nil
+}
+
+// MarkSourceDeleted records that the original was removed (H-3). It reports whether it recorded
+// anything: false means the asset is not a ready one that drops its source, or it was recorded
+// already. Call it inside the transaction that writes the audit event.
+func (r *Repos) MarkSourceDeleted(ctx context.Context, tenantID id.TenantID, assetID id.AssetID, at time.Time) (bool, error) {
+	tid, aid, err := assetKeys(tenantID, assetID)
+	if err != nil {
+		return false, err
+	}
+	_, err = r.q.MarkAssetSourceDeleted(ctx, dbgen.MarkAssetSourceDeletedParams{At: at, TenantID: tid, ID: aid})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, mapError(err)
 }

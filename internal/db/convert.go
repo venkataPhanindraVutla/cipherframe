@@ -166,6 +166,8 @@ func assetFromRow(r dbgen.Asset) Asset {
 		ExtraCodecFailures:  parseCodecFailures(r.ExtraCodecFailures),
 		MaskingState:        strVal(r.MaskingState),
 		ExpiresAt:           utcPtr(r.ExpiresAt),
+		KeepSource:          r.KeepSource,
+		SourceDeletedAt:     utcPtr(r.SourceDeletedAt),
 		DeletionRequestedAt: utcPtr(r.DeletionRequestedAt),
 		DeletionReason:      strVal(r.DeletionReason),
 		DeletedAt:           utcPtr(r.DeletedAt),

@@ -48,12 +48,12 @@ SELECT id_hash, viewer_id, auth_method FROM playback_sessions WHERE id_hash = AN
 SELECT * FROM privacy_settings WHERE tenant_id = $1;
 
 -- name: UpsertPrivacySettings :one
-INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, asset_ttl_seconds, updated_at)
+INSERT INTO privacy_settings (tenant_id, store_ip, store_user_agent, asset_ttl_seconds, keep_source, updated_at)
 VALUES (sqlc.arg(tenant_id)::uuid, sqlc.arg(store_ip)::boolean, sqlc.arg(store_user_agent)::boolean,
-        sqlc.narg(asset_ttl_seconds)::integer, sqlc.arg(at)::timestamptz)
+        sqlc.narg(asset_ttl_seconds)::integer, sqlc.arg(keep_source)::boolean, sqlc.arg(at)::timestamptz)
 ON CONFLICT (tenant_id) DO UPDATE SET
     store_ip = EXCLUDED.store_ip, store_user_agent = EXCLUDED.store_user_agent,
-    asset_ttl_seconds = EXCLUDED.asset_ttl_seconds, updated_at = EXCLUDED.updated_at
+    asset_ttl_seconds = EXCLUDED.asset_ttl_seconds, keep_source = EXCLUDED.keep_source, updated_at = EXCLUDED.updated_at
 RETURNING *;
 
 -- name: DeleteAccessLogBefore :execrows

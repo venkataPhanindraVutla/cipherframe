@@ -168,6 +168,10 @@ type Asset struct {
 	ExtraCodecFailures []CodecFailure
 	// ExpiresAt is when the retention job deletes the asset (M6-4); nil means never.
 	ExpiresAt *time.Time
+	// KeepSource is the tenant's keep_source setting when the asset was created; SourceDeletedAt is
+	// when asset.drop_source removed the original (H-3), nil while it is kept.
+	KeepSource      bool
+	SourceDeletedAt *time.Time
 	// DeletionRequestedAt and DeletionReason are set from the deleting state on; DeletedAt only on
 	// the tombstone (M6-2).
 	DeletionRequestedAt *time.Time
