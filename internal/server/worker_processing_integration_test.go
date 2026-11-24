@@ -52,7 +52,7 @@ func TestNewWorkerRegistersAssetProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"asset.delete", pipeline.MaskKind, "asset.process", "asset.rekey", jobs.AwaitKind, contentkey.RewrapKind}
+	want := []string{"asset.delete", pipeline.DropSourceKind, pipeline.MaskKind, "asset.process", "asset.rekey", jobs.AwaitKind, contentkey.RewrapKind}
 	if got := w.Kinds(); !slices.Equal(got, want) {
 		t.Fatalf("worker kinds = %v, want %v", got, want)
 	}

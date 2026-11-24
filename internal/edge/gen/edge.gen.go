@@ -87,6 +87,7 @@ func (e PlaybackOverlayDriftAlgorithm) Valid() bool {
 // Defines values for ProblemCode.
 const (
 	ProblemCodeArtifactNotFound      ProblemCode = "artifact_not_found"
+	ProblemCodeAssetNotFailed        ProblemCode = "asset_not_failed"
 	ProblemCodeAssetNotReady         ProblemCode = "asset_not_ready"
 	ProblemCodeConflict              ProblemCode = "conflict"
 	ProblemCodeDependencyUnavailable ProblemCode = "dependency_unavailable"
@@ -101,6 +102,7 @@ const (
 	ProblemCodeQuotaExceeded         ProblemCode = "quota_exceeded"
 	ProblemCodeRateLimited           ProblemCode = "rate_limited"
 	ProblemCodeSessionLimit          ProblemCode = "session_limit"
+	ProblemCodeSourceUnavailable     ProblemCode = "source_unavailable"
 	ProblemCodeTimeout               ProblemCode = "timeout"
 	ProblemCodeUnauthenticated       ProblemCode = "unauthenticated"
 	ProblemCodeVariantNotReady       ProblemCode = "variant_not_ready"
@@ -111,6 +113,8 @@ const (
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case ProblemCodeArtifactNotFound:
+		return true
+	case ProblemCodeAssetNotFailed:
 		return true
 	case ProblemCodeAssetNotReady:
 		return true
@@ -139,6 +143,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeRateLimited:
 		return true
 	case ProblemCodeSessionLimit:
+		return true
+	case ProblemCodeSourceUnavailable:
 		return true
 	case ProblemCodeTimeout:
 		return true

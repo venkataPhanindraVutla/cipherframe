@@ -583,6 +583,57 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/assets/{asset_id}/reprocess:
+    post:
+      operationId: reprocessAsset
+      summary: Process a failed asset again
+      description: |
+        Runs the processing of a `failed` asset again from its stored original (H-4), for a failure
+        that was not the file's fault: a storage or key-service outage, a worker that ran out of
+        memory. The asset goes back to `committed` and then through `processing` to `ready` or
+        `failed` as after an upload; what the failed run left (partial output, the failure code,
+        `extra_codecs.failed`, a pending or failed masked variant) is cleared, the same content key is
+        used again, and the normal `asset.ready` or `asset.failed` webhook is sent when the run ends.
+        The run counts against the tenant's and the client's monthly transcode minutes again (the
+        failed run's charge is taken back); there is no check when you ask, so a month that is used up
+        makes the new run fail again with `failure_code` `quota_transcode_minutes`. The audit log gets
+        `asset.reprocess_requested`.
+
+        The response is `202` with the asset in state `committed`. An asset that is not `failed` is
+        `409 asset_not_failed` (also while an earlier call already started the run: of two concurrent
+        calls exactly one starts it). An asset whose original is no longer stored, because it is
+        missing from the source bucket, was deleted (`source_deleted_at`) or the upload was aborted,
+        is `409 source_unavailable`; upload it again. (A failed asset normally still has its
+        original: the `keep_source` setting deletes it only once the asset is `ready`.) `409 conflict` while the asset is
+        being deleted or a job of the failed run is still running. A deleted asset, and another
+        tenant's, are `404 not_found`. Requires the `assets:write` scope.
+      tags: [api]
+      security:
+        - bearerAuth: [assets:write]
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "202":
+          description: The run is queued.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/assets/{asset_id}/abort:
     post:
       operationId: abortAsset
@@ -1604,7 +1655,9 @@ paths:
       summary: Replace the privacy settings
       description: |
         Replaces every privacy setting of the tenant (a full replacement: send all fields; a
-        missing one is `invalid_request` with an `errors` entry naming it). The change is recorded
+        missing one is `invalid_request` with an `errors` entry naming it; `asset_ttl_seconds` and
+        `keep_source` are optional and a missing one goes back to its default, so a client written
+        before `keep_source` existed cannot switch it off by accident). The change is recorded
         in the audit log and applies to access-trail rows written afterwards (each edge replica
         caches the settings for up to 30 seconds). Rows already written are not rewritten.
         Requires the `admin` scope.
@@ -4565,6 +4618,12 @@ components:
           description: |
             When the retention job deletes the asset. Absent when the asset is kept until deleted
             (the default). Set at creation or with `PATCH /v1/assets/{asset_id}`.
+        source_deleted_at:
+          type: string
+          format: date-time
+          description: |
+            When the uploaded original was deleted because the tenant's `keep_source` setting was
+            `false` when the asset was created. Absent while the original is kept.
         deletion:
           allOf:
             - $ref: "#/components/schemas/Deletion"
@@ -5150,7 +5209,7 @@ components:
         A tenant's effective privacy settings (ADR 0040).
       type: object
       additionalProperties: false
-      required: [store_ip, store_user_agent]
+      required: [store_ip, store_user_agent, keep_source]
       properties:
         store_ip:
           type: boolean
@@ -5168,6 +5227,14 @@ components:
             seconds after creation unless the request for the asset says otherwise (M6-4, ADR 0040).
             Absent (the default) means assets are kept until deleted. Assets that already exist keep
             the expiry they were created with.
+        keep_source:
+          type: boolean
+          description: |
+            Keep the uploaded original in the source bucket after the asset is `ready` (and, with
+            `mask_faces`, after the masked variant is no longer pending). Default `true`. With `false`
+            the original, its tus bookkeeping object and any multipart leftovers are deleted then, the
+            asset gets `source_deleted_at`. The value is fixed on an asset when it is created: a later
+            change does not reach assets that already exist.
         updated_at:
           type: string
           format: date-time
@@ -5188,6 +5255,9 @@ components:
           minimum: 60
           maximum: 315360000
           description: The default time-to-live for new assets; leave it out for none. A replacement like the rest.
+        keep_source:
+          type: boolean
+          description: Leave it out for the default, `true`, like every optional field of this replacement.
     SessionId:
       type: string
       pattern: "^ses_[0-9a-hjkmnp-tv-z]{52}$"
@@ -5812,6 +5882,7 @@ components:
           description: Stable identifier to switch on. The closed registry in `internal/errs`.
           enum:
             - artifact_not_found
+            - asset_not_failed
             - asset_not_ready
             - conflict
             - dependency_unavailable
@@ -5826,6 +5897,7 @@ components:
             - quota_exceeded
             - rate_limited
             - session_limit
+            - source_unavailable
             - timeout
             - unauthenticated
             - variant_not_ready

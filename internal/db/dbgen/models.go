@@ -61,6 +61,8 @@ type Asset struct {
 	KeyGeneration       int32
 	ExtraCodecs         []string
 	ExtraCodecFailures  []byte
+	KeepSource          bool
+	SourceDeletedAt     *time.Time
 }
 
 type AssetArtifact struct {
@@ -306,6 +308,7 @@ type PrivacySetting struct {
 	StoreUserAgent  bool
 	UpdatedAt       time.Time
 	AssetTtlSeconds *int32
+	KeepSource      bool
 }
 
 type SigningKey struct {
