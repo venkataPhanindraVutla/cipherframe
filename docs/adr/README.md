@@ -73,6 +73,7 @@ Process: [0001](0001-record-architecture-decisions.md). New records start from [
 | [0066](0066-hardware-encoder-implementation.md) | Hardware encoder implementation: one argument mapping, whole-transcode software retry, probe through rawvideo, a separate dynamically linked `worker-hw` image, VideoToolbox `-q:v` | none (M10-2) | Accepted (flagged for owner review) | 2026-11-23 |
 | [0067](0067-hevc-av1-implementation.md) | HEVC and AV1 implementation: setting and per-asset snapshot, worker capability table, one FFmpeg run per codec, `_hevc` and `_av1` rendition names, recorded failure reasons, measured quality settings | none (M10-3) | Accepted (flagged for owner review) | 2026-11-23 |
 | [0068](0068-content-key-rekey.md) | Content-key re-key: per-asset job over every variant, generation directories `k<n>/`, sessions bound to a key generation, audit events, flat `rekey` command | none (M10-4) | Accepted (flagged for owner review) | 2026-11-23 |
+| [0069](0069-v1-hardening-decisions.md) | v1 hardening: per-tenant `keep_source`, reprocess of failed assets, HDR tone-mapping, CRF variables | none (owner decisions) | Accepted | 2026-11-24 |
 
 ## Open gates
 
