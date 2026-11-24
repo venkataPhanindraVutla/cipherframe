@@ -62,6 +62,10 @@ type VideoStream struct {
 	// FrameRate is frames per second, 0 when unknown.
 	FrameRate   float64
 	PixelFormat string
+	// ColorTransfer, ColorPrimaries and ColorSpace are FFprobe's color_transfer, color_primaries and
+	// color_space ("smpte2084", "bt2020", "bt2020nc"); empty or "unknown" when the file does not say.
+	// HDR and WideGamut classify them (color.go).
+	ColorTransfer, ColorPrimaries, ColorSpace string
 	// Duration is the stream's own duration, zero when FFprobe could not tell.
 	Duration time.Duration
 }
@@ -134,6 +138,9 @@ type probeStream struct {
 	Height            int    `json:"height"`
 	SampleAspectRatio string `json:"sample_aspect_ratio"`
 	PixFmt            string `json:"pix_fmt"`
+	ColorTransfer     string `json:"color_transfer"`
+	ColorPrimaries    string `json:"color_primaries"`
+	ColorSpace        string `json:"color_space"`
 	AvgFrameRate      string `json:"avg_frame_rate"`
 	RFrameRate        string `json:"r_frame_rate"`
 	Duration          string `json:"duration"`
@@ -197,8 +204,10 @@ func videoStream(s *probeStream) (*VideoStream, error) {
 		Width:       s.Width,
 		Height:      s.Height,
 		PixelFormat: s.PixFmt,
-		FrameRate:   parseRate(s.AvgFrameRate),
-		Duration:    parseDuration(s.Duration),
+
+		ColorTransfer: s.ColorTransfer, ColorPrimaries: s.ColorPrimaries, ColorSpace: s.ColorSpace,
+		FrameRate: parseRate(s.AvgFrameRate),
+		Duration:  parseDuration(s.Duration),
 	}
 	if v.FrameRate == 0 {
 		v.FrameRate = parseRate(s.RFrameRate)

@@ -64,6 +64,7 @@ var capabilities = []listing{
 	{flag: "-filters", kind: "filter", need: []requirement{
 		one("scale"), one("format"), one("aresample"), one("null"), one("anull"), one("setsar"), one("fps"), one("split"),
 		one("trim"), one("setpts"), one("tile"), one("overlay"), one("colorchannelmixer"),
+		one("zscale"), one("tonemap"), // HDR and wide-gamut sources to BT.709 SDR (color.go)
 	}},
 }
 

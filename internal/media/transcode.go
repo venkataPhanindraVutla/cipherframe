@@ -129,7 +129,7 @@ func (s TranscodeSpec) RenditionDir(r Rendition) string { return filepath.Join(s
 // source once and fans the frames out through a split filter into one scaled branch per rendition.
 //
 //	-i file:SRC
-//	-filter_complex [v]fps=R,split=N[s0]..[sN];[s0]scale=WxH,setsar=1,format=yuv420p[v0];...
+//	-filter_complex [v]fps=R[,HDR to SDR],split=N[s0]..[sN];[s0]scale=WxH,setsar=1,format=yuv420p[v0];...
 //	per rendition:  -map [vI] -map 0:A  libx264 High, capped CRF, maxrate/bufsize, keyframes
 //	                every 2 s at the same timestamps (forced, no scene cuts, closed GOP),
 //	                AAC 96 kbps stereo, and an HLS fMP4 muxer with 6 s segments
@@ -178,7 +178,13 @@ func TranscodeArgs(spec TranscodeSpec) ([]string, error) {
 			return nil, err
 		}
 	}
-	fmt.Fprintf(&fg, "[0:%d]fps=%s,split=%d", v.Index, rate.Expr, branches)
+	// An HDR or wide-gamut source is converted to BT.709 SDR once, before the split, so every rendition,
+	// the poster and the sprite get it (color.go). A hardware encoder's hwupload comes after it, in pixFmt.
+	color := ""
+	if c := v.ColorFilter(); c != "" {
+		color = "," + c
+	}
+	fmt.Fprintf(&fg, "[0:%d]fps=%s%s,split=%d", v.Index, rate.Expr, color, branches)
 	for i := range branches {
 		fmt.Fprintf(&fg, "[s%d]", i)
 	}
