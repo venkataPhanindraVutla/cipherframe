@@ -93,34 +93,40 @@ func clientOptions(cfg config.S3, creds aws.CredentialsProvider, endpoint string
 	return o
 }
 
-// credentialsFor selects the credential source from the configuration state:
+func credentialsFor(ctx context.Context, cfg config.S3) (aws.CredentialsProvider, error) {
+	return Credentials(ctx, "storage", cfg.Region, cfg.AccessKeyID, cfg.SecretAccessKey, true)
+}
+
+// Credentials selects the credential source from the configuration state:
 //
 //	Static        -> the configured key pair
-//	ProviderChain -> the SDK default chain (environment, shared config, instance role)
-//	Unset         -> anonymous (development only; config rejects Unset in production)
+//	ProviderChain -> the SDK default chain (environment, shared config, instance or task role)
+//	Unset         -> anonymous when anonymousIfUnset (development only; config rejects Unset in
+//	                 production), otherwise the SDK default chain
 //
-// Mixed states are rejected, as are static states with an empty half.
-func credentialsFor(ctx context.Context, cfg config.S3) (aws.CredentialsProvider, error) {
-	id, secret := cfg.AccessKeyID, cfg.SecretAccessKey
+// Mixed states are rejected, as are static states with an empty half. prefix labels errors.
+func Credentials(ctx context.Context, prefix, region string, id, secret config.Credential, anonymousIfUnset bool) (aws.CredentialsProvider, error) {
 	if id.State() != secret.State() {
-		return nil, errors.New("storage: access key ID and secret access key must be in the same state")
+		return nil, errors.New(prefix + ": access key ID and secret access key must be in the same state")
 	}
-	switch id.State() {
+	state := id.State()
+	if state == config.Unset && anonymousIfUnset {
+		return aws.AnonymousCredentials{}, nil
+	}
+	switch state {
 	case config.Static:
 		if id.Secret().IsEmpty() || secret.Secret().IsEmpty() {
-			return nil, errors.New("storage: static credentials must not be empty")
+			return nil, errors.New(prefix + ": static credentials must not be empty")
 		}
 		return credentials.NewStaticCredentialsProvider(id.Secret().Reveal(), secret.Secret().Reveal(), ""), nil
-	case config.ProviderChain:
+	case config.ProviderChain, config.Unset:
 		// The region is passed explicitly so the shared config cannot change it.
-		def, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
+		def, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 		if err != nil {
-			return nil, errors.New("storage: cannot load the default credential chain")
+			return nil, errors.New(prefix + ": cannot load the default credential chain")
 		}
 		return def.Credentials, nil
-	case config.Unset:
-		return aws.AnonymousCredentials{}, nil
 	default:
-		return nil, errors.New("storage: unknown credential state")
+		return nil, errors.New(prefix + ": unknown credential state")
 	}
 }
