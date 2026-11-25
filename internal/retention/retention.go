@@ -229,11 +229,11 @@ func (s *Sweeper) Run(ctx context.Context, interval time.Duration) {
 		case err != nil:
 			s.Log.ErrorContext(ctx, "retention sweep failed", slog.Any("error", err))
 		}
-		if res.ExpiredAssets > 0 || len(res.DroppedPartitions) > 0 || res.AccessLogRows > 0 || res.EventRows > 0 || res.WebhookRows > 0 {
+		if res.ExpiredAssets > 0 || len(res.DroppedPartitions) > 0 || res.AccessLogRows > 0 || res.EventRows > 0 || res.WebhookRows > 0 || res.OverlayCodes > 0 {
 			s.Log.InfoContext(ctx, "retention sweep",
 				slog.Int("expired_assets", res.ExpiredAssets), slog.Int("dropped_partitions", len(res.DroppedPartitions)),
 				slog.Int64("access_log_rows", res.AccessLogRows), slog.Int64("event_rows", res.EventRows),
-				slog.Int64("webhook_rows", res.WebhookRows))
+				slog.Int64("webhook_rows", res.WebhookRows), slog.Int64("overlay_codes", res.OverlayCodes))
 		}
 	}
 	run()

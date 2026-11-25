@@ -3,7 +3,6 @@ package edge
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
@@ -167,11 +166,11 @@ func NewPlayback(d PlaybackDeps) (*Playback, error) {
 	}, nil
 }
 
-// fingerprint is a short, one-way label for a session ID, safe to log: the first four bytes of its
-// SHA-256 in hex. The session ID itself is never logged.
-func fingerprint(s id.SessionID) string {
-	h := sha256.Sum256([]byte(s.String()))
-	return hex.EncodeToString(h[:4])
+// fingerprint is a short, one-way label for the grant's session, safe to log. It is the label the
+// access trail and the events API show (db.SessionFingerprint), so a log line can be matched to
+// them. The session ID itself is never logged.
+func (g grant) fingerprint() string {
+	return db.SessionFingerprint(db.SessionHash(g.session), g.tenant)
 }
 
 // accessEvent is an access-trail event of a granted request: the session by hash only, the request
@@ -315,7 +314,7 @@ func (p *Playback) readPlaylist(ctx context.Context, key string) (string, error)
 // log line names the session by fingerprint and never quotes the playlist.
 func rewriteFailed(ctx context.Context, g grant, err error) error {
 	httpx.Logger(ctx).LogAttrs(ctx, slog.LevelError, "stored playlist refused",
-		slog.String("session", fingerprint(g.session)), slog.String("error", err.Error()))
+		slog.String("session", g.fingerprint()), slog.String("error", err.Error()))
 	return errs.New(errs.InternalError, "An internal error occurred.")
 }
 
