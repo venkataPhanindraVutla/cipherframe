@@ -11,7 +11,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 )
 
 // KeyRef names one version of a key-encryption key.
@@ -61,9 +60,8 @@ type KEKChecker interface {
 // Registry holds the provider that wraps new keys and every configured provider that can unwrap,
 // looked up by Wrapped.Provider. It is immutable after NewRegistry.
 type Registry struct {
-	current   Provider
-	byName    map[string]Provider
-	nameOrder []string
+	current Provider
+	byName  map[string]Provider
 }
 
 // NewRegistry returns a registry whose current provider wraps new keys. others are additional
@@ -81,9 +79,7 @@ func NewRegistry(current Provider, others ...Provider) (*Registry, error) {
 			return nil, fmt.Errorf("kms: provider %q is registered twice", p.Name())
 		}
 		r.byName[p.Name()] = p
-		r.nameOrder = append(r.nameOrder, p.Name())
 	}
-	slices.Sort(r.nameOrder)
 	return r, nil
 }
 
@@ -99,9 +95,6 @@ func (r *Registry) Lookup(name string) (Provider, error) {
 	}
 	return p, nil
 }
-
-// Names returns every configured provider name, sorted.
-func (r *Registry) Names() []string { return slices.Clone(r.nameOrder) }
 
 // Unwrap routes w to the provider that made it.
 func (r *Registry) Unwrap(ctx context.Context, w Wrapped, aad []byte) ([]byte, error) {

@@ -40,8 +40,8 @@ func TestFromConfigLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reg.Current().Name() != "local" || len(reg.Names()) != 1 {
-		t.Fatalf("unexpected registry: current %s, names %v", reg.Current().Name(), reg.Names())
+	if reg.Current().Name() != "local" {
+		t.Fatalf("unexpected registry: current %s", reg.Current().Name())
 	}
 }
 
