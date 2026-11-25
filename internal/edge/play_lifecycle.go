@@ -60,7 +60,7 @@ func (s *server) HeartbeatPlayback(ctx context.Context, _ gen.HeartbeatPlaybackR
 	case db.HeartbeatTooSoon:
 		wait := retryAfter(retry)
 		httpx.Logger(ctx).LogAttrs(ctx, slog.LevelWarn, "heartbeat rate limited",
-			slog.String("session", fingerprint(g.session)), slog.Int("retry_after", wait))
+			slog.String("session", g.fingerprint()), slog.Int("retry_after", wait))
 		rid := requestID(ctx)
 		pr := errs.ToProblem(errs.New(errs.RateLimited, "Heartbeats are too frequent. Retry after the time given."), rid)
 		return gen.HeartbeatPlayback429ApplicationProblemPlusJSONResponse{

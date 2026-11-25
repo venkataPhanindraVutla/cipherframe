@@ -172,7 +172,7 @@ func (p *Playback) release(ctx context.Context, g grant) {
 	defer cancel()
 	if err := p.keyStore.ReleasePlaybackKeyFetch(rctx, g.tokenHash); err != nil {
 		httpx.Logger(ctx).LogAttrs(ctx, slog.LevelWarn, "key fetch not released",
-			slog.String("session", fingerprint(g.session)), slog.String("code", errCode(err)))
+			slog.String("session", g.fingerprint()), slog.String("code", errCode(err)))
 	}
 }
 
@@ -184,7 +184,7 @@ func (p *Playback) recordReplay(ctx context.Context, g grant, limit int, now tim
 	hash, first, err := p.keyStore.MarkKeyReplay(rctx, g.tokenHash, now)
 	if err != nil {
 		httpx.Logger(ctx).LogAttrs(ctx, slog.LevelWarn, "key anomaly event not recorded",
-			slog.String("session", fingerprint(g.session)), slog.String("kind", db.EventKeyReplay), slog.String("code", errCode(err)))
+			slog.String("session", g.fingerprint()), slog.String("kind", db.EventKeyReplay), slog.String("code", errCode(err)))
 		return
 	}
 	if !first {
@@ -198,7 +198,7 @@ func (p *Playback) recordReplay(ctx context.Context, g grant, limit int, now tim
 
 func (p *Playback) logRateLimited(ctx context.Context, g grant, kind string, retry int) {
 	httpx.Logger(ctx).LogAttrs(ctx, slog.LevelWarn, "key request rate limited",
-		slog.String("session", fingerprint(g.session)), slog.String("kind", kind), slog.Int("retry_after", retry))
+		slog.String("session", g.fingerprint()), slog.String("kind", kind), slog.Int("retry_after", retry))
 }
 
 // errCode returns the registered code of err, for logs: never its text, which may name internals.
