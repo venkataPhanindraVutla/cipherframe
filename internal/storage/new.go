@@ -43,25 +43,6 @@ func New(ctx context.Context, cfg config.S3) (*Buckets, error) {
 	}, nil
 }
 
-// NewStore builds a single Store on bucket, for example to run the conformance suite against a real
-// provider with one bucket. role only labels errors. The bucket name comes from the argument; cfg's
-// bucket names are ignored. With role keys.Delivery the returned value also implements
-// GetPresigner; with any other role it does not (I4).
-func NewStore(ctx context.Context, cfg config.S3, bucket string, role keys.Bucket) (Store, error) {
-	if bucket == "" {
-		return nil, errors.New("storage: bucket name is required")
-	}
-	c, err := newClients(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	st := &s3Store{api: c.internal, pre: c.presign, bucket: bucket, role: role}
-	if role == keys.Delivery {
-		return deliveryStore{st}, nil
-	}
-	return st, nil
-}
-
 // NewS3Client returns the internal S3 client for server-side calls, configured exactly like the
 // one behind the Stores. It is for libraries that need the raw SDK client (the tus data store in
 // the edge role). Never hand it, or anything derived from it, to a client of the API.

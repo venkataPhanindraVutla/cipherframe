@@ -39,11 +39,9 @@ func Run(t *testing.T, newStore func(t *testing.T) storage.Store) {
 		{"ListPagination", testListPagination},
 		{"DeleteBatch1005", testDeleteBatchLarge},
 		{"PresignedGet", testPresignedGet},
-		{"PresignedPut", testPresignedPut},
 		{"PresignedGetExpires", testPresignedExpiry},
-		{"MultipartViaPresignedParts", testMultipart},
 		{"MultipartAbort", testMultipartAbort},
-		{"MultipartViaUploadPart", testMultipartUploadPart},
+		{"Multipart", testMultipartUploadPart},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -421,32 +419,6 @@ func testPresignedGet(t *testing.T, s storage.Store, p string) {
 	}
 }
 
-func testPresignedPut(t *testing.T, s storage.Store, p string) {
-	key := p + "presigned-put"
-	data := payload(t, 8192)
-	req, err := s.PresignPut(ctxFor(t), key, time.Minute, "image/png")
-	if err != nil {
-		t.Fatalf("presign put: %v", err)
-	}
-	if req.Method != http.MethodPut {
-		t.Fatalf("method = %s", req.Method)
-	}
-	status, _, _ := roundTrip(t, req, data)
-	if status != http.StatusOK {
-		t.Fatalf("plain HTTP PUT: status %d", status)
-	}
-	got, info, err := s.Get(ctxFor(t), key, nil)
-	if err != nil {
-		t.Fatalf("get after presigned put: %v", err)
-	}
-	if body := readAll(t, got); !bytes.Equal(body, data) {
-		t.Fatal("uploaded body differs")
-	}
-	if info.ContentType != "image/png" {
-		t.Fatalf("content type = %q", info.ContentType)
-	}
-}
-
 func testPresignedExpiry(t *testing.T, s storage.Store, p string) {
 	key := p + "presigned-expiry"
 	mustPut(t, s, key, []byte("soon gone"), "")
@@ -461,62 +433,22 @@ func testPresignedExpiry(t *testing.T, s storage.Store, p string) {
 	}
 }
 
-func etagOf(h http.Header) string { return h.Get("ETag") }
-
-func testMultipart(t *testing.T, s storage.Store, p string) {
-	key := p + "multipart"
-	const partSize = 5 * 1024 * 1024 // the S3 minimum for every part but the last
-	parts := [][]byte{payload(t, partSize), payload(t, partSize), payload(t, 1234)}
-
-	uploadID, err := s.CreateMultipart(ctxFor(t), key, "video/mp4")
-	if err != nil {
-		t.Fatalf("create multipart: %v", err)
-	}
-	var done []storage.CompletedPart
-	for i, data := range parts {
-		num := int32(i + 1)
-		req, err := s.PresignPart(ctxFor(t), key, uploadID, num, 5*time.Minute)
-		if err != nil {
-			t.Fatalf("presign part %d: %v", num, err)
-		}
-		status, _, h := roundTrip(t, req, data)
-		if status != http.StatusOK || etagOf(h) == "" {
-			t.Fatalf("upload part %d: status %d, etag %q", num, status, etagOf(h))
-		}
-		done = append(done, storage.CompletedPart{PartNumber: num, ETag: etagOf(h)})
-	}
-	if err := s.CompleteMultipart(ctxFor(t), key, uploadID, done); err != nil {
-		t.Fatalf("complete: %v", err)
-	}
-	want := bytes.Join(parts, nil)
-	info, err := s.Head(ctxFor(t), key)
-	if err != nil || info.Size != int64(len(want)) || info.ContentType != "video/mp4" {
-		t.Fatalf("head after complete: %+v %v", info, err)
-	}
-	if got := mustGetAll(t, s, key); sha256.Sum256(got) != sha256.Sum256(want) {
-		t.Fatal("assembled object differs from the uploaded parts")
-	}
-}
-
 func testMultipartAbort(t *testing.T, s storage.Store, p string) {
 	key := p + "aborted"
 	uploadID, err := s.CreateMultipart(ctxFor(t), key, "")
 	if err != nil {
 		t.Fatalf("create multipart: %v", err)
 	}
-	req, err := s.PresignPart(ctxFor(t), key, uploadID, 1, time.Minute)
+	data := payload(t, 1024)
+	etag, err := s.UploadPart(ctxFor(t), key, uploadID, 1, bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		t.Fatalf("presign part: %v", err)
-	}
-	status, _, h := roundTrip(t, req, payload(t, 1024))
-	if status != http.StatusOK {
-		t.Fatalf("upload part: status %d", status)
+		t.Fatalf("upload part: %v", err)
 	}
 	if err := s.AbortMultipart(ctxFor(t), key, uploadID); err != nil {
 		t.Fatalf("abort: %v", err)
 	}
 	// An aborted upload cannot be completed, and no object appears.
-	err = s.CompleteMultipart(ctxFor(t), key, uploadID, []storage.CompletedPart{{PartNumber: 1, ETag: etagOf(h)}})
+	err = s.CompleteMultipart(ctxFor(t), key, uploadID, []storage.CompletedPart{{PartNumber: 1, ETag: etag}})
 	if err == nil {
 		t.Fatal("completing an aborted upload succeeded")
 	}
@@ -558,6 +490,10 @@ func testMultipartUploadPart(t *testing.T, s storage.Store, p string) {
 		t.Fatalf("complete: %v", err)
 	}
 	want := bytes.Join(parts, nil)
+	info, err := s.Head(ctxFor(t), key)
+	if err != nil || info.Size != int64(len(want)) || info.ContentType != "video/mp4" {
+		t.Fatalf("head after complete: %+v %v", info, err)
+	}
 	if got := mustGetAll(t, s, key); sha256.Sum256(got) != sha256.Sum256(want) {
 		t.Fatal("assembled object differs from the uploaded parts")
 	}

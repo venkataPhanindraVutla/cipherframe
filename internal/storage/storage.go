@@ -51,16 +51,8 @@ type Store interface {
 	// chunk.
 	DeleteBatch(ctx context.Context, keys []string) error
 
-	// PresignPut returns a request that writes key until ttl has passed. The client must send the
-	// returned Header (it includes Content-Type).
-	PresignPut(ctx context.Context, key string, ttl time.Duration, contentType string) (PresignedRequest, error)
-
 	// CreateMultipart starts a multipart upload and returns its upload ID. contentType may be empty.
 	CreateMultipart(ctx context.Context, key, contentType string) (uploadID string, err error)
-
-	// PresignPart returns a request that uploads one part (1 to 10000) until ttl has passed. The
-	// response's ETag header is needed for CompleteMultipart.
-	PresignPart(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (PresignedRequest, error)
 
 	// UploadPart streams one part (1 to 10000) of size bytes from body into an upload started with
 	// CreateMultipart and returns the part's ETag, which CompleteMultipart needs. The body is
