@@ -25,7 +25,6 @@ import (
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
-	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/keys"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/storage/storagetest"
 )
 
@@ -312,10 +311,12 @@ func TestWrongCredentialsArePermissionDenied(t *testing.T) {
 
 func TestMissingBucketIsNotNotFound(t *testing.T) {
 	cfg := srv.cfg()
-	s, err := storage.NewStore(context.Background(), cfg, "no-such-bucket-"+randomHex(4), keys.Source)
+	cfg.SourceBucket = "no-such-bucket-" + randomHex(4)
+	b, err := storage.New(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	s := b.Source
 	// HEAD cannot tell the two apart: S3 sends no body on HEAD, so a missing bucket and a missing
 	// object are both a bare 404 and Head reports NotFound for both. Operations with a response body
 	// (Get, List, Put) carry the NoSuchBucket code and are not NotFound.
@@ -371,16 +372,18 @@ func TestRealS3(t *testing.T) {
 	cfg := config.S3{
 		Endpoint:        endpoint,
 		PublicEndpoint:  endpoint,
+		SourceBucket:    bucket + "-src", // never contacted: only Delivery is used
+		DeliveryBucket:  bucket,
 		Region:          region,
 		ForcePathStyle:  os.Getenv("CIPHERFRAME_TEST_S3_PATH_STYLE") == "true",
 		AccessKeyID:     config.NewStaticCredential(access),
 		SecretAccessKey: config.NewStaticCredential(secret),
 	}
 	storagetest.Run(t, func(t *testing.T) storage.Store {
-		s, err := storage.NewStore(context.Background(), cfg, bucket, keys.Delivery)
+		b, err := storage.New(context.Background(), cfg)
 		if err != nil {
-			t.Fatalf("storage.NewStore: %v", err)
+			t.Fatalf("storage.New: %v", err)
 		}
-		return s
+		return b.Delivery
 	})
 }

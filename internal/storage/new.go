@@ -43,25 +43,6 @@ func New(ctx context.Context, cfg config.S3) (*Buckets, error) {
 	}, nil
 }
 
-// NewStore builds a single Store on bucket, for example to run the conformance suite against a real
-// provider with one bucket. role only labels errors. The bucket name comes from the argument; cfg's
-// bucket names are ignored. With role keys.Delivery the returned value also implements
-// GetPresigner; with any other role it does not (I4).
-func NewStore(ctx context.Context, cfg config.S3, bucket string, role keys.Bucket) (Store, error) {
-	if bucket == "" {
-		return nil, errors.New("storage: bucket name is required")
-	}
-	c, err := newClients(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	st := &s3Store{api: c.internal, pre: c.presign, bucket: bucket, role: role}
-	if role == keys.Delivery {
-		return deliveryStore{st}, nil
-	}
-	return st, nil
-}
-
 // NewS3Client returns the internal S3 client for server-side calls, configured exactly like the
 // one behind the Stores. It is for libraries that need the raw SDK client (the tus data store in
 // the edge role). Never hand it, or anything derived from it, to a client of the API.
@@ -112,34 +93,40 @@ func clientOptions(cfg config.S3, creds aws.CredentialsProvider, endpoint string
 	return o
 }
 
-// credentialsFor selects the credential source from the configuration state:
+func credentialsFor(ctx context.Context, cfg config.S3) (aws.CredentialsProvider, error) {
+	return Credentials(ctx, "storage", cfg.Region, cfg.AccessKeyID, cfg.SecretAccessKey, true)
+}
+
+// Credentials selects the credential source from the configuration state:
 //
 //	Static        -> the configured key pair
-//	ProviderChain -> the SDK default chain (environment, shared config, instance role)
-//	Unset         -> anonymous (development only; config rejects Unset in production)
+//	ProviderChain -> the SDK default chain (environment, shared config, instance or task role)
+//	Unset         -> anonymous when anonymousIfUnset (development only; config rejects Unset in
+//	                 production), otherwise the SDK default chain
 //
-// Mixed states are rejected, as are static states with an empty half.
-func credentialsFor(ctx context.Context, cfg config.S3) (aws.CredentialsProvider, error) {
-	id, secret := cfg.AccessKeyID, cfg.SecretAccessKey
+// Mixed states are rejected, as are static states with an empty half. prefix labels errors.
+func Credentials(ctx context.Context, prefix, region string, id, secret config.Credential, anonymousIfUnset bool) (aws.CredentialsProvider, error) {
 	if id.State() != secret.State() {
-		return nil, errors.New("storage: access key ID and secret access key must be in the same state")
+		return nil, errors.New(prefix + ": access key ID and secret access key must be in the same state")
 	}
-	switch id.State() {
+	state := id.State()
+	if state == config.Unset && anonymousIfUnset {
+		return aws.AnonymousCredentials{}, nil
+	}
+	switch state {
 	case config.Static:
 		if id.Secret().IsEmpty() || secret.Secret().IsEmpty() {
-			return nil, errors.New("storage: static credentials must not be empty")
+			return nil, errors.New(prefix + ": static credentials must not be empty")
 		}
 		return credentials.NewStaticCredentialsProvider(id.Secret().Reveal(), secret.Secret().Reveal(), ""), nil
-	case config.ProviderChain:
+	case config.ProviderChain, config.Unset:
 		// The region is passed explicitly so the shared config cannot change it.
-		def, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
+		def, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 		if err != nil {
-			return nil, errors.New("storage: cannot load the default credential chain")
+			return nil, errors.New(prefix + ": cannot load the default credential chain")
 		}
 		return def.Credentials, nil
-	case config.Unset:
-		return aws.AnonymousCredentials{}, nil
 	default:
-		return nil, errors.New("storage: unknown credential state")
+		return nil, errors.New(prefix + ": unknown credential state")
 	}
 }

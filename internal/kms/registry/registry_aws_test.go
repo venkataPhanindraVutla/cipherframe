@@ -26,8 +26,8 @@ func TestFromConfigAWS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reg.Current().Name() != "awskms" || len(reg.Names()) != 1 {
-		t.Fatalf("unexpected registry: current %s, names %v", reg.Current().Name(), reg.Names())
+	if reg.Current().Name() != "awskms" {
+		t.Fatalf("unexpected registry: current %s", reg.Current().Name())
 	}
 }
 

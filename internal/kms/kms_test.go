@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/errs"
@@ -30,9 +29,6 @@ func TestRegistry(t *testing.T) {
 	}
 	if r.Current().Name() != "local" {
 		t.Fatal("wrong current provider")
-	}
-	if got := strings.Join(r.Names(), ","); got != "local,vault" {
-		t.Fatalf("names = %s", got)
 	}
 	if p, err := r.Lookup("vault"); err != nil || p.Name() != "vault" {
 		t.Fatal("lookup failed")

@@ -33,8 +33,6 @@ type s3API interface {
 // client only.
 type s3Presigner interface {
 	PresignGetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error)
-	PresignPutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error)
-	PresignUploadPart(ctx context.Context, in *s3.UploadPartInput, opts ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error)
 }
 
 // s3Store is a Store over one bucket.
@@ -293,25 +291,6 @@ func (s deliveryStore) PresignGet(ctx context.Context, key string, ttl time.Dura
 	return presigned(r), nil
 }
 
-func (s *s3Store) PresignPut(ctx context.Context, key string, ttl time.Duration, contentType string) (PresignedRequest, error) {
-	const op = "presign_put"
-	if err := s.checkKey(op, key); err != nil {
-		return PresignedRequest{}, err
-	}
-	if err := s.checkTTL(op, ttl); err != nil {
-		return PresignedRequest{}, err
-	}
-	in := &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}
-	if contentType != "" {
-		in.ContentType = aws.String(contentType)
-	}
-	r, err := s.pre.PresignPutObject(ctx, in, expires(ttl))
-	if err != nil {
-		return PresignedRequest{}, s.fail(op, err)
-	}
-	return presigned(r), nil
-}
-
 func (s *s3Store) CreateMultipart(ctx context.Context, key, contentType string) (string, error) {
 	const op = "create_multipart"
 	if err := s.checkKey(op, key); err != nil {
@@ -329,29 +308,6 @@ func (s *s3Store) CreateMultipart(ctx context.Context, key, contentType string) 
 		return "", &Error{Kind: Other, Op: op, Role: s.role, Detail: "no upload ID returned"}
 	}
 	return *out.UploadId, nil
-}
-
-func (s *s3Store) PresignPart(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (PresignedRequest, error) {
-	const op = "presign_part"
-	if err := s.checkKey(op, key); err != nil {
-		return PresignedRequest{}, err
-	}
-	if uploadID == "" || partNumber < 1 || partNumber > 10000 {
-		return PresignedRequest{}, s.bad(op, "need an upload ID and a part number from 1 to 10000")
-	}
-	if err := s.checkTTL(op, ttl); err != nil {
-		return PresignedRequest{}, err
-	}
-	r, err := s.pre.PresignUploadPart(ctx, &s3.UploadPartInput{
-		Bucket:     aws.String(s.bucket),
-		Key:        aws.String(key),
-		UploadId:   aws.String(uploadID),
-		PartNumber: aws.Int32(partNumber),
-	}, expires(ttl))
-	if err != nil {
-		return PresignedRequest{}, s.fail(op, err)
-	}
-	return presigned(r), nil
 }
 
 func (s *s3Store) UploadPart(ctx context.Context, key, uploadID string, partNumber int32, body io.Reader, size int64) (string, error) {

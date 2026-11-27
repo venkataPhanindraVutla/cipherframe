@@ -337,12 +337,6 @@ func TestMultipartValidation(t *testing.T) {
 			t.Errorf("case %d: %v", i, err)
 		}
 	}
-	if _, err := s.PresignPart(ctx, "k", "up", 0, time.Minute); !errors.Is(err, ErrInvalid) {
-		t.Errorf("part 0: %v", err)
-	}
-	if _, err := s.PresignPart(ctx, "k", "up", 10001, time.Minute); !errors.Is(err, ErrInvalid) {
-		t.Errorf("part 10001: %v", err)
-	}
 	d := deliveryStore{s}
 	if _, err := d.PresignGet(ctx, "k", 0); !errors.Is(err, ErrInvalid) {
 		t.Errorf("ttl 0: %v", err)
@@ -386,22 +380,6 @@ func TestPublicClientSignsForPublicHostAndInternalClientDoesNot(t *testing.T) {
 	}
 	if _, ok := p.Header["Host"]; ok {
 		t.Fatal("Host header must not be returned")
-	}
-
-	put, err := b.Source.PresignPut(context.Background(), "k", time.Minute, "video/mp4")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if put.Method != "PUT" || put.Header.Get("Content-Type") != "video/mp4" {
-		t.Fatalf("put presign: %s %v", put.Method, put.Header)
-	}
-	part, err := b.Source.PresignPart(context.Background(), "k", "upload-1", 3, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pu, _ := url.Parse(part.URL)
-	if pu.Query().Get("partNumber") != "3" || pu.Query().Get("uploadId") != "upload-1" {
-		t.Fatalf("part query: %v", pu.Query())
 	}
 }
 
@@ -524,13 +502,6 @@ func TestOnlyTheDeliveryBucketCanPresignReads(t *testing.T) {
 	}
 	if _, ok := b.Delivery.(GetPresigner); !ok {
 		t.Fatal("the delivery bucket must implement GetPresigner")
-	}
-	st, err := NewStore(context.Background(), staticCfg("http://s3.example.test:9000", ""), "b", keys.Source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := st.(GetPresigner); ok {
-		t.Fatal("a source-role store must not implement GetPresigner")
 	}
 	var _ GetPresigner = deliveryStore{}
 }

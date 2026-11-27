@@ -28,13 +28,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	awskmssdk "github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 
 	"github.com/venkataPhanindraVutla/cipherframe/internal/config"
 	"github.com/venkataPhanindraVutla/cipherframe/internal/kms"
+	"github.com/venkataPhanindraVutla/cipherframe/internal/storage"
 )
 
 const (
@@ -99,35 +98,10 @@ func newProvider(a api, keyID string, timeout time.Duration) *Provider {
 	return &Provider{api: a, keyID: keyID, timeout: timeout}
 }
 
-// credentialsFor selects the credential source from the configuration state, as the S3 adapter does:
-//
-//	Static        -> the configured key pair
-//	ProviderChain -> the SDK default chain (environment, shared config, instance or task role)
-//	Unset         -> the SDK default chain as well: KMS has no anonymous access, so an unsigned
-//	                 client could never succeed. config rejects Unset in production anyway.
-//
-// Mixed states are rejected, as are static states with an empty half.
+// credentialsFor selects the credential source as the S3 adapter does, except that Unset uses the
+// SDK default chain: KMS has no anonymous access, so an unsigned client could never succeed.
 func credentialsFor(ctx context.Context, cfg config.KMSAWS) (aws.CredentialsProvider, error) {
-	id, secret := cfg.AccessKeyID, cfg.SecretAccessKey
-	if id.State() != secret.State() {
-		return nil, errors.New("awskms: access key ID and secret access key must be in the same state")
-	}
-	switch id.State() {
-	case config.Static:
-		if id.Secret().IsEmpty() || secret.Secret().IsEmpty() {
-			return nil, errors.New("awskms: static credentials must not be empty")
-		}
-		return credentials.NewStaticCredentialsProvider(id.Secret().Reveal(), secret.Secret().Reveal(), ""), nil
-	case config.ProviderChain, config.Unset:
-		// The region is passed explicitly so the shared config cannot change it.
-		def, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
-		if err != nil {
-			return nil, errors.New("awskms: cannot load the default credential chain")
-		}
-		return def.Credentials, nil
-	default:
-		return nil, errors.New("awskms: unknown credential state")
-	}
+	return storage.Credentials(ctx, "awskms", cfg.Region, cfg.AccessKeyID, cfg.SecretAccessKey, false)
 }
 
 // Name returns "awskms".

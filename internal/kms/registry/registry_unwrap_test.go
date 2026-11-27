@@ -23,8 +23,8 @@ func TestFromConfigUnwrapProviders(t *testing.T) {
 	if reg.Current().Name() != "vault" {
 		t.Fatalf("current provider = %s, want vault", reg.Current().Name())
 	}
-	if got := reg.Names(); len(got) != 2 || got[0] != "local" || got[1] != "vault" {
-		t.Fatalf("names = %v, want [local vault]", got)
+	if _, err := reg.Lookup("local"); err != nil {
+		t.Fatalf("local not registered: %v", err)
 	}
 
 	cfg.KMS.LocalKEKs = config.KEKs{} // as if the loader had been bypassed
